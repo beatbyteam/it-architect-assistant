@@ -266,7 +266,7 @@ docker compose --env-file .env.local -f deploy/compose.local-production.yml exec
 
 ### Нужно пересобрать только один сервис
 
-**Симптом:**
+**Признак:**
 
 Был изменён код backend/frontend/celery, но не нужно перезапускать весь проект.
 
@@ -296,11 +296,11 @@ docker compose --env-file .env.local -f deploy/compose.local-production.yml up -
 
 ### Нужно полностью удалить локальное окружение проекта
 
-**Симптом:**
+**Признак:**
 
 Нужно удалить контейнеры, сети, тома и локально собранные образы только этого проекта.
 
-**Решение:**
+**Решение 1:**
 
 ```bash
 docker compose --env-file .env.local -f deploy/compose.local-production.yml down --volumes --rmi local --remove-orphans
@@ -316,11 +316,16 @@ docker compose --env-file .env.local -f deploy/compose.local-production.yml down
 
 Используйте `--rmi all` осторожно, если другие проекты используют те же Docker images.
 
+**Решение 2:**
+
+Удалить нужные контейнеры, сети, тома и локально собранные образы вручную 
+через Docker Desktop или Docker Engine с Docker Compose plugin.
+
 ---
 
 ### Порт уже занят
 
-**Симптом:**
+**Признак:**
 
 ```text
 Bind for 0.0.0.0:PORT failed: port is already allocated
@@ -356,7 +361,7 @@ docker stop <container_name_or_id>
 
 ### Backend не может подключиться к базе данных
 
-**Симптом:**
+**Признак:**
 
 ```text
 connection refused
@@ -390,31 +395,63 @@ docker compose --env-file .env.local -f deploy/compose.local-production.yml rest
 
 ---
 
-### Как посмотреть логи сервиса
+### ⚠️ Ошибка сборки Docker-образа
 
-Backend:
+При запуске проекта может возникнуть ошибка вида:
 
-```bash
-docker compose --env-file .env.local -f deploy/compose.local-production.yml logs -f backend
+```text
+target api: failed to solve: image "docker.io/library/it-arch-assistant-backend:local": already exists
 ```
 
-Frontend:
+Обычно ошибка означает, что локальный Docker-образ приложения уже существует и мешает повторной сборке.
+
+#### Решение: удалить старый образ и запустить проект заново
 
 ```bash
-docker compose --env-file .env.local -f deploy/compose.local-production.yml logs -f frontend
+docker rmi it-arch-assistant-backend:local
 ```
 
-Celery:
+После этого повторно запустите проект.
+
+Windows:
+
+```powershell
+.\deploy\scripts\local_release_up.ps1
+```
+
+Linux / macOS:
 
 ```bash
-docker compose --env-file .env.local -f deploy/compose.local-production.yml logs -f celery
+sh deploy/scripts/local_release_up.sh
 ```
 
-Ollama:
+Если Docker сообщает, что образ используется контейнером, сначала остановите проект:
+
+Windows:
+
+```powershell
+.\deploy\scripts\local_release_down.ps1
+```
+
+Linux / macOS:
 
 ```bash
-docker compose --env-file .env.local -f deploy/compose.local-production.yml logs -f ollama
+sh deploy/scripts/local_release_down.sh
 ```
+
+Затем снова удалите образ:
+
+```bash
+docker rmi it-arch-assistant-backend:local
+```
+
+Если образ не удаляется, можно выполнить принудительное удаление:
+
+```bash
+docker rmi -f it-arch-assistant-backend:local
+```
+
+---
 
 
 ## 📁 Структура проекта
@@ -456,12 +493,6 @@ it-architect-assistant/
 ├── docs/                   # Документация
 └── .env.example            # Dev конфигурация
 ```
-## 📚 Документация
-[config-matrix.md](https://./docs/config-matrix.md) - Матрица конфигурации окружений
-[auth-matrix.md](https://./docs/auth-matrix.md) - Модели аутентификации и авторизации
-[engineering-guardrails.md](https://./docs/engineering-guardrails.md) - Инженерные практики и ограничения
-[observability.md](https://./docs/observability.md) - Логирование, метрики, мониторинг
-[ADR-0001-p1-module-decomposition.md](https://./docs/adr/ADR-0001-p1-module-decomposition.md) - Архитектурное решение по декомпозиции
 
 
 <div align="center"> <sub> by BeatByte • Пермь, 2026</sub> </div> 
