@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+set -eu
+
+root="$(git rev-parse --show-toplevel)"
+
+if command -v pwsh >/dev/null 2>&1; then
+  exec pwsh -NoProfile -ExecutionPolicy Bypass -File "$root/deploy/scripts/pre_push_check.ps1"
+fi
+
+if command -v powershell.exe >/dev/null 2>&1; then
+  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$root/deploy/scripts/pre_push_check.ps1"
+fi
+
+exec sh "$root/deploy/scripts/pre_push_check.sh"

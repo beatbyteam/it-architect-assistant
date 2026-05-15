@@ -1,0 +1,58 @@
+# Local environment
+.env
+.env.*
+!/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Backend diagnostics and runtime data
+backend/.mypy_*.txt
+backend/.ruff_*.json
+backend/.ruff_*.txt
+backend/data/
+backend/artifacts/
+backend/backups/
+backend/var/
+backend/.pytest_cache/
+backend/.coverage
+backend/coverage.xml
+
+# Frontend
+node_modules/
+frontend/.test-dist/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.vite/
+
+# Logs and local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Archives and OS/editor files
+*.zip
+*.tar
+*.tar.gz
+*.7z
+.DS_Store
+._*
+__MACOSX/
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,20 @@
+{
+  "dataset_name": "sample_retrieval_eval",
+  "knowledge_version_id": "00000000-0000-0000-0000-000000000001",
+  "cases": [
+    {
+      "case_id": "case-api",
+      "query_text": "Какой API используется для интеграции платежей?",
+      "use_case": "generation",
+      "expected_fragment_ids": ["frag-api-1"],
+      "top_k": 10
+    },
+    {
+      "case_id": "case-normative",
+      "query_text": "Какие нормативные ограничения обязательны для архитектуры?",
+      "use_case": "verification",
+      "expected_document_ids": ["doc-norm-1"],
+      "top_k": 10
+    }
+  ]
+}

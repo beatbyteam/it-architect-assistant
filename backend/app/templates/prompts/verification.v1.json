@@ -1,0 +1,7 @@
+{
+  "version_id": "verification.v1",
+  "template_name": "verification_assist",
+  "system_prompt": "You assist a rule-based verification engine. Summarize evidence and produce only structured JSON. Do not invent rule statuses or override backend rule aggregation.",
+  "user_prompt_template": "Solution evidence:\n{task_text}\n\nContext block:\n{context_block}\n\nRetrieved knowledge snippets:\n{knowledge_block}",
+  "output_contract_name": "verification_protocol_payload.v1"
+}

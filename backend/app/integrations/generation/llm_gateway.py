@@ -1,0 +1,605 @@
+from __future__ import annotations
+
+import logging
+import time
+from dataclasses import asdict, dataclass, field
+from typing import Any, Protocol
+
+import httpx
+
+from app.core.exceptions import DependencyUnavailableError, ValidationError
+from app.integrations.generation.contracts import (
+    REQUIRED_SECTION_CODES,
+    GenerationSolutionPayload,
+)
+from app.integrations.generation.payload_normalization import (
+    _apply_section_guidance,
+    _enrich_critical_section_source_refs,
+    _enrich_required_generation_lists,
+    _extract_json_payload,
+    _validate_generation_solution_payload,
+)
+from app.integrations.openai_compatible import resolve_openai_compatible_endpoint
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class RetrievedFragment:
+    fragment_id: str
+    document_id: str
+    title: str | None
+    content: str
+    fragment_type: str | None = None
+    source_location: str | None = None
+    score: float | None = None
+    lexical_score: float | None = None
+    vector_score: float | None = None
+    keyword_score: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class ProviderCallDiagnostics:
+    provider_name: str
+    model_id: str
+    fallback_used: bool
+    latency_ms: float | None = None
+    finish_reason: str | None = None
+
+
+def _is_probe_status_healthy(status_code: int) -> bool:
+    if 200 <= int(status_code) < 300:
+        return True
+    return int(status_code) in {401, 403, 405}
+
+
+class SolutionProvider(Protocol):
+    provider_name: str
+    model_id: str
+
+    def generate_solution(
+        self, payload: dict[str, Any]
+    ) -> tuple[GenerationSolutionPayload, ProviderCallDiagnostics]: ...
+
+
+def _sanitize_prompt_artifact(prompt_artifact: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(prompt_artifact, dict):
+        return None
+    allowed_keys = {
+        "prompt_version",
+        "system_prompt",
+        "user_prompt",
+        "task_block",
+        "context_block",
+        "knowledge_block",
+        "included_fragment_ids",
+        "dropped_fragment_ids",
+        "token_budget",
+        "retrieval_trace",
+        "section_generation_plan",
+        "section_readiness",
+        "retrieval_contract_version",
+        "knowledge_manifest",
+    }
+    sanitized = {key: prompt_artifact.get(key) for key in allowed_keys if key in prompt_artifact}
+    sanitized.setdefault("retrieval_contract_version", "retrieved_fragments_only_v1")
+    sanitized["raw_documents_included"] = False
+    return sanitized
+
+
+class HttpJsonSolutionProvider:
+    provider_name = "http_json"
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None,
+        api_key: str | None = None,
+        timeout_sec: float = 60.0,
+        model_id: str = "http-json-model",
+    ) -> None:
+        self.base_url = base_url
+        self.api_key = api_key
+        self.timeout_sec = timeout_sec
+        self.model_id = model_id
+
+    def generate_solution(
+        self, payload: dict[str, Any]
+    ) -> tuple[GenerationSolutionPayload, ProviderCallDiagnostics]:
+        if not self.base_url:
+            raise DependencyUnavailableError(
+                "llm_base_url", "LLM_BASE_URL is required for http_json provider"
+            )
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        started = time.perf_counter()
+        with httpx.Client(timeout=self.timeout_sec) as client:
+            response = client.post(self.base_url, json=payload, headers=headers)
+            response.raise_for_status()
+            body: dict[str, Any] = response.json()
+        finish_reason = str(body.get("finish_reason") or "completed")
+        result = _validate_generation_solution_payload(body)
+        return result, ProviderCallDiagnostics(
+            provider_name=self.provider_name,
+            model_id=str(body.get("model_id") or self.model_id),
+            fallback_used=False,
+            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            finish_reason=finish_reason,
+        )
+
+
+class OpenAICompatibleSolutionProvider(HttpJsonSolutionProvider):
+    provider_name = "openai_compatible"
+
+    def _resolve_chat_completions_url(self) -> str:
+        return resolve_openai_compatible_endpoint(
+            base_url=self.base_url,
+            endpoint_path="/chat/completions",
+            dependency_name="llm_base_url",
+            missing_message="LLM_BASE_URL is required for openai_compatible provider",
+        )
+
+    def _build_generation_messages(self, payload: dict[str, Any]) -> list[dict[str, str]]:
+        return [
+            {
+                "role": "system",
+                "content": (payload.get("prompt_artifact") or {}).get(
+                    "system_prompt",
+                    " ".join(
+                        [
+                            "Return only valid JSON matching the architecture solution contract.",
+                            (
+                                "Use exact top-level keys: solution_title,"
+                                " executive_summary, sections, components,"
+                                " integrations, assumptions, next_steps, risks."
+                            ),
+                            (
+                                "The field components is mandatory and must"
+                                " contain at least one component."
+                            ),
+                            (
+                                "The assumptions array must contain at least one concrete,"
+                                " task-specific assumption."
+                            ),
+                            (
+                                "The next_steps array must contain at least one concrete,"
+                                " actionable next step."
+                            ),
+                            (
+                                "Risk severity must be one of: critical, major, minor, info."
+                                " Never use low, medium, or high."
+                            ),
+                            (
+                                "Every risk must include a specific mitigation with an owner,"
+                                " concrete action, verification checkpoint, and fallback or"
+                                " rollback condition; never use placeholder text such as"
+                                " define mitigation plan."
+                            ),
+                            (
+                                "Each component must contain component_name, role_description,"
+                                " technology_stack, boundary_type, external_flag, and interfaces."
+                            ),
+                            "Every interface item must include interface_name.",
+                            (
+                                "Every section body_markdown must be a non-empty string with"
+                                " concrete content."
+                            ),
+                            (
+                                "Critical TOGAF sections general_information,"
+                                " business_tasks_description, it_architecture_content,"
+                                " business_architecture, data_architecture,"
+                                " application_architecture, technology_architecture,"
+                                " and additional_information must include non-empty"
+                                " source_refs arrays where evidence is available."
+                            ),
+                        ]
+                    ),
+                ),
+            },
+            {
+                "role": "user",
+                "content": (payload.get("prompt_artifact") or {}).get(
+                    "user_prompt", payload.get("task_text", "")
+                ),
+            },
+        ]
+
+    def _build_repair_messages(
+        self, *, raw_content: str, validation_error: str
+    ) -> list[dict[str, str]]:
+        repair_system_prompt = " ".join(
+            [
+                "You repair invalid JSON outputs for a strict architecture contract.",
+                "Return only one corrected JSON object and nothing else.",
+                ("Do not wrap the object in keys like architecture, solution, result, or payload."),
+                (
+                    "Use exact top-level keys in snake_case: solution_title,"
+                    " executive_summary, sections, components, integrations,"
+                    " assumptions, next_steps, risks."
+                ),
+                "The field components is mandatory and must contain at least one item.",
+                (
+                    "The assumptions array must contain at least one concrete,"
+                    " task-specific assumption."
+                ),
+                ("The next_steps array must contain at least one concrete, actionable next step."),
+                (
+                    "Risk severity must be one of: critical, major, minor, info."
+                    " Never use low, medium, or high."
+                ),
+                (
+                    "Every risk must include a specific mitigation with an owner,"
+                    " concrete action, verification checkpoint, and fallback or rollback"
+                    " condition; never use placeholder text such as define mitigation plan."
+                ),
+                (
+                    "If the previous JSON omitted components but described architecture"
+                    " in sections, reconstruct the top-level components array from"
+                    " that content."
+                ),
+                (
+                    "Each component must include component_name, role_description,"
+                    " technology_stack, boundary_type, external_flag, and interfaces."
+                ),
+                "Each interface item must include interface_name.",
+                (
+                    "Every section must include a non-empty body_markdown string"
+                    " with concrete content."
+                ),
+                (
+                    "Critical TOGAF sections general_information,"
+                    " business_tasks_description, it_architecture_content,"
+                    " business_architecture, data_architecture,"
+                    " application_architecture, technology_architecture,"
+                    " and additional_information must include non-empty"
+                    " source_refs arrays where evidence is available."
+                ),
+                (
+                    "Required section_code values: general_information,"
+                    " business_tasks_description, it_architecture_content,"
+                    " business_architecture, data_architecture,"
+                    " application_architecture, technology_architecture,"
+                    " additional_information."
+                ),
+            ]
+        )
+
+        repair_user_prompt = (
+            "The previous JSON output failed schema validation.\n\n"
+            f"Validation error:\n{validation_error}\n\n"
+            "Previous JSON:\n"
+            f"{raw_content}\n\n"
+            "Return only corrected JSON that satisfies the schema."
+        )
+
+        return [
+            {"role": "system", "content": repair_system_prompt},
+            {"role": "user", "content": repair_user_prompt},
+        ]
+
+    def _post_chat_completion(
+        self, *, messages: list[dict[str, str]]
+    ) -> tuple[str, str, float, str]:
+        request_url = self._resolve_chat_completions_url()
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        body = {
+            "model": self.model_id,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+        started = time.perf_counter()
+        with httpx.Client(timeout=self.timeout_sec) as client:
+            response = client.post(request_url, json=body, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}"
+        finish_reason = str(((data.get("choices") or [{}])[0]).get("finish_reason") or "completed")
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        resolved_model_id = str(data.get("model") or self.model_id)
+        return content, finish_reason, latency_ms, resolved_model_id
+
+    def generate_solution(
+        self, payload: dict[str, Any]
+    ) -> tuple[GenerationSolutionPayload, ProviderCallDiagnostics]:
+        messages = self._build_generation_messages(payload)
+        content, finish_reason, latency_ms, resolved_model_id = self._post_chat_completion(
+            messages=messages
+        )
+
+        try:
+            parsed = _extract_json_payload(content)
+            result = _validate_generation_solution_payload(parsed)
+            return result, ProviderCallDiagnostics(
+                provider_name=self.provider_name,
+                model_id=resolved_model_id,
+                fallback_used=False,
+                latency_ms=latency_ms,
+                finish_reason=finish_reason,
+            )
+        except ValidationError as exc:
+            logger.warning(
+                "llm_output_needs_repair",
+                extra={
+                    "stage": "llm_call",
+                    "stage_status": "repair_requested",
+                    "provider_name": self.provider_name,
+                    "model_id": self.model_id,
+                    "finish_reason": str(finish_reason),
+                    "raw_content_preview": content[:4000],
+                    "validation_error": str(exc),
+                },
+            )
+
+            repair_messages = self._build_repair_messages(
+                raw_content=content,
+                validation_error=str(exc),
+            )
+            repaired_content, repaired_finish_reason, repaired_latency_ms, repaired_model_id = (
+                self._post_chat_completion(messages=repair_messages)
+            )
+
+            try:
+                repaired_parsed = _extract_json_payload(repaired_content)
+                repaired_result = _validate_generation_solution_payload(repaired_parsed)
+                return repaired_result, ProviderCallDiagnostics(
+                    provider_name=self.provider_name,
+                    model_id=repaired_model_id,
+                    fallback_used=False,
+                    latency_ms=latency_ms + repaired_latency_ms,
+                    finish_reason=repaired_finish_reason,
+                )
+            except ValidationError:
+                logger.error(
+                    "llm_output_validation_failed",
+                    extra={
+                        "stage": "llm_call",
+                        "stage_status": "invalid_output",
+                        "provider_name": self.provider_name,
+                        "model_id": self.model_id,
+                        "finish_reason": str(repaired_finish_reason),
+                        "raw_content_preview": repaired_content[:4000],
+                    },
+                )
+                raise
+
+
+class LocalInferenceSolutionProvider(OpenAICompatibleSolutionProvider):
+    provider_name = "local_inference"
+
+
+class LLMGateway:
+    def __init__(
+        self,
+        *,
+        provider: str = "openai_compatible",
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout_sec: float = 60.0,
+        model_id: str | None = None,
+        fallback_provider: str | None = None,
+        fallback_base_url: str | None = None,
+        fallback_api_key: str | None = None,
+        fallback_model_id: str | None = None,
+    ) -> None:
+        self.last_call_diagnostics: dict[str, Any] = {}
+        self.primary_provider = self._build_provider(
+            provider_name=provider,
+            base_url=base_url,
+            api_key=api_key,
+            timeout_sec=timeout_sec,
+            model_id=model_id,
+        )
+        self.fallback_provider = None
+        if fallback_provider:
+            self.fallback_provider = self._build_provider(
+                provider_name=fallback_provider,
+                base_url=fallback_base_url,
+                api_key=fallback_api_key,
+                timeout_sec=timeout_sec,
+                model_id=fallback_model_id,
+            )
+
+    def generate_solution(
+        self,
+        *,
+        task_title: str,
+        task_text: str,
+        context_items: list[str],
+        retrieved_fragments: list[RetrievedFragment],
+        prompt_artifact: dict[str, Any] | None = None,
+    ) -> GenerationSolutionPayload:
+        sanitized_prompt_artifact = _sanitize_prompt_artifact(prompt_artifact)
+        payload = {
+            "task_title": task_title,
+            "task_text": task_text,
+            "context_items": context_items,
+            "retrieved_fragments": [asdict(item) for item in retrieved_fragments],
+            "prompt_artifact": sanitized_prompt_artifact,
+        }
+        failures: list[dict[str, Any]] = []
+        providers = [self.primary_provider]
+        if self.fallback_provider is not None:
+            providers.append(self.fallback_provider)
+        for index, provider in enumerate(providers):
+            try:
+                result, diagnostics = provider.generate_solution(payload)
+                diagnostics.fallback_used = index > 0
+                self.last_call_diagnostics = {
+                    "provider_name": diagnostics.provider_name,
+                    "model_id": diagnostics.model_id,
+                    "fallback_used": diagnostics.fallback_used,
+                    "finish_reason": diagnostics.finish_reason,
+                    "latency_ms": diagnostics.latency_ms,
+                    "attempt_count": index + 1,
+                    "failures": failures,
+                    "retrieval_context_contract": (sanitized_prompt_artifact or {}).get(
+                        "retrieval_contract_version"
+                    ),
+                    "retrieved_fragment_count": len(retrieved_fragments),
+                    "raw_documents_included": False,
+                }
+                result = _enrich_required_generation_lists(
+                    result,
+                    task_text=task_text,
+                    context_items=context_items,
+                )
+                result = _enrich_critical_section_source_refs(
+                    result,
+                    retrieved_fragments=retrieved_fragments,
+                )
+                result, section_guidance = _apply_section_guidance(
+                    result,
+                    task_title=task_title,
+                    task_text=task_text,
+                    context_items=context_items,
+                    retrieved_fragments=retrieved_fragments,
+                )
+                result = _enrich_critical_section_source_refs(
+                    result,
+                    retrieved_fragments=retrieved_fragments,
+                )
+                self.last_call_diagnostics = {
+                    **self.last_call_diagnostics,
+                    "derived_assumptions": len(result.assumptions),
+                    "derived_next_steps": len(result.next_steps),
+                    "critical_sections_with_refs": sum(
+                        1
+                        for section in result.sections
+                        if section.section_code in REQUIRED_SECTION_CODES
+                        and bool(section.source_refs)
+                    ),
+                    "section_guidance": section_guidance,
+                }
+                logger.info(
+                    "llm_prompt_artifact",
+                    extra={"stage": "llm_call", "stage_status": diagnostics.provider_name},
+                )
+                return result
+            except ValidationError as exc:
+                failures.append(
+                    {
+                        "provider": provider.provider_name,
+                        "error": str(exc),
+                        "error_code": getattr(exc, "error_code", "LLM_OUTPUT_SCHEMA_INVALID"),
+                        "exception": type(exc).__name__,
+                    }
+                )
+                if index == len(providers) - 1:
+                    raise
+                logger.warning(
+                    "llm_provider_validation_failed",
+                    extra={
+                        "stage": "llm_call",
+                        "stage_status": "invalid_output",
+                        "provider_name": provider.provider_name,
+                        "model_id": getattr(provider, "model_id", None),
+                        "error_code": getattr(exc, "error_code", "LLM_OUTPUT_SCHEMA_INVALID"),
+                    },
+                )
+                continue
+            except Exception as exc:  # pragma: no cover - defensive fallback path
+                logger.exception(
+                    "llm_provider_failed",
+                    extra={
+                        "stage": "llm_call",
+                        "stage_status": "failed",
+                        "provider_name": provider.provider_name,
+                        "model_id": getattr(provider, "model_id", None),
+                    },
+                )
+                failures.append(
+                    {
+                        "provider": provider.provider_name,
+                        "error": str(exc),
+                        "exception": type(exc).__name__,
+                    }
+                )
+                continue
+        raise DependencyUnavailableError("llm_gateway", f"All LLM providers failed: {failures}")
+
+    def healthcheck(self) -> dict[str, Any]:
+        primary = {
+            "provider_name": getattr(self.primary_provider, "provider_name", "unknown"),
+            "model_id": getattr(self.primary_provider, "model_id", None),
+        }
+        base_url = getattr(self.primary_provider, "base_url", None)
+        if (
+            primary["provider_name"] in {"http_json", "openai_compatible", "local_inference"}
+            and not base_url
+        ):
+            return {
+                **primary,
+                "healthy": False,
+                "details": "LLM provider base URL is not configured",
+            }
+        try:
+            if base_url:
+                request_url = base_url
+                resolver = getattr(self.primary_provider, "_resolve_chat_completions_url", None)
+                if callable(resolver):
+                    request_url = resolver()
+                with httpx.Client(timeout=5.0, follow_redirects=True) as client:
+                    response = client.get(request_url)
+                healthy = _is_probe_status_healthy(response.status_code)
+                return {
+                    **primary,
+                    "healthy": healthy,
+                    "status_code": response.status_code,
+                    "endpoint": request_url,
+                    "details": "LLM endpoint responded"
+                    if healthy
+                    else f"LLM endpoint returned probe status {response.status_code}",
+                }
+            return {
+                **primary,
+                "healthy": True,
+                "details": "Local provider does not require external health probe",
+            }
+        except Exception as exc:  # pragma: no cover - network dependent
+            return {
+                **primary,
+                "healthy": False,
+                "details": str(exc),
+                "exception": type(exc).__name__,
+            }
+
+    def _build_provider(
+        self,
+        *,
+        provider_name: str,
+        base_url: str | None,
+        api_key: str | None,
+        timeout_sec: float,
+        model_id: str | None,
+    ) -> SolutionProvider:
+        resolved_model_id = model_id or f"{provider_name}-default"
+        if provider_name == "http_json":
+            return HttpJsonSolutionProvider(
+                base_url=base_url,
+                api_key=api_key,
+                timeout_sec=timeout_sec,
+                model_id=resolved_model_id,
+            )
+        if provider_name == "openai_compatible":
+            return OpenAICompatibleSolutionProvider(
+                base_url=base_url,
+                api_key=api_key,
+                timeout_sec=timeout_sec,
+                model_id=resolved_model_id,
+            )
+        if provider_name in {"local_inference", "ollama", "local_openai_compatible"}:
+            return LocalInferenceSolutionProvider(
+                base_url=base_url,
+                api_key=api_key,
+                timeout_sec=timeout_sec,
+                model_id=resolved_model_id,
+            )
+        raise DependencyUnavailableError(
+            "llm_provider",
+            f"Unsupported provider: {provider_name}",
+            message=f"Unsupported provider: {provider_name}",
+        )

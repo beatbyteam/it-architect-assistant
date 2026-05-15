@@ -1,0 +1,17 @@
+export const queryKeys = {
+  task: (taskId: string) => ['task', taskId] as const,
+  taskActiveVersion: (taskId: string) => ['task-active-version', taskId] as const,
+  generationRun: (generationRunId: string) => ['generation-run', generationRunId] as const,
+  solution: (solutionId: string) => ['solution', solutionId] as const,
+  solutionRendered: (solutionId: string) => ['solution-rendered', solutionId] as const,
+  solutionModel: (solutionId: string) => ['solution-model', solutionId] as const,
+  solutionSectionAssessments: (solutionId: string) => ['solution-section-assessments', solutionId] as const,
+  verificationRun: (verificationRunId: string) => ['verification-run', verificationRunId] as const,
+  protocol: (protocolId: string) => ['protocol', protocolId] as const,
+  protocolRendered: (protocolId: string) => ['protocol-rendered', protocolId] as const,
+  protocolViolations: (protocolId: string) => ['protocol-violations', protocolId] as const,
+  knowledgeDocument: (documentId: string) => ['knowledge-document', documentId] as const,
+  knowledgeDocumentSnapshot: (documentId: string, knowledgeVersionId?: string | null) => ['knowledge-document-snapshot', documentId, knowledgeVersionId ?? null] as const,
+  knowledgeDocumentMemory: (documentId: string, knowledgeVersionId?: string | null) => ['knowledge-document-memory', documentId, knowledgeVersionId ?? null] as const,
+  operationDetail: (operationId: string) => ['operation-detail', operationId] as const,
+};

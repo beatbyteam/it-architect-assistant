@@ -1,0 +1,89 @@
+{
+  "bundle_code": "demo_baseline",
+  "bundle_name": "Demo canonical knowledge bundle",
+  "sources": [
+    {
+      "source_type": "repository",
+      "name": "Canonical MVP Required Basis",
+      "base_uri": "repository",
+      "criticality": "required",
+      "refresh_policy": "manual",
+      "documents": [
+        {
+          "uri": "repository/oda_core_principles.md",
+          "title": "ODA Core Principles",
+          "document_type": "normative",
+          "version_label": "ODA-curated-2026.03",
+          "is_latest": true
+        },
+        {
+          "uri": "repository/ig1242_oda_component_inventory.md",
+          "title": "IG1242 / ODA Component Inventory",
+          "document_type": "normative",
+          "version_label": "IG1242-curated-2026.03",
+          "is_latest": true
+        },
+        {
+          "uri": "repository/archimate_3_2_modelling_rules.md",
+          "title": "ArchiMate 3.2 Modelling Rules",
+          "document_type": "architecture",
+          "version_label": "ArchiMate-3.2-demo",
+          "is_latest": true
+        },
+        {
+          "uri": "repository/selected_technology_standard.md",
+          "title": "Selected Technology Standard",
+          "document_type": "technology",
+          "version_label": "TechStd-demo-2026.03",
+          "is_latest": true
+        },
+        {
+          "uri": "repository/solution_structure_and_traceability.md",
+          "title": "Solution Structure and Traceability",
+          "document_type": "architecture",
+          "version_label": "MVP-structure-2026.03",
+          "is_latest": true
+        },
+        {
+          "uri": "repository/togaf_document_structure.md",
+          "title": "TOGAF Document Structure Guidance",
+          "document_type": "architecture",
+          "version_label": "TOGAF-structure-demo-2026.03",
+          "is_latest": true
+        },
+        {
+          "uri": "repository/archimate_section_mapping.md",
+          "title": "ArchiMate 3.2 Section Mapping",
+          "document_type": "architecture",
+          "version_label": "ArchiMate-mapping-demo-2026.03",
+          "role_code": "reference_only",
+          "required_flag": false,
+          "is_latest": true
+        }
+      ]
+    },
+    {
+      "source_type": "url_list",
+      "name": "MVP Reference Templates",
+      "base_uri": "url_docs",
+      "criticality": "optional",
+      "refresh_policy": "manual",
+      "documents": [
+        {
+          "uri": "url_docs/corporate_templates.md",
+          "title": "Corporate Templates and Principles",
+          "document_type": "architecture",
+          "version_label": "Reference-demo-2026.03",
+          "is_latest": true
+        },
+        {
+          "uri": "url_docs/integration_patterns.md",
+          "title": "Integration Patterns",
+          "document_type": "architecture",
+          "version_label": "Reference-demo-2026.03",
+          "is_latest": true
+        }
+      ]
+    }
+  ]
+}

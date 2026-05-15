@@ -1,0 +1,188 @@
+{
+  "info": {
+    "_postman_id": "6f75d26d-bc76-4f92-9bfb-5f972d40a9d7",
+    "name": "IT Architect Assistant Smoke",
+    "description": "Smoke checks for the local IT Architect Assistant runtime.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Gateway serves frontend",
+      "request": {
+        "method": "GET",
+        "url": "{{rootUrl}}/"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('gateway returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('gateway returns HTML', function () {",
+              "  const contentType = pm.response.headers.get('Content-Type') || '';",
+              "  pm.expect(contentType).to.include('text/html');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "API index",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('api index returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('api index has expected payload', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('ok');",
+              "  pm.expect(body.api_version).to.eql('v1');",
+              "  pm.expect(body.health.live).to.eql('/api/v1/health/live');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "OpenAPI schema",
+      "request": {
+        "method": "GET",
+        "url": "{{rootUrl}}/openapi.json"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('openapi returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('openapi document has title and paths', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.openapi).to.match(/^3\\./);",
+              "  pm.expect(body.info.title).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.paths['/api/v1/health/live']).to.be.an('object');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health live",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health/live"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('live returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('live reports ok', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('ok');",
+              "  pm.expect(body.app_name).to.be.a('string').and.not.empty;",
+              "  pm.expect(body.version).to.be.a('string').and.not.empty;",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health ready",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health/ready"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('ready returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('ready reports dependencies healthy', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('ok');",
+              "  const dependencies = body.dependencies || [];",
+              "  const names = dependencies.map((item) => item.name);",
+              "  pm.expect(names).to.include('postgres');",
+              "  pm.expect(names).to.include('redis');",
+              "  pm.expect(names).to.include('celery-worker');",
+              "  dependencies.forEach((item) => pm.expect(item.healthy, item.name).to.eql(true));",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health dependencies",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/health/dependencies"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('dependencies returns 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('dependencies are healthy', function () {",
+              "  const body = pm.response.json();",
+              "  pm.expect(body.status).to.eql('ok');",
+              "  pm.expect(body.dependencies).to.be.an('array').and.not.empty;",
+              "  body.dependencies.forEach((item) => {",
+              "    pm.expect(item.name).to.be.a('string').and.not.empty;",
+              "    pm.expect(item.status).to.eql('healthy');",
+              "    pm.expect(item.healthy).to.eql(true);",
+              "  });",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "rootUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080/api/v1"
+    }
+  ]
+}
