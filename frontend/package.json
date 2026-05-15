@@ -1,0 +1,33 @@
+{
+  "name": "it-arch-assistant-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node ./node_modules/vite/bin/vite.js",
+    "build": "node ./node_modules/typescript/lib/tsc.js --noEmit && node ./node_modules/vite/bin/vite.js build",
+    "preview": "node ./node_modules/vite/bin/vite.js preview",
+    "typecheck": "node ./node_modules/typescript/lib/tsc.js --noEmit",
+    "generate:openapi": "python ../backend/scripts/export_openapi_schema.py --out ./openapi.json",
+    "generate:types": "node ./scripts/generate-openapi-types.mjs",
+    "check:contract": "npm run generate:openapi && npm run generate:types && git diff --exit-code -- ./openapi.json ./src/generated/openapi.ts ./src/types/api.ts ./src/types/openapi-contract.ts",
+    "lint": "node ./scripts/lint.mjs",
+    "test": "npm run test:unit && npm run test:smoke",
+    "test:unit": "node ./scripts/run-bundled-tests.mjs unit",
+    "test:e2e": "npm run test:smoke",
+    "test:smoke": "node ./scripts/run-bundled-tests.mjs smoke"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.68.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.6.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}

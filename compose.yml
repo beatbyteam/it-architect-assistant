@@ -1,0 +1,185 @@
+name: ${COMPOSE_PROJECT_NAME:-it-arch-mvp}
+
+x-backend-env: &backend-env
+  APP_NAME: ${APP_NAME:-IT Architect Assistant Backend}
+  APP_VERSION: ${APP_VERSION:-0.1.0}
+  APP_ENV: ${APP_ENV:-local}
+  DEBUG: "${DEBUG:-true}"
+  API_V1_PREFIX: ${API_V1_PREFIX:-/api/v1}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  ALLOWED_CORS_ORIGINS: '${ALLOWED_CORS_ORIGINS:-["http://localhost:8080","http://localhost:4173"]}'
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/it_arch_assistant}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
+  CELERY_TASK_ALWAYS_EAGER: "${CELERY_TASK_ALWAYS_EAGER:-false}"
+  HEALTH_CHECK_WORKER: "${HEALTH_CHECK_WORKER:-true}"
+  HEALTH_CHECK_REDIS: "${HEALTH_CHECK_REDIS:-true}"
+  HEALTH_CHECK_DB: "${HEALTH_CHECK_DB:-true}"
+  HEALTH_CHECK_LLM: "${HEALTH_CHECK_LLM:-false}"
+  HEALTH_CHECK_EMBEDDING: "${HEALTH_CHECK_EMBEDDING:-false}"
+  HEALTH_CHECK_ACTIVE_KNOWLEDGE_VERSION: "${HEALTH_CHECK_ACTIVE_KNOWLEDGE_VERSION:-false}"
+  REQUEST_ID_HEADER: ${REQUEST_ID_HEADER:-X-Request-ID}
+  AUTH_MODE: ${AUTH_MODE:-local_noauth}
+  AUTH_HEADER_LOGIN: ${AUTH_HEADER_LOGIN:-X-Auth-Login}
+  AUTH_HEADER_DISPLAY_NAME: ${AUTH_HEADER_DISPLAY_NAME:-X-Auth-Display-Name}
+  AUTH_HEADER_ROLES: ${AUTH_HEADER_ROLES:-X-Auth-Roles}
+  AUTH_HEADER_ACCOUNT_TYPE: ${AUTH_HEADER_ACCOUNT_TYPE:-X-Auth-Account-Type}
+  AUTH_DEFAULT_DISPLAY_NAME: ${AUTH_DEFAULT_DISPLAY_NAME:-User}
+  LOCAL_USER_LOGIN: ${LOCAL_USER_LOGIN:-local.user}
+  LOCAL_USER_DISPLAY_NAME: ${LOCAL_USER_DISPLAY_NAME:-Local User}
+  LOCAL_USER_ROLES: '${LOCAL_USER_ROLES:-["USER"]}'
+  LOCAL_USER_ACCOUNT_TYPE: ${LOCAL_USER_ACCOUNT_TYPE:-human}
+  MVP_PERMISSIVE_LOCAL_ACCESS: "${MVP_PERMISSIVE_LOCAL_ACCESS:-true}"
+  MVP_GLOBAL_ROLE_CODES: ${MVP_GLOBAL_ROLE_CODES:-ADMIN,MVP_ADMIN}
+  KNOWLEDGE_FETCH_TIMEOUT_SEC: "${KNOWLEDGE_FETCH_TIMEOUT_SEC:-30}"
+  KNOWLEDGE_UPLOAD_DIR: ${KNOWLEDGE_UPLOAD_DIR:-./data/knowledge_uploads}
+  KNOWLEDGE_ALLOWED_LOCAL_SOURCE_ROOTS: '${KNOWLEDGE_ALLOWED_LOCAL_SOURCE_ROOTS:-["./data/knowledge_uploads","./data/knowledge_sources","./app/bootstrap/knowledge_bundle"]}'
+  KNOWLEDGE_ALLOW_UNRESTRICTED_LOCAL_SOURCES: "${KNOWLEDGE_ALLOW_UNRESTRICTED_LOCAL_SOURCES:-false}"
+  KNOWLEDGE_CHUNK_MAX_CHARS: "${KNOWLEDGE_CHUNK_MAX_CHARS:-2200}"
+  KNOWLEDGE_CHUNK_TARGET_TOKENS: "${KNOWLEDGE_CHUNK_TARGET_TOKENS:-420}"
+  KNOWLEDGE_CHUNK_OVERLAP_PCT: "${KNOWLEDGE_CHUNK_OVERLAP_PCT:-5}"
+  KNOWLEDGE_LARGE_DOCUMENT_THRESHOLD_BYTES: "${KNOWLEDGE_LARGE_DOCUMENT_THRESHOLD_BYTES:-1048576}"
+  KNOWLEDGE_LARGE_DOCUMENT_CHUNK_MAX_CHARS: "${KNOWLEDGE_LARGE_DOCUMENT_CHUNK_MAX_CHARS:-6000}"
+  KNOWLEDGE_LARGE_DOCUMENT_CHUNK_TARGET_TOKENS: "${KNOWLEDGE_LARGE_DOCUMENT_CHUNK_TARGET_TOKENS:-900}"
+  KNOWLEDGE_LARGE_DOCUMENT_CHUNK_OVERLAP_PCT: "${KNOWLEDGE_LARGE_DOCUMENT_CHUNK_OVERLAP_PCT:-0}"
+  KNOWLEDGE_LARGE_DOCUMENT_MAX_CHUNKS: "${KNOWLEDGE_LARGE_DOCUMENT_MAX_CHUNKS:-240}"
+  KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS: "${KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS:-12}"
+  KNOWLEDGE_AUTO_SYNC_INTERVAL_DAYS: "${KNOWLEDGE_AUTO_SYNC_INTERVAL_DAYS:-30}"
+  KNOWLEDGE_EXECUTE_INLINE: "${KNOWLEDGE_EXECUTE_INLINE:-false}"
+  KNOWLEDGE_SYNC_SLA_SECONDS: "${KNOWLEDGE_SYNC_SLA_SECONDS:-3600}"
+  KNOWLEDGE_MAX_DOCUMENT_SIZE_BYTES: "${KNOWLEDGE_MAX_DOCUMENT_SIZE_BYTES:-104857600}"
+  KNOWLEDGE_MAX_UPLOAD_SIZE_BYTES: "${KNOWLEDGE_MAX_UPLOAD_SIZE_BYTES:-104857600}"
+  EMBEDDING_PROFILE: ${EMBEDDING_PROFILE:-bge_m3_default}
+  EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-local_openai_compatible}
+  EMBEDDING_DIMENSIONS: "${EMBEDDING_DIMENSIONS:-1024}"
+  EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://ollama:11434/v1}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  EMBEDDING_TIMEOUT_SEC: "${EMBEDDING_TIMEOUT_SEC:-300}"
+  EMBEDDING_BATCH_SIZE: "${EMBEDDING_BATCH_SIZE:-64}"
+  EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-bge-m3}
+  RERANKER_PROVIDER: ${RERANKER_PROVIDER:-heuristic}
+  RERANKER_BASE_URL: ${RERANKER_BASE_URL:-}
+  RERANKER_API_KEY: ${RERANKER_API_KEY:-}
+  RERANKER_TIMEOUT_SEC: "${RERANKER_TIMEOUT_SEC:-30}"
+  RERANKER_MODEL_ID: ${RERANKER_MODEL_ID:-}
+  GENERATION_EXECUTE_INLINE: "${GENERATION_EXECUTE_INLINE:-false}"
+  GENERATION_PROMPT_MAX_INPUT_TOKENS: "${GENERATION_PROMPT_MAX_INPUT_TOKENS:-3000}"
+  GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS: "${GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS:-1200}"
+  LLM_PROVIDER: ${LLM_PROVIDER:-openai_compatible}
+  LLM_BASE_URL: ${LLM_BASE_URL:-http://ollama:11434/v1}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_TIMEOUT_SEC: "${LLM_TIMEOUT_SEC:-1000}"
+  LLM_MODEL_ID: ${LLM_MODEL_ID:-qwen2.5:7b-instruct}
+  LLM_FALLBACK_PROVIDER: ${LLM_FALLBACK_PROVIDER:-}
+  LLM_FALLBACK_BASE_URL: ${LLM_FALLBACK_BASE_URL:-}
+  LLM_FALLBACK_API_KEY: ${LLM_FALLBACK_API_KEY:-}
+  LLM_FALLBACK_MODEL_ID: ${LLM_FALLBACK_MODEL_ID:-}
+  VERIFICATION_EXECUTE_INLINE: "${VERIFICATION_EXECUTE_INLINE:-false}"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-it_arch_assistant}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-it_arch_assistant}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5433:5432"
+
+  redis:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:0.11.4
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  api:
+    build:
+      context: ./backend
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      <<: *backend-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - knowledge_uploads:/app/data/knowledge_uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live', timeout=2).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  knowledge-bootstrap:
+    build:
+      context: ./backend
+    command: python scripts/bootstrap_knowledge_baseline.py
+    environment:
+      <<: *backend-env
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+
+  worker:
+    build:
+      context: ./backend
+    command: celery -A app.tasks.workers.celery_app.celery_app worker -l INFO
+    environment:
+      <<: *backend-env
+    volumes:
+      - knowledge_uploads:/app/data/knowledge_uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "scripts/worker_healthcheck.py"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080/api/v1}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  gateway:
+    image: nginx:1.27-alpine
+    depends_on:
+      api:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    volumes:
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+
+volumes:
+  knowledge_uploads:
+  ollama:

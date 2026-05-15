@@ -1,0 +1,466 @@
+{
+  "cases": [
+    {
+      "case_id": "canonical_customer_onboarding",
+      "task_title": "Автоматизация онбординга клиентов",
+      "task_text": "Нужно ускорить онбординг клиентов, обеспечить контроль статусов заявки, публикацию API для смежных систем и трассируемость архитектурных решений до бизнес-целей.",
+      "expect_validation": "pass",
+      "expected_final_status": "passed",
+      "expected_rule_statuses": {
+        "VR-STR-06": "passed",
+        "VR-STR-07": "passed",
+        "VR-NRM-05": "passed",
+        "VR-NRM-06": "passed",
+        "VR-CNS-03": "passed",
+        "VR-CNS-04": "passed",
+        "VR-CNS-05": "passed",
+        "VR-CNS-06": "passed"
+      },
+      "payload": {
+        "solution_title": "TOGAF-решение для платформы онбординга клиентов",
+        "executive_summary": "Решение формирует канонический контур платформы онбординга клиентов: бизнес-процессы и роли фиксируются в бизнес-архитектуре, ключевые Data Object и их владельцы раскрываются в архитектуре данных, прикладные Application Component и Application Service — в архитектуре приложений, а Node, System Software и Technology Service — в технологической архитектуре. Такой документ поддерживает TOGAF-структуру и обеспечивает трассируемость от бизнес-целей до прикладных и технологических решений.",
+        "sections": [
+          {
+            "section_code": "general_information",
+            "title": "Общие сведения",
+            "body_markdown": "Документ описывает границы решения для платформы онбординга клиентов, исходный контекст проекта, заинтересованных лиц и используемую методологическую базу. Архитектурное описание предназначено для согласования между бизнесом, архитекторами и командами внедрения.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-general"
+              }
+            ]
+          },
+          {
+            "section_code": "business_tasks_description",
+            "title": "Описание бизнес-задач",
+            "body_markdown": "Цель бизнес-задачи — сократить время онбординга, обеспечить прозрачный контроль статусов заявки и передавать результат в смежные системы. Ожидаемый эффект включает ускорение обработки заявок, снижение ручных операций и повышение управляемости процесса.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-task"
+              }
+            ]
+          },
+          {
+            "section_code": "it_architecture_content",
+            "title": "Содержание ИТ-архитектуры",
+            "body_markdown": "Архитектурное решение строится по TOGAF-структуре и использует ArchiMate 3.2 для описания сущностей и связей. Разделы 3.1–3.4 связывают бизнес-слой, Data Object, Application Component и Technology Service в единую трассируемую картину.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-architecture"
+              }
+            ]
+          },
+          {
+            "section_code": "business_architecture",
+            "title": "Бизнес-архитектура",
+            "body_markdown": "Business Actor Клиент инициирует Business Process онбординга, а Business Role Customer Onboarding Office координирует проверку данных и предоставляет Business Service регистрации клиента. Business Object пакет заявки и Contract обслуживания используются как управляемые бизнес-объекты процесса.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-business"
+              }
+            ]
+          },
+          {
+            "section_code": "data_architecture",
+            "title": "Архитектура данных",
+            "body_markdown": "Data Object Application Package создаётся source Customer Portal, владельцем выступает Onboarding Hub, а consumer CRM Sync использует этот объект для загрузки клиента в корпоративный контур. Application Service публикации статусов и Application Interface API обеспечивают контролируемую передачу данных и интеграций между системами.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-data"
+              }
+            ]
+          },
+          {
+            "section_code": "application_architecture",
+            "title": "Архитектура приложений",
+            "body_markdown": "Application Component Onboarding Hub предоставляет Application Service управления заявкой через Application Interface внешнего API. Application Component CRM Sync реализует Application Process передачи данных в CRM и использует Data Object Application Package для синхронизации клиентского профиля.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-application"
+              }
+            ]
+          },
+          {
+            "section_code": "technology_architecture",
+            "title": "Технологическая архитектура",
+            "body_markdown": "Node Runtime Cluster размещает System Software Kubernetes runtime, PostgreSQL и Redis и предоставляет Technology Service исполнения и хранения данных для Onboarding Hub и CRM Sync. Artifact контейнерного пакета и Network сегмента интеграции обеспечивают эксплуатационный контур решения.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-technology"
+              }
+            ]
+          },
+          {
+            "section_code": "additional_information",
+            "title": "Дополнительные сведения",
+            "body_markdown": "Допущение: внешний контур клиента использует единый канал аутентификации. Ограничение: публикация API выполняется только через корпоративный gateway. Риски связаны с качеством исходных данных и сроками подключения CRM, а дальнейшие шаги включают детализацию интеграционного договора и план промышленного внедрения.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-additional"
+              }
+            ]
+          }
+        ],
+        "components": [
+          {
+            "component_name": "Customer Onboarding Office",
+            "role_description": "Business Role управляет Business Process онбординга, координирует проверки и эскалации по клиентской заявке.",
+            "boundary_type": "business_architecture",
+            "external_flag": false,
+            "interfaces": []
+          },
+          {
+            "component_name": "Onboarding Hub",
+            "role_description": "Application Component реализует Application Service управления заявкой, публикует статусы и оркестрирует шаги процесса.",
+            "boundary_type": "application_architecture",
+            "external_flag": false,
+            "technology_stack": "Python, FastAPI, PostgreSQL",
+            "interfaces": [
+              {
+                "interface_name": "Partner API",
+                "protocol": "HTTPS",
+                "description": "API для статусов и подачи заявки"
+              }
+            ]
+          },
+          {
+            "component_name": "CRM Sync",
+            "role_description": "Application Component выполняет Application Process синхронизации клиента и гарантирует доставку Data Object в CRM.",
+            "boundary_type": "application_architecture",
+            "external_flag": false,
+            "technology_stack": "Python, Redis",
+            "interfaces": [
+              {
+                "interface_name": "CRM Integration API",
+                "protocol": "HTTPS",
+                "description": "Канал синхронизации с CRM"
+              }
+            ]
+          },
+          {
+            "component_name": "Runtime Cluster",
+            "role_description": "Node и Technology Service предоставляют среду исполнения, сетевую связанность и сервисы хранения для прикладных компонентов.",
+            "boundary_type": "technology_architecture",
+            "external_flag": false,
+            "technology_stack": "Kubernetes, PostgreSQL, Redis",
+            "interfaces": []
+          }
+        ],
+        "integrations": [
+          {
+            "from_component": "Onboarding Hub",
+            "to_component": "CRM Sync",
+            "interaction": "Передача статусов и атрибутов клиента в CRM интеграционный контур",
+            "protocol": "HTTPS",
+            "rationale": "Сервис синхронизации получает нормализованный пакет заявки для регистрации клиента без ручного повторного ввода."
+          }
+        ],
+        "assumptions": [
+          "Корпоративный gateway доступен для публикации внешнего API и маршрутизации трафика между доменами.",
+          "Справочник статусов клиента согласован с владельцем бизнес-процесса и не требует отдельной мастер-системы на первом этапе."
+        ],
+        "next_steps": [
+          "Подготовить детальный договор интеграции между Onboarding Hub и CRM Sync с контрактами API и событиями.",
+          "Уточнить эксплуатационные требования к Runtime Cluster и график промышленного ввода решения."
+        ],
+        "risks": [
+          {
+            "title": "Качество входных данных клиента",
+            "severity": "major",
+            "description": "Неполные или неконсистентные атрибуты клиента могут замедлить Business Process и вызвать ошибки при синхронизации.",
+            "mitigation": "Добавить валидацию обязательных полей и контроль отклонённых заявок до передачи в CRM."
+          },
+          {
+            "title": "Задержка подключения CRM",
+            "severity": "major",
+            "description": "Сроки подключения CRM Sync зависят от готовности смежной команды и корпоративного шлюза.",
+            "mitigation": "Зафиксировать план интеграционного тестирования и предусмотреть временный буфер в графике внедрения."
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "canonical_batch_reporting_with_data_warning",
+      "task_title": "Пакетная загрузка управленческой отчётности",
+      "task_text": "Нужно собрать архитектурное решение для пакетной загрузки управленческой отчётности и при этом минимизировать ручные операции.",
+      "expect_validation": "pass",
+      "expected_final_status": "passed_with_comments",
+      "expected_rule_statuses": {
+        "VR-CNS-05": "warning",
+        "VR-CNS-06": "warning",
+        "VR-STR-06": "passed",
+        "VR-NRM-05": "passed"
+      },
+      "payload": {
+        "solution_title": "TOGAF-решение для пакетной загрузки отчётности",
+        "executive_summary": "Решение описывает пакетный контур загрузки управленческой отчётности в канонической TOGAF-структуре. Бизнес-процесс, прикладной сервис загрузки и технологический контур описаны по слоям, однако происхождение и потребление ключевых Data Object остаются менее детализированными, что должно отразиться в протоколе проверки.",
+        "sections": [
+          {
+            "section_code": "general_information",
+            "title": "Общие сведения",
+            "body_markdown": "Документ задаёт границы решения для пакетной загрузки отчётности и описывает контекст внедрения в рамках корпоративного контура.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-general"
+              }
+            ]
+          },
+          {
+            "section_code": "business_tasks_description",
+            "title": "Описание бизнес-задач",
+            "body_markdown": "Бизнес-задача состоит в том, чтобы сократить ручную подготовку отчётов и обеспечить предсказуемое выполнение ночных загрузок с контролем завершения.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-task"
+              }
+            ]
+          },
+          {
+            "section_code": "it_architecture_content",
+            "title": "Содержание ИТ-архитектуры",
+            "body_markdown": "Архитектурное решение использует TOGAF-структуру и ArchiMate 3.2 для описания слоёв и их связей, сохраняя трассируемость решения.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-architecture"
+              }
+            ]
+          },
+          {
+            "section_code": "business_architecture",
+            "title": "Бизнес-архитектура",
+            "body_markdown": "Business Role Reporting Operations запускает Business Process ночной загрузки и предоставляет Business Service публикации управленческой отчётности для внутренних пользователей.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-business"
+              }
+            ]
+          },
+          {
+            "section_code": "data_architecture",
+            "title": "Архитектура данных",
+            "body_markdown": "Data Object Reporting Package агрегируется в пакетном контуре и передаётся через Application Interface сервиса загрузки. Application Service пакетной обработки публикует результат в downstream-контур, но источник и consumer описаны кратко.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-data"
+              }
+            ]
+          },
+          {
+            "section_code": "application_architecture",
+            "title": "Архитектура приложений",
+            "body_markdown": "Application Component Batch Loader предоставляет Application Service загрузки и использует Application Interface для вызова downstream API отчётности.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-application"
+              }
+            ]
+          },
+          {
+            "section_code": "technology_architecture",
+            "title": "Технологическая архитектура",
+            "body_markdown": "Node Runtime Cluster предоставляет Technology Service исполнения пакетных заданий, а System Software Kubernetes runtime и PostgreSQL обеспечивают хранение и управление состоянием Batch Loader.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-technology"
+              }
+            ]
+          },
+          {
+            "section_code": "additional_information",
+            "title": "Дополнительные сведения",
+            "body_markdown": "Допущение: пакетные окна согласованы с владельцами отчётности. Ограничение: решение работает только в ночном окне, а риски связаны с объёмом данных и качеством входных файлов.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-additional"
+              }
+            ]
+          }
+        ],
+        "components": [
+          {
+            "component_name": "Reporting Operations",
+            "role_description": "Business Role координирует Business Process ночной пакетной загрузки и контроль публикации отчётности.",
+            "boundary_type": "business_architecture",
+            "external_flag": false,
+            "interfaces": []
+          },
+          {
+            "component_name": "Batch Loader",
+            "role_description": "Application Component реализует Application Service пакетной загрузки и оркестрирует передачу пакета отчётности.",
+            "boundary_type": "application_architecture",
+            "external_flag": false,
+            "technology_stack": "Python, PostgreSQL",
+            "interfaces": [
+              {
+                "interface_name": "Reporting API",
+                "protocol": "HTTPS",
+                "description": "Вызов downstream API публикации"
+              }
+            ]
+          },
+          {
+            "component_name": "Runtime Cluster",
+            "role_description": "Node и Technology Service обеспечивают расписание пакетных работ, хранение состояния и публикацию логов.",
+            "boundary_type": "technology_architecture",
+            "external_flag": false,
+            "technology_stack": "Kubernetes, PostgreSQL",
+            "interfaces": []
+          }
+        ],
+        "integrations": [
+          {
+            "from_component": "Batch Loader",
+            "to_component": "Runtime Cluster",
+            "interaction": "Запуск и мониторинг пакетной загрузки отчётности",
+            "protocol": "HTTPS",
+            "rationale": "Batch Loader использует платформенный контур выполнения для расписания, журналирования и контроля завершения работ."
+          }
+        ],
+        "assumptions": [
+          "Окно пакетной загрузки остаётся стабильным и не конфликтует с регламентными процедурами сопровождения.",
+          "Downstream API публикации остаётся совместимым с форматом пакета отчётности на первом этапе внедрения."
+        ],
+        "next_steps": [
+          "Уточнить источник Data Object Reporting Package и зафиксировать владельца данных.",
+          "Подготовить регламент сопровождения пакетных загрузок и контроль ночных сбоев."
+        ],
+        "risks": [
+          {
+            "title": "Рост объёма пакета",
+            "severity": "major",
+            "description": "Увеличение объёма отчётности может нарушить ночное окно обработки.",
+            "mitigation": "Провести нагрузочное тестирование и ввести мониторинг длительности пакетных прогонов."
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "noncanonical_sections_are_rejected",
+      "task_title": "Проверка отказа от legacy-разделов",
+      "task_text": "Нужно убедиться, что генерация не принимает внеплановые разделы и сразу работает только в новой канонической структуре.",
+      "expect_validation": "fail",
+      "expected_error_code": "SOLUTION_UNEXPECTED_SECTIONS",
+      "payload": {
+        "solution_title": "Некорректный документ с legacy-разделом",
+        "executive_summary": "Этот документ намеренно содержит дополнительный legacy-раздел, чтобы проверить отказ от старого свободного формата и жёсткий переход на TOGAF-структуру.",
+        "sections": [
+          {
+            "section_code": "general_information",
+            "title": "Общие сведения",
+            "body_markdown": "Раздел присутствует в канонической схеме и содержит вводный контекст решения.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-general"
+              }
+            ]
+          },
+          {
+            "section_code": "business_tasks_description",
+            "title": "Описание бизнес-задач",
+            "body_markdown": "Раздел содержит описание бизнес-целей и ожидаемого эффекта для системы.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-task"
+              }
+            ]
+          },
+          {
+            "section_code": "it_architecture_content",
+            "title": "Содержание ИТ-архитектуры",
+            "body_markdown": "Раздел описывает архитектурную рамку и дальнейшую детализацию слоёв.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-architecture"
+              }
+            ]
+          },
+          {
+            "section_code": "business_architecture",
+            "title": "Бизнес-архитектура",
+            "body_markdown": "Business Actor инициирует Business Process и предоставляет Business Service в рамках модели.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-business"
+              }
+            ]
+          },
+          {
+            "section_code": "data_architecture",
+            "title": "Архитектура данных",
+            "body_markdown": "Data Object создаётся source системой и используется consumer приложением.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-data"
+              }
+            ]
+          },
+          {
+            "section_code": "components_matrix",
+            "title": "Матрица компонентов",
+            "body_markdown": "Legacy-раздел, который не должен быть разрешён в новой версии проекта.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-legacy"
+              }
+            ]
+          },
+          {
+            "section_code": "application_architecture",
+            "title": "Архитектура приложений",
+            "body_markdown": "Application Component предоставляет Application Service через Application Interface и использует Data Object.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-application"
+              }
+            ]
+          },
+          {
+            "section_code": "technology_architecture",
+            "title": "Технологическая архитектура",
+            "body_markdown": "Node размещает System Software и предоставляет Technology Service в эксплуатационном контуре.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-technology"
+              }
+            ]
+          },
+          {
+            "section_code": "additional_information",
+            "title": "Дополнительные сведения",
+            "body_markdown": "Допущение и ограничения зафиксированы для демонстрации структуры.",
+            "source_refs": [
+              {
+                "fragment_id": "frag-additional"
+              }
+            ]
+          }
+        ],
+        "components": [
+          {
+            "component_name": "Legacy Guard",
+            "role_description": "Application Component существует только для проверки отказа от старого шаблона.",
+            "boundary_type": "application_architecture",
+            "external_flag": false,
+            "technology_stack": "Python",
+            "interfaces": []
+          }
+        ],
+        "integrations": [],
+        "assumptions": [
+          "Проверка выполняется в тестовом режиме без публикации результата."
+        ],
+        "next_steps": [
+          "Убедиться, что система отвергает документ ещё на этапе канонической валидации."
+        ],
+        "risks": [
+          {
+            "title": "Ошибочный legacy-шаблон",
+            "severity": "major",
+            "description": "Старые секции могут снова попасть в генерацию без жёсткой валидации.",
+            "mitigation": "Сохранить строгую проверку состава разделов в новой версии."
+          }
+        ]
+      }
+    }
+  ]
+}
