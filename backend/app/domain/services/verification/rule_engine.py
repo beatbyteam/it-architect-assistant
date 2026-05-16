@@ -35,13 +35,13 @@ class VerificationRuleEngine:
             executor = self.executors.get(rule.group)
             if executor is None:
                 raise ValidationError(
-                    f"Executor group is not configured for rule {rule.code}",
+                    f"Для правила {rule.code} не настроена группа обработчиков",
                     error_code="VERIFICATION_EXECUTOR_GROUP_MISSING",
                 )
             try:
                 results.append(executor.execute(rule=rule, context=context, support=support))
             except Exception as exc:  # pragma: no cover
-                raise RuntimeError(f"Verification rule execution failed for {rule.code}") from exc
+                raise RuntimeError(f"Не удалось выполнить правило проверки {rule.code}") from exc
         final_status = aggregate_summary_status(results)
         summary = build_summary(final_status, results)
         return VerificationProtocolPayload(

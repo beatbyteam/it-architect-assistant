@@ -12,8 +12,10 @@ from .knowledge_routes_common import (
     SourceDocumentCreateRequest,
     SourceDocumentResponse,
     SourceResponse,
+    SourceType,
     SourceUpdateRequest,
     UserDep,
+    ValidationError,
     status,
 )
 
@@ -44,6 +46,11 @@ def create_source(
     principal: PrincipalDep,
     _guard: AuthPrincipal = UserDep,
 ):
+    if payload.source_type in {SourceType.REPOSITORY, SourceType.LOCAL_FOLDER}:
+        raise ValidationError(
+            "Adding local folder sources is disabled; add a URL page or upload documents instead",
+            error_code="LOCAL_FOLDER_SOURCE_DISABLED",
+        )
     service = KnowledgeSourceService(session, settings)
     source = service.create_source(payload, principal)
     return SourceResponse.model_validate(

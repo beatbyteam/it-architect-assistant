@@ -63,22 +63,22 @@ class VerificationPostValidator:
         ]
         if duplicate_rule_codes:
             raise ValidationError(
-                f"Verification protocol contains duplicate rule results: {', '.join(duplicate_rule_codes)}",
+                f"Протокол проверки содержит дубли результатов правил: {', '.join(duplicate_rule_codes)}",
                 error_code="VERIFICATION_RULE_DUPLICATES",
             )
         if missing_rule_codes:
             raise ValidationError(
-                f"Verification protocol does not cover the full rulebook: {', '.join(missing_rule_codes)}",
+                f"Протокол проверки покрывает не все правила: {', '.join(missing_rule_codes)}",
                 error_code="VERIFICATION_RULE_COVERAGE_INCOMPLETE",
             )
         if findings_without_evidence:
             raise ValidationError(
-                f"Verification findings without evidence/diagnostics: {', '.join(findings_without_evidence)}",
+                f"В замечаниях проверки нет основания или диагностики: {', '.join(findings_without_evidence)}",
                 error_code="VERIFICATION_FINDINGS_EVIDENCE_MISSING",
             )
         if unresolved_section_links:
             raise ValidationError(
-                f"Verification findings are not linked back to solution sections: {', '.join(unresolved_section_links)}",
+                f"Замечания проверки не связаны с разделами решения: {', '.join(unresolved_section_links)}",
                 error_code="VERIFICATION_SECTION_LINKS_MISSING",
             )
         return {

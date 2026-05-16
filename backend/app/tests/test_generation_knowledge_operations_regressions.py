@@ -239,6 +239,47 @@ def test_ensure_upload_source_recovers_from_manual_upload_race(monkeypatch, tmp_
     assert rollback_calls == ["rollback"]
 
 
+def test_ensure_upload_source_applies_requested_settings(monkeypatch, tmp_path) -> None:
+    principal = _principal()
+    existing_source = SimpleNamespace(
+        source_id="src-existing",
+        base_uri=tmp_path.as_uri(),
+        name="Загруженные файлы",
+        refresh_policy="manual",
+        status=SourceStatus.ACTIVE,
+    )
+    updates = []
+
+    service = SimpleNamespace(
+        update_source=lambda source_id, payload, principal, auto_commit=True: updates.append(
+            (source_id, payload, auto_commit)
+        )
+        or existing_source,
+    )
+
+    monkeypatch.setattr(
+        knowledge_documents_routes,
+        "_find_manual_upload_source",
+        lambda service, *, knowledge_base_id, principal=None: existing_source,
+    )
+
+    resolved = knowledge_documents_routes._ensure_upload_source(
+        service=service,
+        principal=principal,
+        knowledge_base_id="kb-1",
+        upload_dir=tmp_path,
+        refresh_policy="weekly",
+        source_status=SourceStatus.DISABLED,
+        auto_commit=False,
+    )
+
+    assert resolved is existing_source
+    assert updates[0][0] == "src-existing"
+    assert updates[0][1].refresh_policy == "weekly"
+    assert updates[0][1].status == SourceStatus.DISABLED
+    assert updates[0][2] is False
+
+
 def test_operations_list_and_detail_hide_foreign_runs() -> None:
     service = OperationsQueryService.__new__(OperationsQueryService)
     service.session = SimpleNamespace()

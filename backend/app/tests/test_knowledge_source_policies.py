@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.api.v1.routes import knowledge_sources_routes
 from app.core.exceptions import ValidationError
 from app.db.enums import SourceStatus, SourceType
 from app.domain.services.knowledge_core import KnowledgeUpdateService
@@ -25,6 +26,34 @@ def test_source_create_request_normalizes_source_type_aliases() -> None:
 
     assert payload.source_type == SourceType.REPOSITORY
     assert payload.refresh_policy == "monthly"
+
+
+def test_source_create_request_derives_name_when_blank() -> None:
+    payload = SourceCreateRequest(
+        knowledge_base_id="kb-1",
+        source_type="url",
+        name="",
+        base_uri="https://docs.example.com/architecture/",
+        criticality="optional",
+    )
+
+    assert payload.source_type == SourceType.URL_LIST
+    assert payload.name == "docs.example.com/architecture"
+
+
+def test_create_source_route_rejects_local_folder_sources() -> None:
+    payload = SourceCreateRequest(
+        knowledge_base_id="kb-1",
+        source_type="local_folder",
+        name="Mounted folder",
+        base_uri="file:///tmp/docs",
+        criticality="optional",
+    )
+
+    with pytest.raises(ValidationError) as exc:
+        knowledge_sources_routes.create_source(payload, None, None, None)
+
+    assert exc.value.error_code == "LOCAL_FOLDER_SOURCE_DISABLED"
 
 
 def test_validate_source_base_uri_rejects_paths_outside_allowed_roots(tmp_path: Path) -> None:

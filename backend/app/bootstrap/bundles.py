@@ -185,8 +185,10 @@ def import_knowledge_bundle(
     if knowledge_base_id:
         target_base = base_service.get_base(knowledge_base_id, principal)
     else:
-        base_service.ensure_system_bases()
-        target_base = base_service.get_default_user_base(principal)
+        raise ValidationError(
+            "knowledge_base_id is required when importing a knowledge bundle",
+            error_code="KNOWLEDGE_BASE_REQUIRED",
+        )
 
     try:
         manifest, manifest_root = load_bundle_manifest(manifest_uri, settings=settings)

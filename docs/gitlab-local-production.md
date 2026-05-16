@@ -32,12 +32,12 @@ Start on Windows PowerShell:
 .\deploy\scripts\local_release_up.ps1
 ```
 
-The script creates `.env.local` when it is missing, starts Docker Compose, and pulls the configured Ollama models. Knowledge bases are updated explicitly from the application UI.
+The script creates `.env.local` when it is missing, starts Docker Compose, pulls the configured Ollama models, waits for the API, and can run the one-time `knowledge-bootstrap` job for the optional architecture baseline. User-managed knowledge bases are created and selected independently from that baseline. Existing active baselines are left unchanged.
 
-Skip model pulling when you only need to restart containers:
+Skip model pulling or knowledge bootstrap when you only need to restart containers:
 
 ```powershell
-.\deploy\scripts\local_release_up.ps1 -SkipModelPull
+.\deploy\scripts\local_release_up.ps1 -SkipModelPull -SkipBootstrapKnowledge
 ```
 
 Start on Linux/macOS:
@@ -46,10 +46,10 @@ Start on Linux/macOS:
 sh deploy/scripts/local_release_up.sh
 ```
 
-Skip model pulling when you only need to restart containers:
+Skip model pulling or knowledge bootstrap when you only need to restart containers:
 
 ```bash
-sh deploy/scripts/local_release_up.sh --skip-model-pull
+sh deploy/scripts/local_release_up.sh --skip-model-pull --skip-bootstrap-knowledge
 ```
 
 The first run creates `.env.local` from `deploy/local-production.env.example`. Edit `.env.local` for machine-specific values such as model endpoints and ports. Local `.env*` files are ignored by Git.

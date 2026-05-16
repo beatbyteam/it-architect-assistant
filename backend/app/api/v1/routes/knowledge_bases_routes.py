@@ -92,9 +92,7 @@ def update_knowledge_base(
         status=payload.status,
         principal=principal,
     )
-    return KnowledgeBaseResponse.model_validate(
-        service.get_base_payload(str(base.knowledge_base_id), principal)
-    )
+    return KnowledgeBaseResponse.model_validate(service.build_base_payload(base, principal))
 
 
 @router.get(

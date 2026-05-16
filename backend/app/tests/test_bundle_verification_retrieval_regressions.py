@@ -22,8 +22,8 @@ from app.db.enums import (
 )
 from app.db.models.audit import AuditEvent
 from app.db.models.knowledge import SourceDocument
-from app.domain.services.generation.retrieval_service import RetrievalService
 from app.domain.services.generation.run_service import GenerationRunService
+from app.domain.services.generation.retrieval_service import RetrievalService
 from app.domain.services.knowledge_basis import resolve_basis_assignment
 from app.domain.services.knowledge_query import KnowledgeQueryService
 from app.domain.services.operations import OperationsQueryService

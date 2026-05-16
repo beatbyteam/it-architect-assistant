@@ -310,7 +310,7 @@ def get_solution_rendered(
 def delete_solution_not_supported(solution_version_id: str, _guard: AuthPrincipal = UserDep):
     _ = solution_version_id
     raise ValidationError(
-        "Physical deletion of published solutions is not supported in MVP; supersede or archive through a new revision instead",
+        "Физическое удаление опубликованных решений в MVP не поддерживается; создайте новую ревизию или отправьте решение в архив",
         error_code="SOLUTION_DELETE_UNSUPPORTED",
     )
 
@@ -319,7 +319,7 @@ def delete_solution_not_supported(solution_version_id: str, _guard: AuthPrincipa
 def delete_verification_protocol_not_supported(protocol_id: str, _guard: AuthPrincipal = UserDep):
     _ = protocol_id
     raise ValidationError(
-        "Physical deletion of verification protocols is not supported in MVP; keep revisions for traceability",
+        "Физическое удаление протоколов проверки в MVP не поддерживается; ревизии сохраняются для прослеживаемости",
         error_code="VERIFICATION_PROTOCOL_DELETE_UNSUPPORTED",
     )
 

@@ -23,6 +23,8 @@ from app.domain.services.generation.runtime import _run_validation_stage
 from app.domain.services.knowledge.source_service import KnowledgeSourceService
 from app.domain.services.knowledge.update_service import KnowledgeUpdateService
 from app.domain.services.knowledge_bases import KnowledgeBaseService
+from app.domain.services.canonical_read_helpers import build_protocol_explainability
+from app.domain.services import mvp_protocol_read_service as protocol_read_module
 from app.domain.services.mvp_protocol_read_service import _materialize_basis_documents
 from app.domain.services.mvp_task_write_service import _reassess_task
 from app.domain.services.task_readiness import QUESTION_TEMPLATES, TaskReadinessPolicy
@@ -154,6 +156,85 @@ def test_materialize_basis_documents_is_read_only() -> None:
     service.session.add.assert_not_called()
     service.session.flush.assert_not_called()
     service.session.commit.assert_not_called()
+
+
+def test_verification_protocol_rendered_payload_reuses_internal_payload_helper(
+    monkeypatch,
+) -> None:
+    def fake_payload(service, protocol_id, principal, *, verification_query_service_factory):
+        assert protocol_id == "protocol-1"
+        assert verification_query_service_factory is _VerificationQuery
+        return {"basis_documents": [{"title": "Architecture baseline"}]}
+
+    class _VerificationQuery:
+        def __init__(self, session) -> None:
+            self.session = session
+
+        def get_protocol_view(self, protocol_id, principal):
+            return {
+                "verification_protocol_id": protocol_id,
+                "issued_at": "2026-05-16T00:00:00+00:00",
+                "summary_status": "passed",
+                "protocol_status": "published",
+                "rendered_html": "<h1>Протокол проверки</h1>",
+                "publication_artifact_id": "artifact-1",
+                "publication_revision_no": 1,
+                "artifact_state": "published",
+                "version_hash": "hash-1",
+            }
+
+        def get_protocol(self, protocol_id, principal):
+            return SimpleNamespace(
+                verification_protocol_id=protocol_id,
+                verification_run=SimpleNamespace(scope_snapshot={"mode": "full"}),
+            )
+
+    monkeypatch.setattr(protocol_read_module, "get_verification_protocol_payload", fake_payload)
+    service = SimpleNamespace(
+        session=Mock(),
+        get_verification_protocol_payload=Mock(side_effect=AssertionError("wrong helper")),
+        map_protocol_state=lambda status, summary: "published",
+        _list_publication_revisions=lambda **kwargs: [],
+        _build_snapshot_summary=lambda snapshot: {"mode": snapshot["mode"]},
+        _build_protocol_explainability=lambda protocol, basis_documents: {
+            "basis_count": len(basis_documents)
+        },
+    )
+
+    payload = protocol_read_module.get_verification_protocol_rendered_payload(
+        service,
+        "protocol-1",
+        _principal(),
+        verification_query_service_factory=_VerificationQuery,
+    )
+
+    assert payload["rendered_html"] == "<h1>Протокол проверки</h1>"
+    assert payload["protocol_state"] == "published"
+    assert payload["snapshot_summary"] == {"mode": "full"}
+    assert payload["explainability"] == {"basis_count": 1}
+    service.get_verification_protocol_payload.assert_not_called()
+
+
+def test_protocol_explainability_accepts_check_results_without_diagnostics() -> None:
+    protocol = SimpleNamespace(
+        verification_run=SimpleNamespace(diagnostics={}, scope_snapshot={}),
+        check_results=[
+            SimpleNamespace(
+                sort_order=1,
+                evidence_ref=None,
+                related_section_ref=None,
+                rule_name="Проверка структуры",
+                check_name="Проверка структуры",
+                status="failed",
+            )
+        ],
+    )
+
+    payload = build_protocol_explainability(protocol, basis_documents=[])
+
+    assert payload["evidence_coverage"]["findings_without_evidence"] == [
+        "Проверка структуры"
+    ]
 
 
 def test_knowledge_base_read_methods_do_not_commit_when_defaults_are_missing() -> None:

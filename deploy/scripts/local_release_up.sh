@@ -2,6 +2,7 @@
 set -eu
 
 env_file=".env.local"
+bootstrap_knowledge="${BOOTSTRAP_KNOWLEDGE:-true}"
 pull_models="${PULL_MODELS:-true}"
 
 while [ "$#" -gt 0 ]; do

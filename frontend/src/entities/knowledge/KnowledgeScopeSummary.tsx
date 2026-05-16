@@ -1,5 +1,5 @@
 import { Card } from '../../shared/ui/components';
-import { formatDateTime } from '../../shared/lib/format';
+import { formatDateTime, titleStatus } from '../../shared/lib/format';
 import type { KnowledgeScope, KnowledgeScopeVersionSnapshot } from '../../types/api';
 
 function renderVersionMeta(version?: KnowledgeScopeVersionSnapshot | null) {
@@ -10,8 +10,8 @@ function renderVersionMeta(version?: KnowledgeScopeVersionSnapshot | null) {
     <div className="stack compact">
       <div><strong>Версия:</strong> <span className="mono">{version.version_code ?? version.knowledge_version_id}</span></div>
       <div><strong>ID:</strong> <span className="mono">{version.knowledge_version_id}</span></div>
-      <div><strong>Статус:</strong> {version.status ?? '—'}</div>
-      <div><strong>Документов:</strong> {String(version.document_count ?? 0)} · <strong>basis:</strong> {String(version.basis_document_count ?? 0)}</div>
+      <div><strong>Статус:</strong> {titleStatus(version.status)}</div>
+      <div><strong>Документов:</strong> {String(version.document_count ?? 0)} · <strong>оснований:</strong> {String(version.basis_document_count ?? 0)}</div>
       <div><strong>Создана:</strong> {formatDateTime(version.created_at)}</div>
       {version.activated_at ? <div><strong>Активирована:</strong> {formatDateTime(version.activated_at)}</div> : null}
     </div>
@@ -26,17 +26,17 @@ export function KnowledgeScopeSummary(props: {
   const scope = props.scope;
   if (!scope) {
     return (
-      <Card title={props.title ?? 'Knowledge scope'} subtitle={props.subtitle ?? 'Снимок базы знаний для этого запуска.'}>
+      <Card title={props.title ?? 'Область знаний'} subtitle={props.subtitle ?? 'Снимок базы знаний для этого запуска.'}>
         <div className="muted small">Снимок базы знаний для этого результата не сохранён.</div>
       </Card>
     );
   }
 
   return (
-    <Card title={props.title ?? 'Knowledge scope'} subtitle={props.subtitle ?? 'Какие версии знаний реально участвовали в generation / verification.'}>
+    <Card title={props.title ?? 'Область знаний'} subtitle={props.subtitle ?? 'Какие версии знаний реально участвовали в подготовке и проверке решения.'}>
       <div className="grid grid-2">
         <div className="section-box">
-          <h3>Optional baseline</h3>
+          <h3>Обязательная baseline-база</h3>
           <div className="muted small" style={{ marginBottom: 8 }}>
             {scope.mandatory_version?.knowledge_base_code ?? 'mandatory_architecture_baseline'}
           </div>
@@ -51,16 +51,16 @@ export function KnowledgeScopeSummary(props: {
         </div>
       </div>
       <div className="section-box" style={{ marginTop: 12 }}>
-        <div><strong>Effective version IDs:</strong></div>
+        <div><strong>Идентификаторы участвующих версий:</strong></div>
         {(scope.effective_version_ids ?? []).length ? (
           <ul className="compact-list" style={{ marginTop: 8 }}>
             {scope.effective_version_ids.map((item) => <li key={item}><span className="mono">{item}</span></li>)}
           </ul>
         ) : (
-          <div className="muted small" style={{ marginTop: 8 }}>Нет сохранённых effective IDs.</div>
+          <div className="muted small" style={{ marginTop: 8 }}>Нет сохранённых идентификаторов участвующих версий.</div>
         )}
         <div className="muted small" style={{ marginTop: 8 }}>
-          Версия для generation snapshot: <span className="mono">{scope.selected_generation_version_id ?? '—'}</span>
+          Версия для снимка подготовки решения: <span className="mono">{scope.selected_generation_version_id ?? '—'}</span>
         </div>
       </div>
       {scope.document_scope?.mode === 'selected' ? (

@@ -134,7 +134,7 @@ class KnowledgeBaseService:
 
     def ensure_system_bases(
         self, principal: AuthPrincipal | None = None
-    ) -> tuple[KnowledgeBase, KnowledgeBase]:
+    ) -> tuple[KnowledgeBase, KnowledgeBase | None]:
         changed = False
         mandatory = self.bases.get_by_code(MANDATORY_BASE_CODE)
         if mandatory is None:
@@ -149,27 +149,12 @@ class KnowledgeBaseService:
             self.bases.add(mandatory)
             self.session.flush()
             changed = True
-        default_user_code = _default_user_base_code_for_principal(principal)
-        owner_key = _owner_key_for_principal(principal)
-        default_user = self.bases.get_by_code(default_user_code, owner_user_id=owner_key)
-        if default_user is None:
-            default_user = KnowledgeBase(
-                code=default_user_code,
-                name="Default User Knowledge Base",
-                description="Default user-managed knowledge base for enterprise-specific documents.",
-                kind=KnowledgeBaseKind.USER_MANAGED,
-                status=KnowledgeBaseStatus.ACTIVE,
-                owner_user_id=owner_key,
-            )
-            self.bases.add(default_user)
-            self.session.flush()
-            changed = True
         selection_scope = _selection_scope_for_principal(principal)
         selection = self.selections.get_for_scope(selection_scope)
         if selection is None:
             selection = KnowledgeBaseSelection(
                 selection_scope=selection_scope,
-                selected_knowledge_base_id=default_user.knowledge_base_id,
+                selected_knowledge_base_id=mandatory.knowledge_base_id,
                 selected_knowledge_version_id=None,
             )
             self.selections.add(selection)
@@ -178,8 +163,7 @@ class KnowledgeBaseService:
         if changed:
             self.session.commit()
             self.session.refresh(mandatory)
-            self.session.refresh(default_user)
-        return mandatory, default_user
+        return mandatory, None
 
     def _get_existing_system_bases(
         self, principal: AuthPrincipal | None = None
@@ -202,7 +186,7 @@ class KnowledgeBaseService:
 
     def get_default_user_base(self, principal: AuthPrincipal | None = None) -> KnowledgeBase:
         _, base = self._get_existing_system_bases(principal)
-        if base is None:
+        if base is None or not self._is_base_accessible(base, principal):
             raise NotFoundError("KnowledgeBase", _default_user_base_code_for_principal(principal))
         return base
 
@@ -377,6 +361,11 @@ class KnowledgeBaseService:
             base = self.get_base(knowledge_base_id, principal)
         except TypeError:
             base = self.get_base(knowledge_base_id)
+        return self.build_base_payload(base, principal)
+
+    def build_base_payload(
+        self, base: KnowledgeBase, principal: AuthPrincipal | None = None
+    ) -> dict[str, Any]:
         payload = _serialize_base(base) or {}
         payload.update(self._base_stats(base))
         payload["versions"] = [
@@ -550,6 +539,8 @@ class KnowledgeBaseService:
             )
         except TypeError:
             default_user = get_by_code(_default_user_base_code_for_principal(principal))
+        if default_user is not None and not self._is_base_accessible(default_user, principal):
+            default_user = None
         selection = self.selections.get_for_scope(_selection_scope_for_principal(principal))
         selected_base = (
             selection.selected_knowledge_base
@@ -558,9 +549,9 @@ class KnowledgeBaseService:
             and self._is_base_accessible(selection.selected_knowledge_base, principal)
             else None
         )
-        if default_user is None and selected_base is None:
+        if mandatory is None and default_user is None and selected_base is None:
             return None
-        selected_user_base = selected_base or default_user
+        selected_user_base = selected_base or default_user or mandatory
         if selected_user_base is None:
             return None
         use_user_base = selected_user_base.kind == KnowledgeBaseKind.USER_MANAGED

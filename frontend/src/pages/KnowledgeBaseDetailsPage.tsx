@@ -48,6 +48,7 @@ type KnowledgeBaseDocumentWithProcessing = KnowledgeBaseDocument & {
 
 const DASHBOARD_KNOWLEDGE_BASES_KEY = ['dashboard-knowledge-bases'] as const;
 const FINAL_DOCUMENT_PROCESSING_STATUSES = new Set(['extracted', 'reused', 'skipped']);
+const DEFAULT_UPLOAD_SOURCE_DRAFT: SourceDraft = { refresh_policy: 'manual', status: 'active' };
 const ACTIVE_STAGE_OPERATION_LABELS: Record<string, string> = {
   chunking_prepared: 'Подготовка чанков',
   embedding: 'Расчёт эмбеддингов',
@@ -67,17 +68,23 @@ function toSourceDraft(source: Source): SourceDraft {
   };
 }
 
-function inferSourceTypeFromUri(value: string): 'local_folder' | 'url' {
-  return /^https?:\/\//i.test(value.trim()) ? 'url' : 'local_folder';
-}
-
 function documentLifecycleStatus(document: KnowledgeBaseDocumentWithProcessing) {
+  if (document.present_in_version === false || document.delta_kind === 'deleted') return 'deleted';
+  if (document.document_status === 'archived') return 'deleted';
   const processingStatus = document.processing_status ?? null;
   if (document.processing_error_code === 'CANCELED_BY_USER') return 'canceled';
   if (processingStatus === 'failed') return 'failed';
   if (processingStatus && !FINAL_DOCUMENT_PROCESSING_STATUSES.has(processingStatus)) return 'running';
   if (processingStatus === 'extracted' || processingStatus === 'reused') return 'parsed';
   return document.document_status ?? null;
+}
+
+function isRemovedFromKnowledgeBase(document: KnowledgeBaseDocument) {
+  return (
+    document.present_in_version === false
+    || document.delta_kind === 'deleted'
+    || document.document_status === 'archived'
+  );
 }
 
 function progressDetail(record: Record<string, unknown>, completedKey: string, totalKey: string, label: string) {
@@ -130,11 +137,12 @@ export function KnowledgeBaseDetailsPage() {
   const [documentViewVersionId, setDocumentViewVersionId] = useState('');
   const [newSourceName, setNewSourceName] = useState('');
   const [newSourceUri, setNewSourceUri] = useState('');
-  const [newSourceType, setNewSourceType] = useState<'local_folder' | 'url'>('local_folder');
+  const newSourceType = 'url';
   const [sourceDrafts, setSourceDrafts] = useState<Record<string, SourceDraft>>({});
   const [dirtySourceIds, setDirtySourceIds] = useState<Record<string, boolean>>({});
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadSourceDefaults, setUploadSourceDefaults] = useState<SourceDraft>(DEFAULT_UPLOAD_SOURCE_DRAFT);
   const [uploadRunId, setUploadRunId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -203,6 +211,14 @@ export function KnowledgeBaseDetailsPage() {
   const selectedGenerationVersionId = generationVersionDirty ? generationVersionId : persistedGenerationVersionId;
   const effectiveGenerationVersionId = selectedGenerationVersionId || base?.active_knowledge_version_id || '';
   const activeDocumentsVersionId = documentViewVersionId || base?.active_knowledge_version_id || '';
+  const uploadSource = useMemo(
+    () => (sourcesQuery.data ?? []).find((source: Source) => source.source_type === 'manual_upload') as Source | undefined,
+    [sourcesQuery.data],
+  );
+  const uploadSourceDraft = uploadSource ? (sourceDrafts[uploadSource.source_id] ?? toSourceDraft(uploadSource)) : uploadSourceDefaults;
+  const uploadSourceDirty = uploadSource ? Boolean(dirtySourceIds[uploadSource.source_id]) : false;
+  const uploadSourceStatusOptions = uploadSource ? allowedSourceStatuses(uploadSourceDraft.status) : ['active', 'disabled'];
+  const uploadSourceReady = uploadSourceDraft.status === 'active';
 
   useEffect(() => {
     const hasActiveRun = Boolean(
@@ -304,8 +320,14 @@ export function KnowledgeBaseDetailsPage() {
 
   const sourceSettingsMutation = useMutation({
     mutationFn: async ({ sourceId, refresh_policy, status }: { sourceId: string; refresh_policy: string; status?: string }) => {
-      if (status === 'archived') return archiveSource(sourceId);
-      if (status === 'disabled') return disableSource(sourceId);
+      if (status === 'archived') {
+        await updateSource(sourceId, { refresh_policy });
+        return archiveSource(sourceId);
+      }
+      if (status === 'disabled') {
+        await updateSource(sourceId, { refresh_policy });
+        return disableSource(sourceId);
+      }
       return updateSource(sourceId, { refresh_policy, status });
     },
     onSuccess: (_data, variables) => {
@@ -314,12 +336,24 @@ export function KnowledgeBaseDetailsPage() {
     },
   });
 
+  const updateUploadSourceDraft = (patch: Partial<SourceDraft>) => {
+    const nextDraft = { ...uploadSourceDraft, ...patch };
+    if (uploadSource) {
+      setSourceDrafts((current) => ({ ...current, [uploadSource.source_id]: nextDraft }));
+      setDirtySourceIds((current) => ({ ...current, [uploadSource.source_id]: true }));
+    } else {
+      setUploadSourceDefaults(nextDraft);
+    }
+  };
+
   const uploadMutation = useMutation({
     mutationFn: async () => {
       return uploadAndIngestKnowledgeFiles({
         files: uploadFiles,
         title: uploadTitle,
         knowledge_base_id: knowledgeBaseId,
+        refresh_policy: uploadSourceDraft.refresh_policy,
+        source_status: uploadSourceDraft.status,
         execute_update_inline: false,
         reason: `batch_upload:${knowledgeBaseId}`,
       });
@@ -455,7 +489,7 @@ export function KnowledgeBaseDetailsPage() {
       </div>
 
       <div className="grid grid-2">
-        <Card title="Источники" subtitle="URL и локальные папки, из которых база получает материалы.">
+        <Card title="Источники" subtitle="URL-страницы и загруженные файлы, из которых база получает материалы.">
           {sourcesQuery.isLoading ? <LoadingState message="Загружаю источники…" /> : sourcesQuery.isError ? <ErrorNotice error={sourcesQuery.error} fallback="Не удалось загрузить источники." /> : sourcesQuery.data?.length ? (
             <div className="timeline">
               {sourcesQuery.data.map((source: Source) => {
@@ -469,7 +503,7 @@ export function KnowledgeBaseDetailsPage() {
                         <Badge value={source.refresh_policy ?? 'monthly'} />
                       </div>
                     </div>
-                    <div className="muted small">{sourceTypeLabel(source.source_type)} · {source.base_uri ?? 'Путь или URL не задан'}</div>
+                    <div className="muted small">{sourceTypeLabel(source.source_type)} · {source.base_uri ?? 'Адрес источника не задан'}</div>
                     <div className="actions" style={{ marginTop: 8 }}>
                       {source.base_uri && /^https?:\/\//i.test(source.base_uri) ? <a className="button" href={source.base_uri} target="_blank" rel="noreferrer">Открыть источник</a> : null}
                       {!isSystemBase && source.status !== 'archived' ? (
@@ -542,25 +576,15 @@ export function KnowledgeBaseDetailsPage() {
           {!isSystemBase ? (
             <div className="stack compact" style={{ marginTop: 16 }}>
               <FormRow label="Новый источник">
-                <Input value={newSourceName} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceName(event.target.value)} placeholder="Например: папка с материалами проекта" />
+                <Input value={newSourceName} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceName(event.target.value)} placeholder="Можно оставить пустым" />
               </FormRow>
-              <FormRow label="Тип источника">
-                <Select value={newSourceType} onChange={(event: ChangeEvent<HTMLSelectElement>) => setNewSourceType(event.target.value as 'local_folder' | 'url')}>
-                  <option value="local_folder">Локальная папка</option>
-                  <option value="url">URL-страница</option>
-                </Select>
+              <FormRow label="URL-страница">
+                <Input value={newSourceUri} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceUri(event.target.value)} placeholder="https://docs.example.com/architecture/" />
               </FormRow>
-              <FormRow label="Путь или URL">
-                <Input value={newSourceUri} onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                  const nextUri = event.target.value;
-                  setNewSourceUri(nextUri);
-                  if (nextUri.trim()) setNewSourceType(inferSourceTypeFromUri(nextUri));
-                }} placeholder={newSourceType === 'local_folder' ? '/data/knowledge/project-a' : 'https://docs.example.com/architecture/'} />
-              </FormRow>
-              <div className="muted small">Для локальной папки укажите путь внутри разрешенных директорий Docker/настроек. Для web-страницы вставьте URL, тип переключится автоматически.</div>
+              <div className="muted small">Вставьте адрес web-страницы. Если название пустое, система заполнит его по URL.</div>
               {sourceMutation.isError ? <ErrorNotice error={sourceMutation.error} fallback="Не удалось добавить источник." /> : null}
               <div className="actions">
-                <Button primary onClick={() => sourceMutation.mutate()} disabled={sourceMutation.isPending || !newSourceName.trim() || !newSourceUri.trim()}>
+                <Button primary onClick={() => sourceMutation.mutate()} disabled={sourceMutation.isPending || !newSourceUri.trim()}>
                   {sourceMutation.isPending ? 'Добавляю…' : 'Добавить источник'}
                 </Button>
               </div>
@@ -577,6 +601,38 @@ export function KnowledgeBaseDetailsPage() {
               <FormRow label="Файл">
                 <Input type="file" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles(Array.from(event.target.files ?? []))} />
               </FormRow>
+              <div className="grid grid-2">
+                <FormRow label="Политика обновления">
+                  <Select value={uploadSourceDraft.refresh_policy} onChange={(event: ChangeEvent<HTMLSelectElement>) => updateUploadSourceDraft({ refresh_policy: event.target.value })}>
+                    {KNOWLEDGE_REFRESH_POLICY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </Select>
+                </FormRow>
+                <FormRow label="Статус источника">
+                  <Select value={uploadSourceDraft.status} onChange={(event: ChangeEvent<HTMLSelectElement>) => updateUploadSourceDraft({ status: event.target.value })}>
+                    {uploadSourceStatusOptions.map((statusValue) => (
+                      <option key={statusValue} value={statusValue} disabled={statusValue === 'unavailable' && uploadSource?.status !== 'unavailable'}>
+                        {titleStatus(statusValue)}
+                      </option>
+                    ))}
+                  </Select>
+                </FormRow>
+                {uploadSource ? (
+                  <div className="actions">
+                    <Button
+                      onClick={() => sourceSettingsMutation.mutate({
+                        sourceId: uploadSource.source_id,
+                        refresh_policy: uploadSourceDraft.refresh_policy,
+                        status: uploadSourceDraft.status === uploadSource.status || uploadSourceDraft.status === 'unavailable' ? undefined : uploadSourceDraft.status,
+                      })}
+                      disabled={sourceSettingsMutation.isPending || !uploadSourceDirty}
+                    >
+                      {sourceSettingsMutation.isPending ? 'Сохраняю…' : 'Сохранить настройки'}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
               {trackedUploadRun ? (
                 <Banner tone={trackedUploadRun.status === 'failed' ? 'danger' : 'info'}>
                   <strong>Документ принят. {titleStatus(trackedUploadStage)}</strong>
@@ -593,7 +649,7 @@ export function KnowledgeBaseDetailsPage() {
               ) : null}
               {uploadMutation.isError ? <ErrorNotice error={uploadMutation.error} fallback="Не удалось загрузить документ." /> : null}
               <div className="actions">
-                <Button primary onClick={() => uploadMutation.mutate()} disabled={uploadMutation.isPending || uploadLearningInProgress || uploadFiles.length === 0}>
+                <Button primary onClick={() => uploadMutation.mutate()} disabled={uploadMutation.isPending || uploadLearningInProgress || uploadFiles.length === 0 || !uploadSourceReady}>
                   {uploadMutation.isPending ? 'Загружаю файл…' : uploadLearningInProgress ? 'База изучает документ…' : 'Дозагрузить и запустить обучение'}
                 </Button>
               </div>
@@ -667,8 +723,14 @@ export function KnowledgeBaseDetailsPage() {
         </Card>
       </div>
 
-      <Card title="Состав выбранной версии" subtitle="Документы активной или явно выбранной версии, включая удалённые из неё материалы.">
+      <Card title="Состав выбранной версии" subtitle="Документы активной или явно выбранной версии. Удалённые материалы остаются в списке только как история изменений и помечаются отдельно.">
         {removeMutation.isError ? <ErrorNotice error={removeMutation.error} fallback="Не удалось удалить документ из базы знаний." /> : null}
+        {removeMutation.isSuccess && removeMutation.data?.update_run ? (
+          <Banner tone="info">
+            <strong>Документ помечен удалённым.</strong>
+            <div>Запущено обновление базы; после подготовки новой версии он будет исключён из актуального состава.</div>
+          </Banner>
+        ) : null}
         <div className="actions between" style={{ marginBottom: 12 }}>
           <div className="muted small">Сейчас показана версия: {viewedDocumentsVersion?.version_no ?? base.active_version_no ?? '—'}</div>
           <Select value={documentViewVersionId} onChange={(event: ChangeEvent<HTMLSelectElement>) => setDocumentViewVersionId(event.target.value)}>
@@ -681,6 +743,12 @@ export function KnowledgeBaseDetailsPage() {
             {(documentsQuery.data ?? []).map((document: KnowledgeBaseDocument) => {
               const documentWithProcessing = document as KnowledgeBaseDocumentWithProcessing;
               const lifecycleStatus = documentLifecycleStatus(documentWithProcessing);
+              const removedFromKnowledgeBase = isRemovedFromKnowledgeBase(document);
+              const canRemoveDocument = !isSystemBase
+                && isViewingActiveDocumentsVersion
+                && Boolean(document.document_id)
+                && Boolean(document.present_in_version)
+                && !removedFromKnowledgeBase;
               return (
                 <div className="timeline-item" key={`${document.document_id ?? document.uri}:${document.delta_kind ?? 'present'}`}>
                   <div className="actions between">
@@ -697,7 +765,7 @@ export function KnowledgeBaseDetailsPage() {
                   ) : null}
                   <div className="actions">
                     {document.document_id ? <Link className="button" to={`/knowledge/documents/${document.document_id}?knowledge_version_id=${encodeURIComponent(document.knowledge_version_id)}`}>Открыть документ</Link> : null}
-                    {!isSystemBase && isViewingActiveDocumentsVersion && document.document_id && document.present_in_version ? (
+                    {canRemoveDocument ? (
                       <Button onClick={() => {
                         if (window.confirm(`Удалить документ «${document.title}» из состава базы?`)) removeMutation.mutate(document.document_id as string);
                       }} disabled={removeMutation.isPending}>Удалить из базы</Button>

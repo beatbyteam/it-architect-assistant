@@ -74,7 +74,7 @@ class VerificationQueryService:
         owner_key = principal_owner_key(principal)
         if owner_key and str(solution.business_task.created_by_user_id) == owner_key:
             return
-        raise AuthorizationError("Access denied to the requested verification object")
+        raise AuthorizationError("Нет доступа к запрошенному объекту проверки")
 
     def list_solution_runs(
         self, solution_version_id: str, principal: AuthPrincipal
@@ -199,7 +199,7 @@ class VerificationQueryService:
         )
         if artifact is None:
             raise ValidationError(
-                "Verification protocol has not been published yet",
+                "Протокол проверки ещё не опубликован",
                 error_code="VERIFICATION_PROTOCOL_NOT_PUBLISHED",
             )
         return {

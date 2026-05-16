@@ -15,6 +15,7 @@ from app.domain.architecture import (
     REQUIRED_TOGAF_SECTION_CODES,
     TOGAF_SECTION_ORDER,
     normalize_architecture_boundary_type,
+    render_togaf_heading,
     validate_archimate_alignment,
 )
 from app.domain.services.knowledge_basis import build_basis_inventory_for_version_documents
@@ -25,6 +26,55 @@ from app.integrations.verification import (
 
 from .common import VerificationExecutionContext
 from .document_scope import filter_version_documents
+
+
+ROLE_LABELS: dict[str, str] = {
+    "oda": "ODA",
+    "ig1242_oda_component_inventory": "Инвентаризация компонентов IG1242 / ODA",
+    "archimate_3_2": "ArchiMate 3.2",
+    "technology_standard": "Технологический стандарт",
+    "template_or_principles": "Шаблоны и принципы",
+    "reference_only": "Справочный материал",
+}
+
+RULE_GROUP_LABELS: dict[str, str] = {
+    "technical": "Техническая готовность",
+    "structure": "Структура TOGAF",
+    "normative": "Нормативное соответствие",
+    "consistency": "Согласованность решения",
+    "other": "Прочие проверки",
+}
+
+SUMMARY_STATUS_LABELS: dict[str, str] = {
+    "passed": "без замечаний",
+    "passed_with_comments": "есть комментарии",
+    "failed": "не пройдена",
+    "incomplete": "неполная",
+}
+
+
+def _role_label(role: str) -> str:
+    return ROLE_LABELS.get(role, role.replace("_", " "))
+
+
+def _rule_group_label(group: str | None) -> str:
+    value = group or "other"
+    return RULE_GROUP_LABELS.get(value, f"Группа {value.replace('_', ' ')}")
+
+
+def _summary_status_label(status: ProtocolSummaryStatus) -> str:
+    status_value = getattr(status, "value", status)
+    return SUMMARY_STATUS_LABELS.get(str(status_value), str(status_value))
+
+
+def _section_label(section_code: str | None) -> str:
+    if not section_code:
+        return "раздел не указан"
+    return f"{render_togaf_heading(section_code)} ({section_code})"
+
+
+def _section_list(section_codes: list[str] | set[str] | tuple[str, ...]) -> str:
+    return ", ".join(_section_label(code) for code in section_codes)
 
 
 @dataclass(slots=True)
@@ -48,7 +98,7 @@ class VerificationSupportContext:
             if not fragments:
                 continue
             fragment_ids = ",".join(str(fragment.fragment_id) for fragment in fragments[:3])
-            parts.append(f"{role}:{fragment_ids}")
+            parts.append(f"{_role_label(role)}: {fragment_ids}")
         return "; ".join(parts) if parts else None
 
     def section_role_refs(self, section_code: str) -> set[str]:
@@ -195,8 +245,8 @@ class TechnicalRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.NOT_DETERMINED,
-                    finding="Solution status cannot be determined.",
-                    evidence=str(getattr(solution, "solution_version_id", "unknown")),
+                    finding="Не удалось определить статус решения.",
+                    evidence=str(getattr(solution, "solution_version_id", "неизвестно")),
                     diagnostics={"solution_status": None},
                 )
             ok = status_value == SolutionVersionStatus.PUBLISHED.value
@@ -205,8 +255,8 @@ class TechnicalRulesExecutor(_BaseRuleExecutor):
                 status=CheckResultStatus.PASSED if ok else CheckResultStatus.FAILED,
                 finding=None
                 if ok
-                else "Solution does not exist in published state and is not ready for verification.",
-                evidence=str(getattr(solution, "solution_version_id", "unknown")),
+                else "Решение не опубликовано и пока не готово к проверке.",
+                evidence=str(getattr(solution, "solution_version_id", "неизвестно")),
                 diagnostics={"solution_status": status_value},
             )
 
@@ -216,8 +266,8 @@ class TechnicalRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.FAILED,
-                    finding="Verification run is missing a fixed knowledge version.",
-                    evidence="knowledge_version:missing",
+                    finding="Для запуска проверки не зафиксирована версия базы знаний.",
+                    evidence="версия базы знаний не задана",
                     diagnostics={"knowledge_version_id": None},
                 )
             return self.result(
@@ -235,9 +285,11 @@ class TechnicalRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if not missing
-                else f"Knowledge version is missing required basis packages: {', '.join(missing)}.",
+                else "В версии базы знаний не хватает обязательных пакетов оснований: "
+                f"{', '.join(_role_label(item) for item in missing)}.",
                 evidence=", ".join(
-                    item["role_code"] for item in support.basis_inventory.required_packages
+                    _role_label(item["role_code"])
+                    for item in support.basis_inventory.required_packages
                 ),
                 diagnostics={
                     "required_packages": support.basis_inventory.required_packages,
@@ -255,21 +307,21 @@ class TechnicalRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.FAILED,
-                    finding="Protocol basis documents section is empty.",
-                    evidence="basis_documents:0",
+                    finding="В протоколе нет документов-оснований.",
+                    evidence="документы-основания: 0",
                     diagnostics={"basis_document_count": 0},
                 )
             return self.result(
                 rule=rule,
                 status=CheckResultStatus.PASSED,
-                evidence=f"basis_documents:{effective_basis_count}",
+                evidence=f"документы-основания: {effective_basis_count}",
                 diagnostics={"basis_document_count": effective_basis_count},
             )
 
         return self.result(
             rule=rule,
             status=CheckResultStatus.NOT_DETERMINED,
-            finding="Unsupported technical rule.",
+            finding="Техническое правило не поддерживается обработчиком проверки.",
             evidence=rule.code,
             diagnostics={"group": "technical"},
         )
@@ -325,8 +377,8 @@ class StructureRulesExecutor(_BaseRuleExecutor):
             return self.result(
                 rule=rule,
                 status=CheckResultStatus.PASSED if ok else CheckResultStatus.FAILED,
-                finding=None if ok else "Goal and/or task context are not sufficiently captured.",
-                evidence=str(getattr(solution, "business_task_id", "unknown")),
+                finding=None if ok else "Цель и/или контекст задачи описаны недостаточно.",
+                evidence=str(getattr(solution, "business_task_id", "неизвестно")),
                 diagnostics={"has_goal": has_goal, "has_context": has_context},
                 related_section_ref=self._first_section_ref(
                     support,
@@ -371,10 +423,10 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else "Constraints and assumptions are only partially captured."
+                else "Ограничения и допущения отражены только частично."
                 if status == CheckResultStatus.WARNING
-                else "Constraints and assumptions are missing.",
-                evidence="constraints_assumptions",
+                else "Ограничения и допущения не описаны.",
+                evidence="ограничения и допущения",
                 diagnostics={
                     "assumption_count": len(support.assumptions),
                     "constraints_present": constraints_present,
@@ -395,9 +447,9 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else "Component composition is under-specified."
+                else "Состав компонентов описан недостаточно подробно."
                 if status == CheckResultStatus.WARNING
-                else "Component composition is not described.",
+                else "Состав компонентов не описан.",
                 evidence=", ".join(
                     component.component_name for component in support.components[:8]
                 ),
@@ -420,22 +472,22 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.NOT_APPLICABLE,
-                    evidence="integrations:not_mentioned",
+                    evidence="интеграции не упомянуты",
                     diagnostics={"integration_count": 0},
                 )
             if integration_count == 0:
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.FAILED,
-                    finding="Integrations/API are mentioned but not structurally disclosed.",
-                    evidence="integrations:mentioned_without_model",
+                    finding="Интеграции или API упомянуты, но не раскрыты в структуре решения.",
+                    evidence="интеграции упомянуты, но не смоделированы",
                     diagnostics={"integration_count": 0},
                     related_section_ref=self._first_section_ref(
                         support, "data_architecture", "application_architecture"
                     ),
                 )
             incomplete = [
-                str(getattr(item, "integration_id", "unknown"))
+                str(getattr(item, "integration_id", "неизвестная интеграция"))
                 for item in support.integrations
                 if not (getattr(item, "protocol", None) and getattr(item, "rationale", None))
             ]
@@ -457,10 +509,10 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else "Some integrations are missing protocol, rationale, or TOGAF section disclosure.",
+                else "Для части интеграций не указан протокол, обоснование или раскрытие в разделе TOGAF.",
                 evidence=", ".join(incomplete)
                 if incomplete
-                else f"integrations:{integration_count}",
+                else f"интеграции: {integration_count}",
                 diagnostics={
                     "integration_count": integration_count,
                     "incomplete_integrations": incomplete,
@@ -483,10 +535,10 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else "Risks/open questions are shallow or missing."
+                else "Риски и открытые вопросы описаны поверхностно или неполно."
                 if status == CheckResultStatus.WARNING
-                else "Risks/open questions block is missing.",
-                evidence=f"risks:{risk_count}",
+                else "Блок рисков и открытых вопросов отсутствует.",
+                evidence=f"риски: {risk_count}",
                 diagnostics={"risk_count": risk_count, "next_step_count": len(support.next_steps)},
                 related_section_ref=self._first_section_ref(support, "additional_information"),
             )
@@ -501,10 +553,10 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else f"Mandatory TOGAF sections are missing: {', '.join(missing_sections)}.",
+                else f"Не заполнены обязательные разделы TOGAF: {_section_list(missing_sections)}.",
                 evidence=", ".join(sorted(support.section_codes))
                 if support.section_codes
-                else "sections:none",
+                else "разделы не найдены",
                 diagnostics={
                     "missing_sections": missing_sections,
                     "present_sections": sorted(support.section_codes),
@@ -536,8 +588,10 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else "TOGAF sections are not ordered according to the canonical document structure.",
-                evidence=", ".join(canonical_subset) if canonical_subset else "section_order:none",
+                else "Разделы TOGAF расположены не в каноническом порядке документа.",
+                evidence=_section_list(canonical_subset)
+                if canonical_subset
+                else "порядок разделов не определён",
                 diagnostics={
                     "observed_order": canonical_subset,
                     "expected_order": expected_subset,
@@ -551,7 +605,7 @@ class StructureRulesExecutor(_BaseRuleExecutor):
         return self.result(
             rule=rule,
             status=CheckResultStatus.NOT_DETERMINED,
-            finding="Unsupported structure rule.",
+            finding="Структурное правило не поддерживается обработчиком проверки.",
             evidence=rule.code,
             diagnostics={"group": "structure"},
         )
@@ -586,8 +640,8 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.NOT_DETERMINED,
-                    finding="Required ODA / IG1242 basis fragments are unavailable for normative evaluation.",
-                    evidence="oda,ig1242:missing",
+                    finding="Для нормативной оценки недоступны обязательные фрагменты ODA / IG1242.",
+                    evidence="фрагменты ODA / IG1242 не найдены",
                     diagnostics={"required_roles": ["oda", "ig1242_oda_component_inventory"]},
                     related_section_ref=related_section_ref,
                 )
@@ -602,13 +656,13 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             selected_document_scope = bool(getattr(context, "selected_document_ids", []) or [])
             if contradiction:
                 status = CheckResultStatus.FAILED
-                finding = "Solution explicitly contradicts ODA / IG1242 alignment assumptions."
+                finding = "Решение явно противоречит предпосылкам соответствия ODA / IG1242."
             elif selected_document_scope or {"oda", "ig1242_oda_component_inventory"} & role_refs:
                 status = CheckResultStatus.PASSED
                 finding = None
             else:
                 status = CheckResultStatus.WARNING
-                finding = "ODA / IG1242 basis exists, but section-level evidence linkage is weak."
+                finding = "Основания ODA / IG1242 есть, но связь с разделами решения выражена слабо."
             return self.result(
                 rule=rule,
                 status=status,
@@ -636,8 +690,8 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.NOT_DETERMINED,
-                    finding="ArchiMate 3.2 basis fragments are unavailable for normative evaluation.",
-                    evidence="archimate_3_2:missing",
+                    finding="Для нормативной оценки недоступны фрагменты ArchiMate 3.2.",
+                    evidence="фрагменты ArchiMate 3.2 не найдены",
                     diagnostics={"required_roles": ["archimate_3_2"]},
                     related_section_ref=related_section_ref,
                 )
@@ -663,13 +717,13 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             )
             if contradiction or has_disallowed:
                 status = CheckResultStatus.FAILED
-                finding = "Solution terminology or structure contradicts ArchiMate 3.2 alignment assumptions."
+                finding = "Терминология или структура решения противоречит предпосылкам соответствия ArchiMate 3.2."
             elif has_allowed_content:
                 status = CheckResultStatus.PASSED
                 finding = None
             else:
                 status = CheckResultStatus.WARNING
-                finding = "Solution structure only partially demonstrates ArchiMate 3.2 layer decomposition."
+                finding = "Структура решения только частично показывает разложение по слоям ArchiMate 3.2."
             return self.result(
                 rule=rule,
                 status=status,
@@ -695,8 +749,8 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.NOT_DETERMINED,
-                    finding="Technology standard basis fragments are unavailable for normative evaluation.",
-                    evidence="technology_standard:missing",
+                    finding="Для нормативной оценки недоступны фрагменты технологического стандарта.",
+                    evidence="фрагменты технологического стандарта не найдены",
                     diagnostics={"required_roles": ["technology_standard"]},
                     related_section_ref=related_section_ref,
                 )
@@ -729,13 +783,16 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                         prohibited_hits.append(token)
             if prohibited_hits:
                 status = CheckResultStatus.FAILED
-                finding = f"Selected technologies conflict with the technology standard: {', '.join(sorted(set(prohibited_hits)))}."
+                finding = (
+                    "Выбранные технологии конфликтуют с технологическим стандартом: "
+                    f"{', '.join(sorted(set(prohibited_hits)))}."
+                )
             elif aligned_hits:
                 status = CheckResultStatus.PASSED
                 finding = None
             else:
                 status = CheckResultStatus.WARNING
-                finding = "Technology choices are not clearly evidenced against the selected technology standard."
+                finding = "Выбор технологий недостаточно явно подтверждён выбранным технологическим стандартом."
             return self.result(
                 rule=rule,
                 status=status,
@@ -758,11 +815,11 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.NOT_APPLICABLE,
-                    evidence="template_or_principles:not_loaded",
+                    evidence="шаблоны и принципы не загружены",
                     diagnostics={"basis_present": False},
                 )
             evidence = (
-                support.evidence_for_roles("template_or_principles") or "template_or_principles"
+                support.evidence_for_roles("template_or_principles") or "шаблоны и принципы"
             )
             has_refs = bool(
                 support.section_role_refs("general_information")
@@ -778,10 +835,10 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 or "additional_information" not in support.section_codes
             ):
                 status = CheckResultStatus.FAILED
-                finding = "Required templates/principles exist but mandatory sections for applying them are missing."
+                finding = "Обязательные шаблоны или принципы есть, но разделы для их применения отсутствуют."
             else:
                 status = CheckResultStatus.WARNING
-                finding = "Templates/principles package is present, but its usage is not obvious in the solution."
+                finding = "Пакет шаблонов или принципов присутствует, но его использование в решении неочевидно."
             return self.result(
                 rule=rule,
                 status=status,
@@ -827,10 +884,11 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else f"Non-whitelisted ArchiMate elements were detected in sections: {', '.join(violating_sections)}.",
-                evidence=", ".join(sorted(section_alignments))
+                else "В разделах обнаружены неразрешённые элементы ArchiMate: "
+                f"{_section_list(violating_sections)}.",
+                evidence=_section_list(sorted(section_alignments))
                 if section_alignments
-                else "archimate_alignments:none",
+                else "разделы для проверки ArchiMate не найдены",
                 diagnostics={
                     "alignments": section_alignments,
                     "violating_sections": violating_sections,
@@ -859,10 +917,13 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             ]
             if not section_alignments:
                 status = CheckResultStatus.FAILED
-                finding = "Architecture sections required for ArchiMate alignment are missing."
+                finding = "Отсутствуют разделы архитектуры, необходимые для проверки соответствия ArchiMate."
             elif weak_sections:
                 status = CheckResultStatus.WARNING
-                finding = f"Some architecture sections do not expose enough allowed ArchiMate objects: {', '.join(weak_sections)}."
+                finding = (
+                    "В некоторых разделах недостаточно разрешённых объектов ArchiMate: "
+                    f"{_section_list(weak_sections)}."
+                )
             else:
                 status = CheckResultStatus.PASSED
                 finding = None
@@ -870,9 +931,9 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 rule=rule,
                 status=status,
                 finding=finding,
-                evidence=", ".join(sorted(section_alignments))
+                evidence=_section_list(sorted(section_alignments))
                 if section_alignments
-                else "archimate_alignments:none",
+                else "разделы для проверки ArchiMate не найдены",
                 diagnostics={
                     "alignments": section_alignments,
                     "weak_sections": weak_sections
@@ -897,7 +958,7 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
         return self.result(
             rule=rule,
             status=CheckResultStatus.NOT_DETERMINED,
-            finding="Unsupported normative rule.",
+            finding="Нормативное правило не поддерживается обработчиком проверки.",
             evidence=rule.code,
             diagnostics={"group": "normative"},
         )
@@ -1103,7 +1164,7 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
         if rule.code == "VR-CNS-01":
             duplicate_component_names = len(component_names) != len(set(component_names))
             broken_integrations = [
-                str(getattr(item, "integration_id", "unknown"))
+                str(getattr(item, "integration_id", "неизвестная интеграция"))
                 for item in support.integrations
                 if component_ids
                 and (
@@ -1126,19 +1187,19 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 lowered = text_item.lower()
                 if "без интегра" in lowered and has_integrations:
                     contradiction_reasons.append(
-                        "solution declares no integrations but integrations exist"
+                        "в решении заявлено отсутствие интеграций, но интеграции есть"
                     )
                 if (
                     "без api" in lowered
                     or "api не требуется" in lowered
                     or "api не нужен" in lowered
                 ) and "api" in normalized_text:
-                    contradiction_reasons.append("solution declares no API but API is described")
+                    contradiction_reasons.append("в решении заявлено отсутствие API, но API описан")
                 if ("без внешн" in lowered or "только внутрен" in lowered) and (
                     has_external_components or has_integrations
                 ):
                     contradiction_reasons.append(
-                        "solution declares internal-only contour but contains external participants or integrations"
+                        "в решении заявлен только внутренний контур, но есть внешние участники или интеграции"
                     )
                 if (
                     "только batch" in lowered
@@ -1146,13 +1207,13 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                     or "только оффлайн" in lowered
                 ) and self._has_any(protocols, ["http", "rest", "grpc", "websocket", "api"]):
                     contradiction_reasons.append(
-                        "solution declares batch/offline mode but uses synchronous online protocols"
+                        "в решении заявлен пакетный или офлайн-режим, но используются синхронные онлайн-протоколы"
                     )
             issues = []
             if duplicate_component_names:
-                issues.append("duplicate component names")
+                issues.append("дублируются названия компонентов")
             if broken_integrations:
-                issues.append("broken integration references")
+                issues.append("есть некорректные ссылки в интеграциях")
             if contradiction_reasons:
                 issues.extend(contradiction_reasons)
             return self.result(
@@ -1160,7 +1221,7 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 status=CheckResultStatus.PASSED if not issues else CheckResultStatus.FAILED,
                 finding=None
                 if not issues
-                else f"Internal consistency issues detected: {'; '.join(issues)}.",
+                else f"Обнаружены проблемы внутренней согласованности: {'; '.join(issues)}.",
                 evidence=", ".join(broken_integrations)
                 if broken_integrations
                 else ", ".join(component_names),
@@ -1199,8 +1260,9 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else f"Some key sections still lack evidence linkage: {', '.join(deficiencies)}.",
-                evidence=", ".join(deficiencies)
+                else "Для части ключевых разделов нет ссылок на основания: "
+                f"{_section_list(deficiencies)}.",
+                evidence=_section_list(deficiencies)
                 if deficiencies
                 else str(
                     sum(
@@ -1258,13 +1320,13 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 finding = None
             else:
                 status = CheckResultStatus.WARNING
-                finding = "Business layer is present, but linkage to supporting application components is weak."
+                finding = "Бизнес-слой есть, но связь с поддерживающими компонентами приложений выражена слабо."
             evidence = relation_fragment or (
                 ", ".join(overlap_tokens)
                 if overlap_tokens
                 else ", ".join(component.component_name for component in application_components[:8])
                 if application_components
-                else "application_components:none"
+                else "компоненты приложений не найдены"
             )
             return self.result(
                 rule=rule,
@@ -1335,13 +1397,13 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 status = (
                     CheckResultStatus.WARNING if technology_components else CheckResultStatus.FAILED
                 )
-                finding = "Application layer is not clearly tied to technology nodes/services."
+                finding = "Слой приложений недостаточно явно связан с технологическими узлами или сервисами."
             evidence = relation_fragment or (
                 ", ".join(overlap_tokens)
                 if overlap_tokens
                 else ", ".join(component.component_name for component in technology_components[:8])
                 if technology_components
-                else "technology_components:none"
+                else "технологические компоненты не найдены"
             )
             return self.result(
                 rule=rule,
@@ -1385,12 +1447,12 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 finding = None
             else:
                 status = CheckResultStatus.WARNING
-                finding = "Data architecture does not clearly show source, owner, or consumer context for key data objects."
+                finding = "Архитектура данных недостаточно явно показывает источник, владельца или потребителя ключевых объектов данных."
             return self.result(
                 rule=rule,
                 status=status,
                 finding=finding,
-                evidence=f"integrations:{len(support.integrations)}",
+                evidence=f"интеграции: {len(support.integrations)}",
                 diagnostics={
                     "has_data_object": has_data_object,
                     "has_source": has_source,
@@ -1441,7 +1503,7 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
             else:
                 status = CheckResultStatus.WARNING
                 finding = (
-                    "Traceability from business task wording to architecture decisions is weak."
+                    "Прослеживаемость от формулировки бизнес-задачи до архитектурных решений выражена слабо."
                 )
             return self.result(
                 rule=rule,
@@ -1452,7 +1514,7 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 else (
                     ", ".join(matched_text[:8])
                     if matched_text
-                    else str(getattr(context.solution, "business_task_id", "unknown"))
+                    else str(getattr(context.solution, "business_task_id", "неизвестно"))
                 ),
                 diagnostics={
                     "matched_components": matched_components[:12],
@@ -1466,7 +1528,7 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
         return self.result(
             rule=rule,
             status=CheckResultStatus.NOT_DETERMINED,
-            finding="Unsupported consistency rule.",
+            finding="Правило согласованности не поддерживается обработчиком проверки.",
             evidence=rule.code,
             diagnostics={"group": "consistency"},
         )
@@ -1502,8 +1564,12 @@ def build_summary(
         elif item.status == CheckResultStatus.NOT_DETERMINED:
             bucket["incomplete"] += 1
     group_summary = "; ".join(
-        f"{group}: failed={values['failed']}, warnings={values['warnings']}, incomplete={values['incomplete']}"
+        f"{_rule_group_label(group)}: ошибок={values['failed']}, предупреждений={values['warnings']}, неполных={values['incomplete']}"
         for group, values in sorted(group_counts.items())
     )
-    base = f"Verification verdict: {status.value}. Failed checks: {failed}; warnings: {warnings}; incomplete: {incomplete}."
-    return f"{base} Breakdown by rule group — {group_summary}." if group_summary else base
+    base = (
+        f"Итог проверки: {_summary_status_label(status)}. "
+        f"Проверок с ошибками: {failed}; предупреждений: {warnings}; "
+        f"неполных проверок: {incomplete}."
+    )
+    return f"{base} Разбивка по группам правил: {group_summary}." if group_summary else base

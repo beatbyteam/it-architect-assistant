@@ -47,7 +47,7 @@ def serialize_version_document(item: Any) -> dict[str, Any]:
     document = getattr(item, "document", None)
     return {
         "document_id": str(getattr(item, "document_id", "") or ""),
-        "title": getattr(document, "title", None) or "Untitled document",
+        "title": getattr(document, "title", None) or "Документ без названия",
         "source_name": getattr(getattr(document, "source", None), "name", None),
         "role_code": getattr(item, "role_code", None),
         "required_flag": bool(getattr(item, "required_flag", False)),
@@ -80,7 +80,7 @@ def build_document_scope_snapshot(
         missing_ids = [document_id for document_id in selected_ids if document_id not in document_by_id]
         if missing_ids:
             raise ValidationError(
-                "Selected knowledge documents are not present in the active knowledge scope",
+                "Выбранные документы базы знаний отсутствуют в активной области знаний",
                 error_code="KNOWLEDGE_DOCUMENT_SCOPE_INVALID",
                 details={"document_ids": missing_ids},
             )

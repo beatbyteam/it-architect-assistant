@@ -13,8 +13,9 @@ from app.bootstrap.bundles import (
     import_knowledge_bundle,
     load_bundle_manifest,
 )
+from app.core.exceptions import ValidationError
 from app.core.security import AuthPrincipal
-from app.db.enums import AccountType, CheckResultStatus, Severity, SourceScope, SourceType
+from app.db.enums import AccountType, CheckResultStatus, Severity, SourceType
 from app.domain.services.verification.rule_executors import (
     ConsistencyRulesExecutor,
     VerificationSupportContext,
@@ -142,85 +143,30 @@ def test_load_bundle_manifest_validates_uri_and_applies_size_limit(monkeypatch) 
     assert fetched["timeout_sec"] == 3.5
 
 
-def test_import_bundle_uses_default_user_base_and_selected_scope(monkeypatch) -> None:
+def test_import_bundle_requires_explicit_target_base(monkeypatch) -> None:
     session = _SessionStub()
-    captured: dict[str, object] = {}
 
     class _BaseService:
         def __init__(self, _session) -> None:
             self.session = _session
-            self.ensure_calls = 0
-
-        def ensure_system_bases(self):
-            self.ensure_calls += 1
-
-        def get_default_user_base(self, principal=None):
-            captured["principal"] = principal
-            return SimpleNamespace(knowledge_base_id="kb-default")
-
-    class _UpdateService:
-        def __init__(self, _session, _settings) -> None:
-            self.session = _session
-            self.settings = _settings
-
-        def start_manual_run(self, **kwargs):
-            captured.update(kwargs)
-            return SimpleNamespace(update_run_id="run-1")
 
     monkeypatch.setattr(
-        "app.bootstrap.bundles.load_bundle_manifest",
-        lambda manifest_uri, settings=None: (
-            {
-                "bundle_code": "demo",
-                "sources": [
-                    {
-                        "name": "Source",
-                        "source_type": "repository",
-                        "criticality": "required",
-                        "base_uri": "file:///tmp/repo",
-                    }
-                ],
-            },
-            "/tmp",
-        ),
-    )
-    monkeypatch.setattr(
-        "app.bootstrap.bundles._validate_manifest_payload", lambda *args, **kwargs: None
-    )
-    monkeypatch.setattr("app.bootstrap.bundles.KnowledgeBaseService", _BaseService)
-    monkeypatch.setattr(
-        "app.bootstrap.bundles.KnowledgeSourceService", lambda session: SimpleNamespace()
-    )
-    monkeypatch.setattr(
-        "app.bootstrap.bundles.KnowledgeVersionService", lambda session: SimpleNamespace()
-    )
-    monkeypatch.setattr("app.bootstrap.bundles.KnowledgeUpdateService", _UpdateService)
-    monkeypatch.setattr(
-        "app.bootstrap.bundles._ensure_update_not_running", lambda *args, **kwargs: None
-    )
-    monkeypatch.setattr(
-        "app.bootstrap.bundles._latest_candidate_for_run", lambda *args, **kwargs: None
-    )
-    monkeypatch.setattr(
-        "app.bootstrap.bundles._upsert_source",
-        lambda *args, **kwargs: SimpleNamespace(source_id="src-1", name="Source"),
+        "app.bootstrap.bundles.KnowledgeBaseService",
+        _BaseService,
     )
 
-    result = import_knowledge_bundle(
-        session,
-        manifest_uri="file:///tmp/bundle.json",
-        principal=_principal(),
-        start_update=True,
-        activate_if_validated=True,
-        execute_update_inline=False,
-    )
+    with pytest.raises(ValidationError) as exc_info:
+        import_knowledge_bundle(
+            session,
+            manifest_uri="file:///tmp/bundle.json",
+            principal=_principal(),
+            start_update=True,
+            activate_if_validated=True,
+            execute_update_inline=False,
+        )
 
-    assert result.imported_source_ids == ["src-1"]
-    assert captured["knowledge_base_id"] == "kb-default"
-    assert captured["source_scope"] == SourceScope.SELECTED
-    assert captured["selected_source_ids"] == ["src-1"]
-    assert captured["auto_activate_if_validated"] is True
-    assert session.commits == 1
+    assert exc_info.value.error_code == "KNOWLEDGE_BASE_REQUIRED"
+    assert session.commits == 0
 
 
 def test_import_bundle_rolls_back_entire_import_on_document_failure(monkeypatch) -> None:

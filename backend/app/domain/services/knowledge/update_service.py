@@ -118,6 +118,7 @@ from .common import (
 )
 from .update_runtime import execute_knowledge_update_run
 
+
 _MAX_SOURCE_LOCATION_CHARS = 200
 
 
@@ -130,6 +131,10 @@ def _fit_source_location(value: str | None) -> str | None:
     if len(text) <= _MAX_SOURCE_LOCATION_CHARS:
         return text
     return text[: _MAX_SOURCE_LOCATION_CHARS - 3].rstrip() + "..."
+
+
+def _is_delete_run_type(value: Any) -> bool:
+    return getattr(value, "value", value) == UpdateRunType.DELETE.value
 
 
 class RunStartResult(dict):
@@ -697,7 +702,15 @@ class KnowledgeUpdateService:
             base = self._get_base(str(payload.knowledge_base_id), principal)
         else:
             self._ensure_system_bases(principal)
-            base = self._get_default_user_base(principal)
+            base_service = self._make_base_service()
+            scope_getter = getattr(base_service, "get_existing_effective_scope", None)
+            scope = scope_getter(principal) if callable(scope_getter) else None
+            base = getattr(scope, "selected_user_base", None)
+            if base is None:
+                raise ValidationError(
+                    "knowledge_base_id is required when no knowledge base is selected",
+                    error_code="KNOWLEDGE_BASE_REQUIRED",
+                )
         request_payload = {
             "knowledge_base_id": str(base.knowledge_base_id),
             "run_type": payload.run_type.value,
@@ -731,6 +744,7 @@ class KnowledgeUpdateService:
             payload.source_scope,
             payload.selected_source_ids,
             knowledge_base_id=str(base.knowledge_base_id),
+            allow_archived_selected=_is_delete_run_type(payload.run_type),
         )
         if not selected_sources:
             raise ValidationError(
@@ -1023,6 +1037,7 @@ class KnowledgeUpdateService:
             SourceScope((run.scope or {}).get("source_scope", SourceScope.ALL.value)),
             (run.scope or {}).get("selected_source_ids") or [],
             knowledge_base_id=str(run.knowledge_base_id),
+            allow_archived_selected=_is_delete_run_type(run.run_type),
         )
         payload["source_snapshot"] = self._build_source_snapshot(
             selected_sources, run, include_processing=False
@@ -1659,6 +1674,7 @@ class KnowledgeUpdateService:
             SourceScope((run.scope or {}).get("source_scope", SourceScope.ALL.value)),
             (run.scope or {}).get("selected_source_ids") or [],
             knowledge_base_id=str(run.knowledge_base_id),
+            allow_archived_selected=_is_delete_run_type(run.run_type),
         )
         return self._create_candidate_version(run, selected_sources)
 
@@ -1668,6 +1684,7 @@ class KnowledgeUpdateService:
         selected_source_ids: list[str] | None,
         *,
         knowledge_base_id: str | None = None,
+        allow_archived_selected: bool = False,
     ) -> list[KnowledgeSource]:
         active_visible = {
             str(source.source_id): source
@@ -1680,9 +1697,16 @@ class KnowledgeUpdateService:
                 "selected_source_ids are required when source_scope=selected",
                 error_code="INVALID_SCOPE",
             )
+        try:
+            visible_sources = self.sources.list_visible(
+                include_archived=allow_archived_selected,
+                knowledge_base_id=knowledge_base_id,
+            )
+        except TypeError:
+            visible_sources = self.sources.list_visible(knowledge_base_id=knowledge_base_id)
         selectable = {
             str(source.source_id): source
-            for source in self.sources.list_visible(knowledge_base_id=knowledge_base_id)
+            for source in visible_sources
             if source.status != SourceStatus.DRAFT
         }
         selected: list[KnowledgeSource] = []
@@ -1979,6 +2003,11 @@ class KnowledgeUpdateService:
         basis_inventory = build_basis_inventory_for_version_documents(candidate.version_documents)
         base_kind = getattr(getattr(candidate, "knowledge_base", None), "kind", None)
         requires_complete_basis = base_kind == KnowledgeBaseKind.SYSTEM_MANDATORY
+        run_type = getattr(getattr(candidate, "update_run", None), "run_type", None)
+        run_type_value = getattr(run_type, "value", run_type)
+        is_user_delete_empty_candidate = (
+            run_type_value == UpdateRunType.DELETE.value and not requires_complete_basis
+        )
         required_role_codes = [
             item.role_code for item in candidate.version_documents if item.required_flag
         ]
@@ -2013,6 +2042,23 @@ class KnowledgeUpdateService:
         }
         base_details = dict(validation_report)
         if document_count == 0 or fragment_count == 0:
+            if is_user_delete_empty_candidate and document_count == 0 and fragment_count == 0:
+                validation_report.update(
+                    {
+                        "validation": "passed",
+                        "reason": "All documents were removed from the knowledge base",
+                        "empty_knowledge_version": True,
+                    }
+                )
+                return ValidationSummary(
+                    run_status=KnowledgeUpdateStatus.COMPLETED,
+                    version_status=KnowledgeVersionStatus.VALIDATED,
+                    details={
+                        **base_details,
+                        **validation_report,
+                        "validation_report": validation_report,
+                    },
+                )
             validation_report.update(
                 {"validation": "failed", "reason": "No indexed documents or fragments"}
             )

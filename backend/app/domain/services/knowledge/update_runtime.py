@@ -17,6 +17,7 @@ from app.db.enums import (
     SourceProcessingStatus,
     SourceScope,
     SourceStatus,
+    UpdateRunType,
 )
 from app.db.models.knowledge import (
     DocumentChunk,
@@ -49,6 +50,10 @@ from app.integrations.knowledge.text_processing import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_delete_run_type(value: Any) -> bool:
+    return getattr(value, "value", value) == UpdateRunType.DELETE.value
 
 
 def execute_knowledge_update_run(service: Any, update_run_id: str):
@@ -206,6 +211,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
             SourceScope((run.scope or {}).get("source_scope", SourceScope.ALL.value)),
             (run.scope or {}).get("selected_source_ids") or [],
             knowledge_base_id=str(run.knowledge_base_id),
+            allow_archived_selected=_is_delete_run_type(run.run_type),
         )
         requested_embedding_profile = str(
             (run.scope or {}).get("target_embedding_profile")
@@ -281,6 +287,16 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
             source_documents = service.documents.list_for_source(
                 source.source_id, include_archived=True
             )
+            if source.status == SourceStatus.ARCHIVED:
+                scanned_source_ids.add(str(source.source_id))
+                service._upsert_processing_result(
+                    run,
+                    source,
+                    None,
+                    SourceProcessingStatus.SKIPPED,
+                    metrics={"stage": "loading", "reason": "source_archived"},
+                )
+                continue
             try:
                 availability_payload = service._probe_source_availability(
                     source.source_type, source.base_uri
@@ -698,28 +714,14 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                         chunk_metrics=index_payload.metrics,
                     )
                     last_embedding_progress: dict[str, object] = {}
-                    progress_document_id = str(document.document_id)
-                    progress_document_title = document.title
-                    progress_chunk_count = len(chunks)
-                    progress_planned_chunk_count = chunk_count + len(chunks)
-                    progress_base_embedding_count = embeddings_calculated
 
-                    def _on_embedding_progress(
-                        progress: dict[str, object],
-                        *,
-                        document_id: str = progress_document_id,
-                        document_title: str | None = progress_document_title,
-                        current_document_chunk_count: int = progress_chunk_count,
-                        planned_chunk_count: int = progress_planned_chunk_count,
-                        base_embedding_count: int = progress_base_embedding_count,
-                        embedding_progress: dict[str, object] = last_embedding_progress,
-                    ) -> None:
+                    def _on_embedding_progress(progress: dict[str, object]) -> None:
                         service._ensure_within_sla(started, stage="indexing")
                         completed_texts = int(progress.get("completed_texts") or 0)
                         completed_batches = int(progress.get("completed_batches") or 0)
                         total_batches = int(progress.get("total_batches") or 0)
-                        embedding_progress.clear()
-                        embedding_progress.update(
+                        last_embedding_progress.clear()
+                        last_embedding_progress.update(
                             {
                                 "embedding_batches_completed": completed_batches,
                                 "embedding_batches_total": total_batches,
@@ -732,13 +734,13 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                             force=completed_texts == 0
                             or (total_batches > 0 and completed_batches >= total_batches),
                             operation="embedding",
-                            document_id=document_id,
-                            document_title=document_title,
-                            current_document_chunk_count=current_document_chunk_count,
-                            planned_chunk_count=planned_chunk_count,
-                            chunk_count=planned_chunk_count - current_document_chunk_count + completed_texts,
-                            embeddings_calculated=base_embedding_count + completed_texts,
-                            **embedding_progress,
+                            document_id=str(document.document_id),
+                            document_title=document.title,
+                            current_document_chunk_count=len(chunks),
+                            planned_chunk_count=chunk_count + len(chunks),
+                            chunk_count=chunk_count + completed_texts,
+                            embeddings_calculated=embeddings_calculated + completed_texts,
+                            **last_embedding_progress,
                         )
 
                     chunk_vectors = (
@@ -905,17 +907,8 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                     rule_count += len(extracted_rules)
                     rules_for_conflicts.extend(extracted_rules)
                     candidate.normative_rules.extend(extracted_rules)
-                    extraction_document_id = str(document.document_id)
-                    extraction_document_title = document.title
-                    extraction_chunk_count = len(chunk_entities)
 
-                    def _on_memory_progress(
-                        progress: dict[str, object],
-                        *,
-                        document_id: str = extraction_document_id,
-                        document_title: str | None = extraction_document_title,
-                        current_document_chunk_count: int = extraction_chunk_count,
-                    ) -> None:
+                    def _on_memory_progress(progress: dict[str, object]) -> None:
                         service._ensure_within_sla(started, stage="extracting")
                         completed_batches = int(progress.get("completed_batches") or 0)
                         total_batches = int(progress.get("total_batches") or 0)
@@ -923,9 +916,9 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                             "extracting",
                             force=True,
                             operation=progress.get("operation") or "document_memory_llm",
-                            document_id=document_id,
-                            document_title=document_title,
-                            current_document_chunk_count=current_document_chunk_count,
+                            document_id=str(document.document_id),
+                            document_title=document.title,
+                            current_document_chunk_count=len(chunk_entities),
                             llm_batch_status=progress.get("status"),
                             llm_current_batch=progress.get("current_batch"),
                             llm_batches_completed=completed_batches,

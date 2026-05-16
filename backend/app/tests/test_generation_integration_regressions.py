@@ -204,22 +204,24 @@ def test_heuristic_document_memory_extracts_cyrillic_entities() -> None:
 def test_verification_renderer_outputs_unknown_groups() -> None:
     payload = VerificationProtocolPayload(
         final_status=ProtocolSummaryStatus.PASSED_WITH_COMMENTS,
-        summary="Checks completed",
+        summary="Проверки выполнены",
         check_results=[
             VerificationCheckResultPayload(
                 rule_group="traceability",
                 rule_code="TRACE-1",
-                check_name="Traceability matrix",
+                check_name="Матрица прослеживаемости",
                 status=CheckResultStatus.WARNING,
                 severity=Severity.MINOR,
-                finding_text="Matrix is partial",
+                finding_text="Матрица заполнена частично",
                 evidence_ref="sec-1",
                 related_section_ref="general_information",
             )
         ],
     )
     html = VerificationProtocolRenderer().render_html(protocol_no="VP-1", payload=payload)
-    assert "Traceability" in html
+    assert "Группа traceability" in html
+    assert "Правило" in html
+    assert "Предупреждение" in html
     assert "TRACE-1" in html
 
 
