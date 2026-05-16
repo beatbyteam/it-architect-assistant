@@ -198,7 +198,7 @@ def build_basis_inventory(items: Iterable[Any]) -> BasisInventory:
                 document_id=str(_document_value(document, "document_id"))
                 if _document_value(document, "document_id")
                 else None,
-                title=_document_value(document, "title") or "Untitled document",
+                title=_document_value(document, "title") or "Документ без названия",
                 role_code=role_code,
                 version_ref=_document_value(document, "version_label"),
                 required_flag=required_flag,

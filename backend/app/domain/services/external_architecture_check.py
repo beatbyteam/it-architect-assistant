@@ -96,7 +96,7 @@ class ExternalArchitectureCheckService:
         active_version = knowledge_scope.selected_generation_version()
         if active_version is None:
             raise ValidationError(
-                "Active knowledge version is required for external architecture verification",
+                "Для проверки внешней архитектуры нужна активная версия базы знаний",
                 error_code="ACTIVE_KNOWLEDGE_VERSION_MISSING",
             )
 
@@ -269,16 +269,16 @@ class ExternalArchitectureCheckService:
         if task is None:
             raise NotFoundError("BusinessTask", payload.draft_task_id)
         if str(task.created_by_user_id) != owner_key:
-            raise AuthorizationError("Access denied to the requested architecture draft")
+            raise AuthorizationError("Нет доступа к запрошенному черновику архитектуры")
         metadata = dict(task.task_metadata or {})
         if metadata.get("source") != "external_architecture" or metadata.get("verification_only") is not True:
             raise ConflictError(
-                "Business task is not an external architecture draft",
+                "Задача не является черновиком внешней архитектуры",
                 error_code="EXTERNAL_ARCHITECTURE_DRAFT_SCOPE_ERROR",
             )
         if task.status != BusinessTaskStatus.DRAFT or task.generation_runs:
             raise ConflictError(
-                "External architecture draft cannot be checked in its current state",
+                "Черновик внешней архитектуры нельзя проверить в текущем состоянии",
                 error_code="EXTERNAL_ARCHITECTURE_DRAFT_NOT_EDITABLE",
             )
         return task
@@ -433,7 +433,7 @@ class ExternalArchitectureCheckService:
                     _ComponentInput(
                         component_name=name[:200],
                         role_description=body
-                        or f"Imported architecture component: {name}.",
+                        or f"Импортированный архитектурный компонент: {name}.",
                         technology_stack=None,
                         boundary_type=section.section_code,
                         external_flag=False,
@@ -676,19 +676,19 @@ class ExternalArchitectureCheckService:
         return (
             "<html><body>"
             f"<h1>{escape(solution.solution_title)}</h1>"
-            "<p><strong>Source:</strong> external architecture import</p>"
-            + (f"<p><strong>Reference:</strong> {escape(source_ref)}</p>" if source_ref else "")
+            "<p><strong>Источник:</strong> импорт внешней архитектуры</p>"
+            + (f"<p><strong>Ссылка:</strong> {escape(source_ref)}</p>" if source_ref else "")
             + f"<p>{escape(solution.executive_summary)}</p>"
             + (
-                "<h2>Imported components</h2><table border='1' cellpadding='6' cellspacing='0'>"
-                "<thead><tr><th>Name</th><th>Layer</th><th>Description</th></tr></thead>"
+                "<h2>Импортированные компоненты</h2><table border='1' cellpadding='6' cellspacing='0'>"
+                "<thead><tr><th>Название</th><th>Слой</th><th>Описание</th></tr></thead>"
                 f"<tbody>{component_rows}</tbody></table>"
                 if component_rows
                 else ""
             )
             + (
-                "<h2>Imported integrations</h2><table border='1' cellpadding='6' cellspacing='0'>"
-                "<thead><tr><th>From</th><th>To</th><th>Protocol</th><th>Interaction</th></tr></thead>"
+                "<h2>Импортированные интеграции</h2><table border='1' cellpadding='6' cellspacing='0'>"
+                "<thead><tr><th>Откуда</th><th>Куда</th><th>Протокол</th><th>Взаимодействие</th></tr></thead>"
                 f"<tbody>{integration_rows}</tbody></table>"
                 if integration_rows
                 else ""

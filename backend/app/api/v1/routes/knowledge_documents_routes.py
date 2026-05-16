@@ -4,7 +4,7 @@ from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 
-from app.db.enums import Criticality, SourceDocumentStatus, SourceStatus
+from app.db.enums import Criticality, KnowledgeBaseKind, SourceDocumentStatus, SourceStatus
 from app.integrations.knowledge.source_readers import is_document_explicitly_excluded
 from app.integrations.knowledge.source_security import SourceDocumentPolicyError
 
@@ -157,7 +157,35 @@ def _resolve_upload_base(
     if knowledge_base_id:
         return base_service.get_base(knowledge_base_id, principal)
     base_service.ensure_system_bases(principal)
-    return base_service.get_default_user_base(principal)
+    scope = base_service.get_existing_effective_scope(principal)
+    selected_base = scope.selected_user_base if scope is not None else None
+    if selected_base is not None and selected_base.kind == KnowledgeBaseKind.USER_MANAGED:
+        return selected_base
+    raise ValidationError(
+        "knowledge_base_id is required when uploading documents before a user knowledge base is selected",
+        error_code="KNOWLEDGE_BASE_REQUIRED",
+    )
+
+
+def _normalize_upload_source_status(value: str | SourceStatus | None) -> SourceStatus:
+    if value is None or str(value).strip() == "":
+        return SourceStatus.ACTIVE
+    if isinstance(value, SourceStatus):
+        status_value = value
+    else:
+        try:
+            status_value = SourceStatus(str(value).strip().lower())
+        except ValueError as exc:
+            raise ValidationError(
+                "Upload source status must be active or disabled",
+                error_code="INVALID_UPLOAD_SOURCE_STATUS",
+            ) from exc
+    if status_value not in {SourceStatus.ACTIVE, SourceStatus.DISABLED}:
+        raise ValidationError(
+            "Upload source status must be active or disabled",
+            error_code="INVALID_UPLOAD_SOURCE_STATUS",
+        )
+    return status_value
 
 
 def _ensure_upload_source(
@@ -166,9 +194,13 @@ def _ensure_upload_source(
     principal: AuthPrincipal,
     knowledge_base_id: str,
     upload_dir: Path,
+    refresh_policy: str | None = None,
+    source_status: SourceStatus | None = None,
     auto_commit: bool = True,
 ):
     desired_base_uri = upload_dir.as_uri()
+    desired_refresh_policy = (refresh_policy or "manual").strip() or "manual"
+    desired_status = source_status or SourceStatus.ACTIVE
     upload_source = _find_manual_upload_source(
         service,
         knowledge_base_id=knowledge_base_id,
@@ -183,14 +215,14 @@ def _ensure_upload_source(
                     name="Загруженные файлы",
                     base_uri=desired_base_uri,
                     criticality=Criticality.REQUIRED,
-                    refresh_policy="manual",
+                    refresh_policy=desired_refresh_policy,
                 ),
                 principal,
                 auto_commit=auto_commit,
             )
             return service.update_source(
                 str(created_source.source_id),
-                SourceUpdateRequest(status=SourceStatus.ACTIVE),
+                SourceUpdateRequest(status=desired_status),
                 principal,
                 auto_commit=auto_commit,
             )
@@ -212,8 +244,8 @@ def _ensure_upload_source(
         update_base_uri = desired_base_uri
     if str(getattr(upload_source, "name", "") or "") != "Загруженные файлы":
         update_name = "Загруженные файлы"
-    if str(getattr(upload_source, "refresh_policy", "") or "") != "manual":
-        update_refresh_policy = "manual"
+    if str(getattr(upload_source, "refresh_policy", "") or "") != desired_refresh_policy:
+        update_refresh_policy = desired_refresh_policy
     current_status = str(
         getattr(
             getattr(upload_source, "status", None),
@@ -222,8 +254,8 @@ def _ensure_upload_source(
         )
         or ""
     )
-    if current_status != "active":
-        update_status = SourceStatus.ACTIVE
+    if current_status != desired_status.value:
+        update_status = desired_status
 
     if any(
         value is not None
@@ -293,8 +325,11 @@ async def upload_document(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     knowledge_base_id: str | None = Form(default=None),
+    refresh_policy: str | None = Form(default=None),
+    source_status: str | None = Form(default=None),
     _guard: AuthPrincipal = UserDep,
 ):
+    requested_source_status = _normalize_upload_source_status(source_status)
     base = _resolve_upload_base(
         session=session,
         principal=principal,
@@ -314,6 +349,8 @@ async def upload_document(
             principal=principal,
             knowledge_base_id=str(base.knowledge_base_id),
             upload_dir=upload_dir,
+            refresh_policy=refresh_policy,
+            source_status=requested_source_status,
             auto_commit=False,
         )
         document = _register_uploaded_document(
@@ -348,6 +385,8 @@ async def upload_and_ingest_documents(
     files: list[UploadFile] = File(...),
     title: str | None = Form(default=None),
     knowledge_base_id: str | None = Form(default=None),
+    refresh_policy: str | None = Form(default=None),
+    source_status: str | None = Form(default=None),
     execute_update_inline: bool | None = Form(default=None),
     reason: str | None = Form(default=None),
     _guard: AuthPrincipal = UserDep,
@@ -356,6 +395,12 @@ async def upload_and_ingest_documents(
         raise ValidationError(
             "At least one file must be provided",
             error_code="UPLOAD_FILES_REQUIRED",
+        )
+    requested_source_status = _normalize_upload_source_status(source_status)
+    if requested_source_status != SourceStatus.ACTIVE:
+        raise ValidationError(
+            "Upload source must be active to start document ingestion",
+            error_code="UPLOAD_SOURCE_MUST_BE_ACTIVE",
         )
     base = _resolve_upload_base(
         session=session,
@@ -379,6 +424,8 @@ async def upload_and_ingest_documents(
             principal=principal,
             knowledge_base_id=str(base.knowledge_base_id),
             upload_dir=upload_dir,
+            refresh_policy=refresh_policy,
+            source_status=requested_source_status,
             auto_commit=False,
         )
         documents = [
@@ -451,10 +498,18 @@ async def upload_and_ingest_document(
     file: UploadFile = File(...),
     title: str | None = Form(default=None),
     knowledge_base_id: str | None = Form(default=None),
+    refresh_policy: str | None = Form(default=None),
+    source_status: str | None = Form(default=None),
     execute_update_inline: bool | None = Form(default=None),
     reason: str | None = Form(default=None),
     _guard: AuthPrincipal = UserDep,
 ):
+    requested_source_status = _normalize_upload_source_status(source_status)
+    if requested_source_status != SourceStatus.ACTIVE:
+        raise ValidationError(
+            "Upload source must be active to start document ingestion",
+            error_code="UPLOAD_SOURCE_MUST_BE_ACTIVE",
+        )
     base = _resolve_upload_base(
         session=session,
         principal=principal,
@@ -474,6 +529,8 @@ async def upload_and_ingest_document(
             principal=principal,
             knowledge_base_id=str(base.knowledge_base_id),
             upload_dir=upload_dir,
+            refresh_policy=refresh_policy,
+            source_status=requested_source_status,
             auto_commit=False,
         )
         document = _register_uploaded_document(

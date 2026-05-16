@@ -9,12 +9,17 @@ from app.db.enums import (
     AccountType,
     DocumentDeltaKind,
     DocumentType,
+    KnowledgeBaseKind,
+    KnowledgeUpdateStatus,
+    KnowledgeVersionStatus,
     SourceDocumentStatus,
     SourceProcessingStatus,
     SourceStatus,
     SourceType,
+    UpdateRunType,
 )
 from app.domain.services.knowledge_core import KnowledgeSourceService
+from app.domain.services.knowledge_core import KnowledgeUpdateService
 from app.domain.services.mvp_canonical import CanonicalReadService
 
 
@@ -85,6 +90,63 @@ def test_remove_document_and_start_update_archives_document_and_starts_delete_ru
     assert captured["payload"].selected_source_ids == ["src-1"]
     assert captured["payload"].run_type.value == "delete"
     service.session.commit.assert_called_once()
+    service.audit.record.assert_called_once()
+
+
+def test_archive_source_starts_delete_run_for_archived_source_documents() -> None:
+    service = KnowledgeSourceService.__new__(KnowledgeSourceService)
+    service.session = Mock()
+    service.audit = Mock()
+    service._assert_source_mutable = lambda *args, **kwargs: None
+
+    source = SimpleNamespace(
+        source_id="src-1",
+        knowledge_base_id="kb-1",
+        name="Uploaded files",
+        status=SourceStatus.ACTIVE,
+    )
+    documents = [
+        SimpleNamespace(document_id="doc-1"),
+        SimpleNamespace(document_id="doc-2"),
+    ]
+    service._get_source_compat = lambda source_id, principal: source
+    service.documents = SimpleNamespace(
+        list_for_source=lambda source_id, include_archived=False: documents
+    )
+
+    import app.domain.services.knowledge_core as knowledge_core_module
+
+    captured: dict[str, object] = {}
+
+    class FakeUpdateService:
+        def __init__(self, session, settings):
+            captured["session"] = session
+            captured["settings"] = settings
+
+        def start_run(self, payload, principal):
+            captured["payload"] = payload
+            captured["principal"] = principal
+            return {"update_run_id": "run-1", "run_type": payload.run_type.value}
+
+    original_service = knowledge_core_module.KnowledgeUpdateService
+    knowledge_core_module.KnowledgeUpdateService = FakeUpdateService
+    try:
+        archived_source = KnowledgeSourceService.archive_source(
+            service,
+            "src-1",
+            _principal(),
+            settings=SimpleNamespace(),
+            execute_inline=True,
+        )
+    finally:
+        knowledge_core_module.KnowledgeUpdateService = original_service
+
+    assert archived_source is source
+    assert archived_source.status == SourceStatus.ARCHIVED
+    assert captured["payload"].run_type.value == "delete"
+    assert captured["payload"].selected_source_ids == ["src-1"]
+    assert captured["payload"].removed_document_ids == ["doc-1", "doc-2"]
+    service.session.refresh.assert_called_once_with(source)
     service.audit.record.assert_called_once()
 
 
@@ -178,6 +240,29 @@ def test_list_base_document_payloads_includes_deleted_entries() -> None:
     assert deleted["document_id"] == "doc-b"
     assert deleted["delta_kind"] == "deleted"
     assert deleted["title"] == "Old Policy"
+
+
+def test_delete_run_can_activate_empty_user_version_after_last_document_removed() -> None:
+    service = KnowledgeUpdateService.__new__(KnowledgeUpdateService)
+    candidate = SimpleNamespace(
+        version_documents=[],
+        knowledge_fragments=[],
+        knowledge_base=SimpleNamespace(kind=KnowledgeBaseKind.USER_MANAGED),
+        update_run=SimpleNamespace(run_type=UpdateRunType.DELETE),
+    )
+
+    validation = KnowledgeUpdateService._validate_candidate_version(
+        service,
+        candidate,
+        selected_sources=[],
+        problem_sources=[],
+        rules_for_conflicts=[],
+    )
+
+    assert validation.run_status == KnowledgeUpdateStatus.COMPLETED
+    assert validation.version_status == KnowledgeVersionStatus.VALIDATED
+    assert validation.details["validation"] == "passed"
+    assert validation.details["empty_knowledge_version"] is True
 
 
 def test_get_generation_run_payload_exposes_knowledge_scope() -> None:

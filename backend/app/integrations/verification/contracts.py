@@ -25,18 +25,18 @@ class VerificationCheckResultPayload(BaseModel):
             self.status in {CheckResultStatus.WARNING, CheckResultStatus.FAILED}
             and not self.finding_text
         ):
-            raise ValueError("finding_text is required for warning and failed statuses")
+            raise ValueError("для предупреждений и ошибок нужен текст замечания")
         if self.status == CheckResultStatus.NOT_DETERMINED and not (
             self.finding_text or self.diagnostics
         ):
-            raise ValueError("not_determined status requires finding_text or diagnostics")
+            raise ValueError("для статуса ручной проверки нужен текст замечания или диагностика")
         if self.status in {
             CheckResultStatus.WARNING,
             CheckResultStatus.FAILED,
             CheckResultStatus.NOT_DETERMINED,
         } and not (self.evidence_ref or self.diagnostics):
             raise ValueError(
-                "warning/failed/not_determined statuses require evidence_ref or diagnostics"
+                "для предупреждений, ошибок и ручной проверки нужны основание или диагностика"
             )
         return self
 
@@ -56,27 +56,27 @@ class VerificationProtocolPayload(BaseModel):
             CheckResultStatus.NOT_APPLICABLE,
         }:
             raise ValueError(
-                "passed summary is incompatible with warnings/failures/incomplete checks"
+                "итог «без замечаний» несовместим с предупреждениями, ошибками или неполными проверками"
             )
         if self.final_status == ProtocolSummaryStatus.PASSED_WITH_COMMENTS and (
             CheckResultStatus.FAILED in statuses or CheckResultStatus.NOT_DETERMINED in statuses
         ):
-            raise ValueError("passed_with_comments cannot include failed or not_determined checks")
+            raise ValueError("итог «есть комментарии» не может содержать ошибки или неполные проверки")
         if (
             self.final_status == ProtocolSummaryStatus.FAILED
             and CheckResultStatus.FAILED not in statuses
         ):
-            raise ValueError("failed summary requires at least one failed check")
+            raise ValueError("итог «не пройдена» требует хотя бы одну проверку с ошибкой")
         if (
             self.final_status == ProtocolSummaryStatus.FAILED
             and CheckResultStatus.NOT_DETERMINED in statuses
         ):
             raise ValueError(
-                "failed summary cannot include not_determined checks; use incomplete instead"
+                "итог «не пройдена» не может содержать неполные проверки; используйте итог «неполная»"
             )
         if (
             self.final_status == ProtocolSummaryStatus.INCOMPLETE
             and CheckResultStatus.NOT_DETERMINED not in statuses
         ):
-            raise ValueError("incomplete summary requires not_determined checks")
+            raise ValueError("итог «неполная» требует хотя бы одну неполную проверку")
         return self

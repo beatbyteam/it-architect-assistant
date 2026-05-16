@@ -59,7 +59,7 @@ export function getSources(knowledgeBaseId?: string, options?: RequestOptions) {
   return request<SourcesResponse>('/knowledge/sources', options, { knowledge_base_id: knowledgeBaseId });
 }
 
-export function createSource(payload: { knowledge_base_id?: string | null; source_type: string; name: string; base_uri?: string | null; criticality: string; refresh_policy?: string | null; sync_mode?: string; source_metadata?: Record<string, unknown> | null }) {
+export function createSource(payload: { knowledge_base_id?: string | null; source_type: string; name?: string | null; base_uri?: string | null; criticality: string; refresh_policy?: string | null; sync_mode?: string; source_metadata?: Record<string, unknown> | null }) {
   return request<SourceResponse>('/knowledge/sources', { method: 'POST', body: JSON.stringify(payload) });
 }
 
@@ -155,11 +155,13 @@ export function getKnowledgeNotifications(limit = 20, knowledgeBaseId?: string |
   });
 }
 
-export async function uploadKnowledgeFile(payload: { file: File; title?: string; knowledge_base_id?: string }) {
+export async function uploadKnowledgeFile(payload: { file: File; title?: string; knowledge_base_id?: string; refresh_policy?: string | null; source_status?: string | null }) {
   const formData = new FormData();
   formData.append('file', payload.file);
   if (payload.title?.trim()) formData.append('title', payload.title.trim());
   if (payload.knowledge_base_id) formData.append('knowledge_base_id', payload.knowledge_base_id);
+  if (payload.refresh_policy?.trim()) formData.append('refresh_policy', payload.refresh_policy.trim());
+  if (payload.source_status?.trim()) formData.append('source_status', payload.source_status.trim());
   return request<KnowledgeUploadResponse>('/knowledge/uploads', {
     method: 'POST',
     body: formData,
@@ -170,6 +172,8 @@ export async function uploadAndIngestKnowledgeFiles(payload: {
   files: File[];
   title?: string;
   knowledge_base_id?: string;
+  refresh_policy?: string | null;
+  source_status?: string | null;
   execute_update_inline?: boolean | null;
   reason?: string | null;
 }) {
@@ -177,6 +181,8 @@ export async function uploadAndIngestKnowledgeFiles(payload: {
   payload.files.forEach((file) => formData.append('files', file));
   if (payload.title?.trim()) formData.append('title', payload.title.trim());
   if (payload.knowledge_base_id) formData.append('knowledge_base_id', payload.knowledge_base_id);
+  if (payload.refresh_policy?.trim()) formData.append('refresh_policy', payload.refresh_policy.trim());
+  if (payload.source_status?.trim()) formData.append('source_status', payload.source_status.trim());
   if (payload.execute_update_inline != null) {
     formData.append('execute_update_inline', String(payload.execute_update_inline));
   }

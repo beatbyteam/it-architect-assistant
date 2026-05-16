@@ -370,10 +370,7 @@ def _run_prompt_stage(
                     **(run.diagnostics or {}),
                     "active_stage": _active_stage(
                         "prompting",
-                        (
-                            "Grounded prompt собран: выбраны фрагменты, рассчитан token budget "
-                            "и подготовлен запрос к модели."
-                        ),
+                        "Grounded prompt собран: выбраны фрагменты, рассчитан token budget и подготовлен запрос к модели.",
                         operation="prompt_build",
                         retrieved_fragment_count=len(retrieval.fragments),
                         included_fragment_count=len(prompt_artifact.included_fragment_ids),

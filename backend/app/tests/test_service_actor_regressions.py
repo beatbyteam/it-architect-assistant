@@ -120,6 +120,38 @@ def test_knowledge_base_payloads_drop_stale_selected_version_from_other_base() -
     assert payload["selected_knowledge_version_no"] is None
 
 
+def test_ensure_system_bases_creates_only_mandatory_base() -> None:
+    principal = _service_principal()
+    created_bases: list[KnowledgeBase] = []
+    created_selections: list[KnowledgeBaseSelection] = []
+
+    def _flush() -> None:
+        for index, base in enumerate(created_bases, start=1):
+            if getattr(base, "knowledge_base_id", None) is None:
+                base.knowledge_base_id = f"kb-{index}"
+        for index, selection in enumerate(created_selections, start=1):
+            if getattr(selection, "knowledge_base_selection_id", None) is None:
+                selection.knowledge_base_selection_id = f"sel-{index}"
+
+    service = KnowledgeBaseService.__new__(KnowledgeBaseService)
+    service.session = SimpleNamespace(flush=_flush, commit=lambda: None, refresh=lambda obj: None)
+    service.bases = SimpleNamespace(
+        get_by_code=lambda code, owner_user_id=None: None,
+        add=lambda base: created_bases.append(base),
+    )
+    service.selections = SimpleNamespace(
+        get_for_scope=lambda scope: None,
+        add=lambda selection: created_selections.append(selection),
+    )
+
+    mandatory, default_user = service.ensure_system_bases(principal)
+
+    assert default_user is None
+    assert [base.kind for base in created_bases] == [KnowledgeBaseKind.SYSTEM_MANDATORY]
+    assert mandatory.name == "Mandatory Architecture Baseline"
+    assert created_selections[0].selected_knowledge_base_id == mandatory.knowledge_base_id
+
+
 def test_select_user_base_uses_service_actor_key_for_traceability() -> None:
     principal = _service_principal()
     base = KnowledgeBase(

@@ -46,7 +46,7 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
         run.status = VerificationRunStatus.RUNNING
         run.current_stage = "preparing"
         service._record_operation_step(
-            run, stage="preparing", status="running", detail="Verification context loading started"
+            run, stage="preparing", status="running", detail="Начата загрузка контекста проверки"
         )
         run.diagnostics = service._with_stage_history(
             _attach_pipeline_observability(
@@ -57,7 +57,7 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
                 current_stage=run.current_stage,
             ),
             "preparing",
-            detail="Verification context loading started",
+            detail="Начата загрузка контекста проверки",
         )
         service.session.add(run)
         service.session.commit()
@@ -236,7 +236,7 @@ def _run_verification_stage(
         run,
         stage="verification",
         status="running",
-        detail="Rule execution started",
+        detail="Начато выполнение правил проверки",
         payload={"support_summary": support_context.get("support_summary")},
     )
     generation_retrieval = {}
@@ -264,7 +264,7 @@ def _run_verification_stage(
             current_stage=run.current_stage,
         ),
         "verification",
-        detail="Rule execution started",
+        detail="Начато выполнение правил проверки",
     )
     context = VerificationExecutionContext(
         solution=solution,
@@ -300,7 +300,7 @@ def _publish_verification_protocol(
         run,
         stage="publishing",
         status="running",
-        detail="Protocol rendering and persistence started",
+        detail="Начата сборка и сохранение протокола",
     )
     run.diagnostics = service._with_stage_history(
         _attach_pipeline_observability(
@@ -311,7 +311,7 @@ def _publish_verification_protocol(
             current_stage=run.current_stage,
         ),
         "publishing",
-        detail="Protocol rendering and persistence started",
+        detail="Начата сборка и сохранение протокола",
     )
     protocol, published_artifact = service.persistence.persist(
         run=run, payload=payload, rule_lookup=rule_lookup
@@ -323,7 +323,7 @@ def _publish_verification_protocol(
         run,
         stage="completed",
         status="completed",
-        detail="Verification protocol issued",
+        detail="Протокол проверки выпущен",
         payload={
             "verification_protocol_id": str(protocol.verification_protocol_id),
             "published_artifact_id": str(published_artifact.published_artifact_id),
@@ -363,7 +363,7 @@ def _publish_verification_protocol(
             current_stage=run.current_stage,
         ),
         "completed",
-        detail="Verification protocol issued",
+        detail="Протокол проверки выпущен",
         status="completed",
     )
     service.session.add(run)
@@ -371,7 +371,7 @@ def _publish_verification_protocol(
         event_type="verification.run.completed",
         target_type="verification_run",
         target_id=run.verification_run_id,
-        message="Verification run completed and protocol issued",
+        message="Проверка решения завершена, протокол выпущен",
         actor_user_id=run.started_by_user_id,
         correlation_id=run.correlation_id,
         payload={
@@ -454,7 +454,7 @@ def _fail_verification_run(
         event_type="verification.run.failed",
         target_type="verification_run",
         target_id=failed_run.verification_run_id,
-        message="Verification run failed",
+        message="Проверка решения завершилась ошибкой",
         actor_user_id=failed_run.started_by_user_id,
         correlation_id=failed_run.correlation_id,
         payload={

@@ -48,9 +48,9 @@ if (-not (Test-Path $targetEnv)) {
 
 docker compose --env-file $targetEnv -f $composeFile up --build -d
 
-if (-not $SkipModelPull) {
-  Invoke-OllamaPull -ModelId (Get-LocalEnvValue -Name "LLM_MODEL_ID" -DefaultValue "qwen2.5:7b-instruct")
-  Invoke-OllamaPull -ModelId (Get-LocalEnvValue -Name "EMBEDDING_MODEL_ID" -DefaultValue "bge-m3")
+if (-not $SkipBootstrapKnowledge) {
+  Wait-ApiReady
+  docker compose --env-file $targetEnv -f $composeFile --profile bootstrap run --rm --no-deps knowledge-bootstrap
 }
 
 docker compose --env-file $targetEnv -f $composeFile ps

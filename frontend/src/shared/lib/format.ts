@@ -159,7 +159,7 @@ export function tone(status?: string | null) {
   if (!status) return 'neutral';
   if (['published', 'completed', 'passed', 'active', 'selected_for_generation', 'validated', 'ready_for_generation', 'closed', 'loaded', 'indexed', 'parsed', 'fetched', 'registered', 'available', 'success'].includes(status)) return 'success';
   if (['needs_clarification', 'warning', 'passed_with_comments', 'incomplete', 'answered', 'completed_with_warnings', 'not_determined', 'requires_operator_decision', 'pending', 'unavailable', 'draft'].includes(status)) return 'warning';
-  if (['failed', 'critical', 'rejected', 'archived', 'canceled', 'disabled', 'excluded', 'error', 'danger'].includes(status)) return 'danger';
+  if (['failed', 'critical', 'rejected', 'archived', 'canceled', 'disabled', 'excluded', 'deleted', 'error', 'danger'].includes(status)) return 'danger';
   return 'neutral';
 }
 
@@ -402,5 +402,5 @@ export function verificationRuleGroupLabel(value?: string | null) {
     technical: 'Техническая готовность',
     other: 'Прочие проверки',
   };
-  return value ? map[value] ?? value : 'Прочие проверки';
+  return value ? map[value] ?? `Группа ${value.replace(/_/g, ' ')}` : 'Прочие проверки';
 }

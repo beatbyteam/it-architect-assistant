@@ -236,8 +236,10 @@ class KnowledgeSourceService:
         if payload.knowledge_base_id:
             base = self._get_base(str(payload.knowledge_base_id), principal)
         else:
-            self._ensure_system_bases(principal)
-            base = self._get_default_user_base(principal)
+            raise ValidationError(
+                "knowledge_base_id is required when creating a knowledge source",
+                error_code="KNOWLEDGE_BASE_REQUIRED",
+            )
         self._assert_base_mutable(base, principal, operation="create source")
         source_metadata = dict(payload.source_metadata or {})
         try:
@@ -414,6 +416,11 @@ class KnowledgeSourceService:
             source = self.get_source(source_id)
         self._assert_source_mutable(source, principal, operation="archive source")
         self._validate_source_transition(source.status, SourceStatus.ARCHIVED)
+        archived_document_ids = [
+            str(document.document_id)
+            for document in self.documents.list_for_source(source.source_id, include_archived=False)
+            if getattr(document, "document_id", None) is not None
+        ]
         source.status = SourceStatus.ARCHIVED
         self.session.add(source)
         self.audit.record(
@@ -430,9 +437,10 @@ class KnowledgeSourceService:
                 source,
                 principal,
                 settings=settings,
-                run_type=UpdateRunType.REBUILD,
+                run_type=UpdateRunType.DELETE,
                 reason=f"archive_source:{source_id}",
                 execute_inline=execute_inline,
+                removed_document_ids=archived_document_ids,
             )
             self.session.refresh(source)
             cast(Any, source).update_run_id = run_payload.get("update_run_id")

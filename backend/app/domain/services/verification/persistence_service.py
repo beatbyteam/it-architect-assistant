@@ -112,7 +112,7 @@ class VerificationProtocolPersistenceService:
                     verification_protocol_id=protocol.verification_protocol_id,
                     document_id=getattr(item, "document_id", None),
                     title=getattr(getattr(item, "document", None), "title", None)
-                    or "Untitled document",
+                    or "Документ без названия",
                     role_code=getattr(item, "role_code", None) or "reference_only",
                     version_ref=getattr(getattr(item, "document", None), "version_label", None),
                     required_flag=bool(getattr(item, "required_flag", False)),

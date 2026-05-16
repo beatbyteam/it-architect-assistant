@@ -168,7 +168,7 @@ class VerificationRunService:
         active_version = knowledge_scope.selected_generation_version()
         if active_version is None:
             raise ValidationError(
-                "Active knowledge version is required for verification",
+                "Для проверки решения нужна активная версия базы знаний",
                 error_code="ACTIVE_KNOWLEDGE_VERSION_MISSING",
             )
         knowledge_version_id = active_version.knowledge_version_id
@@ -254,13 +254,13 @@ class VerificationRunService:
             return self.get_run(existing.target_id, principal)
         if solution.status != SolutionVersionStatus.PUBLISHED:
             raise ValidationError(
-                "Only published solution versions can be verified",
+                "Проверять можно только опубликованные версии решений",
                 error_code="SOLUTION_NOT_PUBLISHED",
             )
         running = self.runs.get_running_for_solution(solution.solution_version_id)
         if running is not None:
             raise ConflictError(
-                "Verification run already active for solution",
+                "Для этого решения уже запущена проверка",
                 error_code="VERIFICATION_ALREADY_RUNNING",
             )
         run = VerificationRun(
@@ -287,7 +287,7 @@ class VerificationRunService:
                         "stage": "queued",
                         "status": "queued",
                         "timestamp": datetime.now(UTC).isoformat(),
-                        "detail": "Verification run created",
+                        "detail": "Проверка решения создана",
                     }
                 ],
             },
@@ -301,7 +301,7 @@ class VerificationRunService:
             running = self.runs.get_running_for_solution(solution.solution_version_id)
             if running is not None:
                 raise ConflictError(
-                    "Verification run already active for solution",
+                    "Для этого решения уже запущена проверка",
                     error_code="VERIFICATION_ALREADY_RUNNING",
                 ) from exc
             raise
@@ -314,7 +314,7 @@ class VerificationRunService:
             run,
             stage="queued",
             status="queued",
-            detail="Verification run created",
+            detail="Проверка решения создана",
             payload={
                 "solution_version_id": str(solution.solution_version_id),
                 "knowledge_version_id": str(knowledge_version_id),
@@ -334,7 +334,7 @@ class VerificationRunService:
             event_type="verification.run.created",
             target_type="verification_run",
             target_id=run.verification_run_id,
-            message="Verification run created",
+            message="Проверка решения создана",
             actor_user_id=owner_key,
             correlation_id=payload.correlation_id,
             payload=scope_snapshot,
@@ -383,7 +383,7 @@ class VerificationRunService:
                 event_type="verification.run.failed",
                 target_type="verification_run",
                 target_id=failed_run.verification_run_id,
-                message="Verification run queue dispatch failed",
+                message="Не удалось поставить проверку решения в очередь",
                 actor_user_id=failed_run.started_by_user_id,
                 correlation_id=failed_run.correlation_id,
                 payload={"error": str(exc), "stage": "queue_dispatch"},
@@ -496,7 +496,7 @@ class VerificationRunService:
     ) -> list[VerificationRuleDefinition]:
         if validation_scope != "full":
             raise ValidationError(
-                "Only full validation scope is supported in MVP",
+                "В MVP поддерживается только полный объём проверки",
                 error_code="INVALID_VALIDATION_SCOPE",
             )
         rules = self.registry.list_rules()
@@ -551,7 +551,7 @@ class VerificationRunService:
             raise NotFoundError("SolutionVersion", solution_version_id)
         if solution.generation_run is None:
             raise ValidationError(
-                "Solution version is not linked to generation run",
+                "Версия решения не связана с запуском подготовки",
                 error_code="SOLUTION_GENERATION_LINK_MISSING",
             )
         return solution

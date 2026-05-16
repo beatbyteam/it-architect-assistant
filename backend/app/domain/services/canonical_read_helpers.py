@@ -97,7 +97,7 @@ def build_solution_explainability(solution: Any) -> dict[str, Any]:
                 str(key),
                 {
                     "document_id": ref.get("document_id"),
-                    "title": ref.get("document_title") or "Unknown document",
+                    "title": ref.get("document_title") or "Документ без названия",
                     "role_code": ref.get("role_code"),
                     "version_ref": ref.get("version_ref"),
                     "required_flag": bool(ref.get("required_flag")),
@@ -297,7 +297,11 @@ def build_protocol_explainability(
     findings_without_evidence = [
         item.rule_name or item.check_name
         for item in findings
-        if not (item.evidence_ref or item.related_section_ref or item.diagnostics)
+        if not (
+            item.evidence_ref
+            or item.related_section_ref
+            or getattr(item, "diagnostics", None)
+        )
     ]
     findings_without_sections = [
         item.rule_name or item.check_name

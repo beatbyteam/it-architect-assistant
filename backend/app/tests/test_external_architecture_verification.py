@@ -8,13 +8,13 @@ from app.core.exceptions import ConflictError
 from app.db.enums import BusinessTaskStatus, CheckResultStatus, ProtocolSummaryStatus, Severity
 from app.domain.services.external_architecture_check import ExternalArchitectureCheckService
 from app.domain.services.verification.post_validation import VerificationPostValidator
+from app.domain.services.verification.run_service import VerificationRunService
+from app.domain.services.verification.runtime import _prepare_verification_context
 from app.domain.services.verification.rule_executors import (
     NormativeRulesExecutor,
     StructureRulesExecutor,
     VerificationSupportContext,
 )
-from app.domain.services.verification.run_service import VerificationRunService
-from app.domain.services.verification.runtime import _prepare_verification_context
 from app.integrations.verification import (
     VerificationProtocolPayload,
     VerificationRuleDefinition,

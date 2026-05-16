@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -73,6 +74,24 @@ def _normalize_str_id_list(values: list[str] | None) -> list[str]:
     return normalized
 
 
+def _derive_source_name(name: str | None, base_uri: str | None) -> str:
+    normalized_name = (name or "").strip()
+    if normalized_name:
+        return normalized_name[:200]
+    normalized_uri = (base_uri or "").strip()
+    if normalized_uri:
+        parsed = urlparse(normalized_uri)
+        if parsed.netloc:
+            path = unquote(parsed.path or "").strip("/")
+            candidate = f"{parsed.netloc}/{path}" if path else parsed.netloc
+        else:
+            candidate = unquote(parsed.path or normalized_uri).rstrip("/").rsplit("/", 1)[-1]
+        candidate = candidate.strip()
+        if candidate:
+            return candidate[:200]
+    return "Knowledge source"
+
+
 def _normalize_source_scope_selection(
     scope: SourceScope, selected_source_ids: list[str]
 ) -> tuple[SourceScope, list[str]]:
@@ -111,8 +130,8 @@ class SourceCreateRequest(BaseModel):
 
     knowledge_base_id: UUID | str | None = None
     source_type: SourceType = Field(validation_alias=AliasChoices("source_type"))
-    name: str = Field(
-        min_length=1, max_length=200, validation_alias=AliasChoices("name", "source_name")
+    name: str | None = Field(
+        default=None, max_length=200, validation_alias=AliasChoices("name", "source_name")
     )
     base_uri: str | None = Field(
         default=None, max_length=1000, validation_alias=AliasChoices("base_uri", "source_url")
@@ -129,6 +148,7 @@ class SourceCreateRequest(BaseModel):
     def normalize(self) -> SourceCreateRequest:
         if self.criticality is None:
             self.criticality = Criticality.REQUIRED
+        self.name = _derive_source_name(self.name, self.base_uri)
         if self.active_flag is False:
             raise ValueError(
                 "SourceCreateRequest does not support creating disabled sources; source is registered in draft state and can be activated later"

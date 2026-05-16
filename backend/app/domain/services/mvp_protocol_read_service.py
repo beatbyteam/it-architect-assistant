@@ -208,7 +208,8 @@ def get_verification_protocol_payload(
 def get_verification_protocol_violations_payload(
     service, protocol_id: str, principal: AuthPrincipal, *, verification_query_service_factory
 ) -> dict[str, Any]:
-    payload = service.get_verification_protocol_payload(
+    payload = get_verification_protocol_payload(
+        service,
         protocol_id,
         principal,
         verification_query_service_factory=verification_query_service_factory,
@@ -229,7 +230,8 @@ def get_verification_protocol_violations_payload(
 def get_verification_protocol_rendered_payload(
     service, protocol_id: str, principal: AuthPrincipal, *, verification_query_service_factory
 ) -> dict[str, Any]:
-    payload = service.get_verification_protocol_payload(
+    payload = get_verification_protocol_payload(
+        service,
         protocol_id,
         principal,
         verification_query_service_factory=verification_query_service_factory,
@@ -284,7 +286,7 @@ def _materialize_basis_documents(
                 verification_protocol_id=protocol.verification_protocol_id,
                 document_id=getattr(item, "document_id", None),
                 title=getattr(getattr(item, "document", None), "title", None)
-                or "Untitled document",
+                or "Документ без названия",
                 role_code=getattr(item, "role_code", None) or "reference_only",
                 version_ref=getattr(getattr(item, "document", None), "version_label", None),
                 required_flag=bool(getattr(item, "required_flag", False)),

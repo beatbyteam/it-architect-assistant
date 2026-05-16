@@ -11,7 +11,7 @@ import { queryKeys } from '../shared/api/queryKeys';
 import { sanitizeHtml } from '../shared/lib/html';
 import { Badge, Banner, Card, CollapsibleCodeBlock, EmptyState, ErrorState, Input, LoadingState, PageHeader, Select, StateBox } from '../shared/ui/components';
 import { KnowledgeScopeSummary } from '../entities/knowledge/KnowledgeScopeSummary';
-import { formatDateTime, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
+import { formatDateTime, solutionSectionLabel, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
 import {
   normalizeVerificationProtocol,
 } from '../shared/api/normalized';
@@ -129,11 +129,11 @@ export function ProtocolPage() {
       <KnowledgeScopeSummary
         scope={protocol.knowledge_scope}
         title="Область знаний проверки"
-        subtitle="Протокол фиксирует тот же knowledge scope, который использовался в generation и verification."
+        subtitle="Протокол фиксирует ту же область знаний, которая использовалась при подготовке и проверке решения."
       />
 
       {safeRenderedHtml ? (
-        <Card title="Веб-артефакт протокола" subtitle="Самостоятельное rendered-представление verification protocol.">
+        <Card title="Веб-артефакт протокола" subtitle="Самостоятельное представление протокола проверки.">
           <div className="html-preview" dangerouslySetInnerHTML={{ __html: safeRenderedHtml }} />
         </Card>
       ) : null}
@@ -143,7 +143,7 @@ export function ProtocolPage() {
           <div className="stack compact">
             <div><strong>Дата выпуска:</strong> {formatDateTime(protocol.created_at)}</div>
             <div><strong>Версия знаний:</strong> <span className="mono">{protocol.knowledge_version_id}</span></div>
-            <div><strong>Solution version:</strong> <span className="mono">{protocol.solution_version_id}</span></div>
+            <div><strong>Версия решения:</strong> <span className="mono">{protocol.solution_version_id}</span></div>
             <div className="actions">
               {operationId ? <Link className="button" to={`/operations/${operationId}`}>Операция проверки</Link> : null}
               <Link className="button" to={`/solutions/${protocol.solution_version_id}`}>К решению</Link>
@@ -165,7 +165,7 @@ export function ProtocolPage() {
             <Select value={statusFilter} onChange={(event: ChangeEvent<HTMLSelectElement>) => setStatusFilter(event.target.value)}>
               <option value="">Все статусы</option>
               <option value="passed">Без замечаний</option>
-              <option value="warning">Warning</option>
+              <option value="warning">Предупреждение</option>
               <option value="failed">Ошибка</option>
               <option value="not_determined">Требует проверки вручную</option>
             </Select>
@@ -240,16 +240,16 @@ export function ProtocolPage() {
         )}
       </Card>
 
-      <Card title="Compliance summary" subtitle="Отдельная сводка по структуре TOGAF, метамодели ArchiMate и семантической согласованности.">
+      <Card title="Сводка соответствия" subtitle="Отдельная сводка по структуре TOGAF, метамодели ArchiMate и семантической согласованности.">
         {Object.keys(complianceGroups).length === 0 ? <EmptyState title="Сводка по группам пока недоступна" /> : (
           <div className="grid grid-4">
             {Object.entries(complianceGroups).map(([group, values]) => (
               <Card key={group} title={verificationRuleGroupLabel(group)}>
                 <div className="stack compact">
                   <div><strong>Всего:</strong> {String(values.count ?? 0)}</div>
-                  <div><strong>Failed:</strong> {String(values.failed ?? 0)}</div>
-                  <div><strong>Warnings:</strong> {String(values.warnings ?? 0)}</div>
-                  <div><strong>Incomplete:</strong> {String(values.incomplete ?? 0)}</div>
+                  <div><strong>Ошибок:</strong> {String(values.failed ?? 0)}</div>
+                  <div><strong>Предупреждений:</strong> {String(values.warnings ?? 0)}</div>
+                  <div><strong>Неполных проверок:</strong> {String(values.incomplete ?? 0)}</div>
                 </div>
               </Card>
             ))}
@@ -261,7 +261,7 @@ export function ProtocolPage() {
         <Card title="Пояснение к проверке" subtitle="Показывает, насколько полно проверка опиралась на материалы.">
           <div className="stack compact">
             <div><strong>Версия правил:</strong> {String(ruleExecution.rulebook_version ?? '—')}</div>
-            <div><strong>Объём проверки:</strong> {String(ruleExecution.validation_scope ?? 'full')}</div>
+            <div><strong>Объём проверки:</strong> {ruleExecution.validation_scope === 'full' || !ruleExecution.validation_scope ? 'Полный' : String(ruleExecution.validation_scope)}</div>
             <div><strong>Проверенные группы:</strong> {Array.isArray(ruleExecution.executed_rule_groups) ? ruleExecution.executed_rule_groups.map((value) => verificationRuleGroupLabel(String(value))).join(', ') || '—' : '—'}</div>
             <div><strong>Замечаний с основанием:</strong> {String(evidenceCoverage.findings_with_evidence ?? 0)} / {String(evidenceCoverage.finding_count ?? effectiveFindings.length)}</div>
             <div><strong>Обязательных материалов:</strong> {String(basisPackage.required_basis_count ?? 0)} / {String(basisPackage.basis_document_count ?? protocol.basis_documents.length)}</div>
@@ -318,7 +318,7 @@ export function ProtocolPage() {
         )}
       </Card>
 
-      <Card title="Замечания и нарушения" subtitle="Здесь показаны адресные нарушения, сгруппированные по rule group из verification API.">
+      <Card title="Замечания и нарушения" subtitle="Здесь показаны адресные нарушения, сгруппированные по группам правил проверки.">
         {Object.keys(groupedFindings).length === 0 ? (
           <EmptyState title="По текущему фильтру ничего не найдено" />
         ) : (
@@ -342,7 +342,7 @@ export function ProtocolPage() {
                       {finding.evidence ? <div className="muted small">Основание: {finding.evidence}</div> : null}
                       {finding.related_section_ref ? (
                         <div className="actions">
-                          <span className="muted small">Раздел решения: {finding.related_section_ref}</span>
+                          <span className="muted small">Раздел решения: {solutionSectionLabel(finding.related_section_ref)}</span>
                           <Link className="button" to={`/solutions/${protocol.solution_version_id}#section-${finding.related_section_ref}`}>Перейти к разделу решения</Link>
                         </div>
                       ) : null}
