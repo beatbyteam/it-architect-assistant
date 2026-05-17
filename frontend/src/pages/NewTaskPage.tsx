@@ -88,7 +88,7 @@ export function NewTaskPage() {
     <div className="stack">
       <PageHeader
         title="Новая задача"
-        subtitle="Опиши входные данные. Система проверит полноту и откроет уточнения, если чего-то не хватит."
+        subtitle="Опишите входные данные. Система проверит полноту и откроет уточнения, если чего-то не хватит."
       />
 
       <Card title="Версия знаний для генерации" subtitle="Выбор применяется к следующим запускам подготовки решения. Задачу можно сохранить и без активной версии знаний.">
@@ -128,12 +128,12 @@ export function NewTaskPage() {
           <FormRow label="Короткое название">
             <Input value={title} onChange={(event: ChangeEvent<HTMLInputElement>) => setTitle(event.target.value)} placeholder="Например: Архитектура сервиса согласования артефактов" />
           </FormRow>
-          <FormRow label="Подробное описание" hint="Опиши цель, контекст, ограничения, интеграции и ожидаемый результат.">
+          <FormRow label="Подробное описание" hint="Опишите цель, контекст, ограничения, интеграции и ожидаемый результат.">
             <Textarea value={taskText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setTaskText(event.target.value)} placeholder="Нужно подготовить решение для..." />
           </FormRow>
           <div className="muted small">Сейчас символов: {taskText.trim().length}. Для отправки желательно не меньше {MIN_TASK_LENGTH}.</div>
           {localError ? <Banner tone="danger">{localError}</Banner> : null}
-          {mutation.isError ? <ErrorNotice error={mutation.error} fallback="Не удалось сохранить задачу. Проверь доступность сервера." /> : null}
+          {mutation.isError ? <ErrorNotice error={mutation.error} fallback="Не удалось сохранить задачу. Проверьте доступность сервера." /> : null}
           <div className="actions">
             <Button type="button" onClick={() => submit(true)} disabled={mutation.isPending}>{pendingAction === 'draft' ? 'Сохраняю черновик…' : 'Сохранить черновик'}</Button>
             <Button type="submit" primary disabled={mutation.isPending}>{pendingAction === 'submit' ? 'Проверяю входные данные…' : 'Отправить на проверку входных данных'}</Button>

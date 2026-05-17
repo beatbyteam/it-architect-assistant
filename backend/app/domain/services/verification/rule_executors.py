@@ -42,6 +42,7 @@ RULE_GROUP_LABELS: dict[str, str] = {
     "structure": "Структура TOGAF",
     "normative": "Нормативное соответствие",
     "consistency": "Согласованность решения",
+    "nfr": "Нефункциональные требования",
     "other": "Прочие проверки",
 }
 
@@ -89,6 +90,7 @@ class VerificationSupportContext:
     risks: list[Any]
     basis_inventory: Any
     required_fragments_by_role: dict[str, list[Any]]
+    rule_evidence_by_code: dict[str, list[dict[str, Any]]]
     support_summary: dict[str, Any]
 
     def evidence_for_roles(self, *roles: str) -> str | None:
@@ -100,6 +102,9 @@ class VerificationSupportContext:
             fragment_ids = ",".join(str(fragment.fragment_id) for fragment in fragments[:3])
             parts.append(f"{_role_label(role)}: {fragment_ids}")
         return "; ".join(parts) if parts else None
+
+    def evidence_for_rule(self, rule_code: str) -> list[dict[str, Any]]:
+        return list(self.rule_evidence_by_code.get(rule_code) or [])
 
     def section_role_refs(self, section_code: str) -> set[str]:
         section = self.section_by_code.get(section_code)
@@ -165,6 +170,16 @@ class VerificationSupportContext:
             )
         )
         support_context = dict(context.support_context_by_scope or {})
+        support_summary = dict(support_context.get("support_summary") or {})
+        support_summary.setdefault("scoped_document_count", len(version_documents))
+        support_summary.setdefault(
+            "document_scope",
+            "selected" if getattr(context, "selected_document_ids", []) else "full",
+        )
+        support_summary.setdefault(
+            "selected_document_count",
+            len(getattr(context, "selected_document_ids", []) or []),
+        )
         return cls(
             section_by_code=section_by_code,
             section_codes=section_codes,
@@ -178,7 +193,13 @@ class VerificationSupportContext:
             required_fragments_by_role=dict(
                 support_context.get("required_fragments_by_role") or {}
             ),
-            support_summary=dict(support_context.get("support_summary") or {}),
+            rule_evidence_by_code={
+                str(rule_code): [dict(item) for item in list(items or [])]
+                for rule_code, items in (
+                    support_context.get("rule_evidence_by_code") or {}
+                ).items()
+            },
+            support_summary=support_summary,
         )
 
 
@@ -226,6 +247,15 @@ class _BaseRuleExecutor:
             if fallback_section_code:
                 return str(fallback_section_code)
         return None
+
+    @staticmethod
+    def _has_verification_materials(support: VerificationSupportContext) -> bool:
+        basis_count = len(support.basis_inventory.basis_documents or [])
+        selected_document_count = int(
+            support.support_summary.get("selected_document_count") or 0
+        )
+        scoped_document_count = int(support.support_summary.get("scoped_document_count") or 0)
+        return max(basis_count, selected_document_count, scoped_document_count) > 0
 
 
 class TechnicalRulesExecutor(_BaseRuleExecutor):
@@ -279,13 +309,24 @@ class TechnicalRulesExecutor(_BaseRuleExecutor):
 
         if rule.code == "VR-TEC-03":
             missing = list(support.basis_inventory.missing_required_packages or [])
-            status = CheckResultStatus.PASSED if not missing else CheckResultStatus.FAILED
+            basis_count = len(support.basis_inventory.basis_documents or [])
+            selected_document_count = int(
+                support.support_summary.get("selected_document_count") or 0
+            )
+            scoped_document_count = int(support.support_summary.get("scoped_document_count") or 0)
+            has_verification_materials = self._has_verification_materials(support)
+            if not missing:
+                status = CheckResultStatus.PASSED
+            elif has_verification_materials:
+                status = CheckResultStatus.WARNING
+            else:
+                status = CheckResultStatus.FAILED
             return self.result(
                 rule=rule,
                 status=status,
                 finding=None
                 if not missing
-                else "В версии базы знаний не хватает обязательных пакетов оснований: "
+                else "В выбранной области знаний не хватает ожидаемых пакетов оснований: "
                 f"{', '.join(_role_label(item) for item in missing)}.",
                 evidence=", ".join(
                     _role_label(item["role_code"])
@@ -294,6 +335,9 @@ class TechnicalRulesExecutor(_BaseRuleExecutor):
                 diagnostics={
                     "required_packages": support.basis_inventory.required_packages,
                     "missing_required_packages": missing,
+                    "basis_document_count": basis_count,
+                    "selected_document_count": selected_document_count,
+                    "scoped_document_count": scoped_document_count,
                 },
             )
 
@@ -478,8 +522,12 @@ class StructureRulesExecutor(_BaseRuleExecutor):
             if integration_count == 0:
                 return self.result(
                     rule=rule,
-                    status=CheckResultStatus.FAILED,
-                    finding="Интеграции или API упомянуты, но не раскрыты в структуре решения.",
+                status=CheckResultStatus.FAILED,
+                    finding=(
+                        "В тексте архитектуры упоминаются API или интеграции, но они не "
+                        "раскрыты как структурная модель: источник, получатель, направление, "
+                        "протокол, данные и обработка ошибок."
+                    ),
                     evidence="интеграции упомянуты, но не смоделированы",
                     diagnostics={"integration_count": 0},
                     related_section_ref=self._first_section_ref(
@@ -509,7 +557,10 @@ class StructureRulesExecutor(_BaseRuleExecutor):
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else "Для части интеграций не указан протокол, обоснование или раскрытие в разделе TOGAF.",
+                else (
+                    "Часть интеграций описана неполно: проверьте протокол, назначение, "
+                    "связь с TOGAF-разделами и ответственность компонентов."
+                ),
                 evidence=", ".join(incomplete)
                 if incomplete
                 else f"интеграции: {integration_count}",
@@ -637,12 +688,20 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             )
             evidence = support.evidence_for_roles("oda", "ig1242_oda_component_inventory")
             if evidence is None:
+                status = (
+                    CheckResultStatus.WARNING
+                    if self._has_verification_materials(support)
+                    else CheckResultStatus.NOT_DETERMINED
+                )
                 return self.result(
                     rule=rule,
-                    status=CheckResultStatus.NOT_DETERMINED,
+                    status=status,
                     finding="Для нормативной оценки недоступны обязательные фрагменты ODA / IG1242.",
                     evidence="фрагменты ODA / IG1242 не найдены",
-                    diagnostics={"required_roles": ["oda", "ig1242_oda_component_inventory"]},
+                    diagnostics={
+                        "required_roles": ["oda", "ig1242_oda_component_inventory"],
+                        "missing_basis_fragments": True,
+                    },
                     related_section_ref=related_section_ref,
                 )
             contradiction = any(
@@ -687,12 +746,20 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             )
             evidence = support.evidence_for_roles("archimate_3_2")
             if evidence is None:
+                status = (
+                    CheckResultStatus.WARNING
+                    if self._has_verification_materials(support)
+                    else CheckResultStatus.NOT_DETERMINED
+                )
                 return self.result(
                     rule=rule,
-                    status=CheckResultStatus.NOT_DETERMINED,
+                    status=status,
                     finding="Для нормативной оценки недоступны фрагменты ArchiMate 3.2.",
                     evidence="фрагменты ArchiMate 3.2 не найдены",
-                    diagnostics={"required_roles": ["archimate_3_2"]},
+                    diagnostics={
+                        "required_roles": ["archimate_3_2"],
+                        "missing_basis_fragments": True,
+                    },
                     related_section_ref=related_section_ref,
                 )
             contradiction = any(
@@ -746,12 +813,20 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             )
             evidence = support.evidence_for_roles("technology_standard")
             if evidence is None:
+                status = (
+                    CheckResultStatus.WARNING
+                    if self._has_verification_materials(support)
+                    else CheckResultStatus.NOT_DETERMINED
+                )
                 return self.result(
                     rule=rule,
-                    status=CheckResultStatus.NOT_DETERMINED,
+                    status=status,
                     finding="Для нормативной оценки недоступны фрагменты технологического стандарта.",
                     evidence="фрагменты технологического стандарта не найдены",
-                    diagnostics={"required_roles": ["technology_standard"]},
+                    diagnostics={
+                        "required_roles": ["technology_standard"],
+                        "missing_basis_fragments": True,
+                    },
                     related_section_ref=related_section_ref,
                 )
             tech_text = " ".join(
@@ -1240,6 +1315,7 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
 
         if rule.code == "VR-CNS-02":
             deficiencies = []
+            source_ref_total = 0
             for section_code in [
                 "general_information",
                 "business_tasks_description",
@@ -1252,25 +1328,38 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
             ]:
                 section = support.section_by_code.get(section_code)
                 refs = getattr(section, "source_refs", []) or [] if section is not None else []
+                source_ref_total += len(refs)
                 if section is not None and not refs:
                     deficiencies.append(section_code)
-            status = CheckResultStatus.PASSED if not deficiencies else CheckResultStatus.FAILED
+            imported_without_generation_link = getattr(context.solution, "generation_run", None) is None
+            rag_summary = dict(support.support_summary.get("rule_rag") or {})
+            has_rule_rag = int(rag_summary.get("rules_with_evidence") or 0) > 0
+            if not deficiencies:
+                status = CheckResultStatus.PASSED
+            elif imported_without_generation_link or (source_ref_total == 0 and has_rule_rag):
+                status = CheckResultStatus.WARNING
+            else:
+                status = CheckResultStatus.FAILED
             return self.result(
                 rule=rule,
                 status=status,
                 finding=None
                 if status == CheckResultStatus.PASSED
-                else "Для части ключевых разделов нет ссылок на основания: "
-                f"{_section_list(deficiencies)}.",
+                else (
+                    "У импортированной или несвязанной архитектуры нет сохраненных source_ref в секциях; проверка использует выбранные документы базы знаний и RAG-доказательства по правилам."
+                    if status == CheckResultStatus.WARNING
+                    else "Для части ключевых разделов нет ссылок на основания: "
+                    f"{_section_list(deficiencies)}."
+                ),
                 evidence=_section_list(deficiencies)
                 if deficiencies
-                else str(
-                    sum(
-                        len(getattr(section, "source_refs", []) or [])
-                        for section in support.section_by_code.values()
-                    )
-                ),
-                diagnostics={"sections_missing_evidence": deficiencies},
+                else str(source_ref_total),
+                diagnostics={
+                    "sections_missing_evidence": deficiencies,
+                    "source_ref_total": source_ref_total,
+                    "imported_without_generation_link": imported_without_generation_link,
+                    "rule_rag": rag_summary,
+                },
                 related_section_ref=deficiencies[0] if deficiencies else None,
             )
 
@@ -1534,6 +1623,178 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
         )
 
 
+class NfrRulesExecutor(_BaseRuleExecutor):
+    _RULE_PATTERNS = {
+        "VR-NFR-01": {
+            "section": "technology_architecture",
+            "patterns": [
+                "security",
+                "secure",
+                "authentication",
+                "authorization",
+                "auth",
+                "oauth",
+                "sso",
+                "mfa",
+                "rbac",
+                "tls",
+                "ssl",
+                "encryption",
+                "шифр",
+                "безопас",
+                "аутенти",
+                "авториз",
+                "доступ",
+                "роль",
+                "персональн",
+            ],
+            "finding": "Безопасность не описана явно: нужно указать контроль доступа, аутентификацию, авторизацию или шифрование.",
+        },
+        "VR-NFR-02": {
+            "section": "technology_architecture",
+            "patterns": [
+                "availability",
+                "fault tolerance",
+                "failover",
+                "ha",
+                "replication",
+                "redundancy",
+                "resilience",
+                "доступност",
+                "отказоуст",
+                "резервирован",
+                "реплика",
+                "кластер",
+            ],
+            "finding": "Доступность и отказоустойчивость не описаны явно: нужно указать резервирование, failover или поведение при восстановлении.",
+        },
+        "VR-NFR-03": {
+            "section": "technology_architecture",
+            "patterns": [
+                "performance",
+                "latency",
+                "throughput",
+                "rps",
+                "load",
+                "scalability",
+                "scale",
+                "cache",
+                "sla",
+                "производ",
+                "задерж",
+                "нагруз",
+                "масштаб",
+                "кэш",
+            ],
+            "finding": "Производительность и масштабирование не описаны явно: нужно указать ожидаемую нагрузку, latency/SLA или подход к масштабированию.",
+        },
+        "VR-NFR-04": {
+            "section": "technology_architecture",
+            "patterns": [
+                "monitoring",
+                "observability",
+                "metrics",
+                "logs",
+                "logging",
+                "tracing",
+                "alert",
+                "prometheus",
+                "grafana",
+                "монитор",
+                "наблюдаем",
+                "метрик",
+                "лог",
+                "трасс",
+                "алерт",
+                "оповещ",
+            ],
+            "finding": "Мониторинг и наблюдаемость не описаны явно: нужно указать метрики, логи, трассировку и оповещения.",
+        },
+        "VR-NFR-05": {
+            "section": "additional_information",
+            "patterns": [
+                "backup",
+                "restore",
+                "recovery",
+                "rpo",
+                "rto",
+                "disaster recovery",
+                "archive",
+                "резервн",
+                "бэкап",
+                "восстанов",
+                "аварийн",
+            ],
+            "finding": "Резервное копирование и восстановление не описаны явно: нужно указать частоту backup, сценарий restore, RPO/RTO или DR-допущения.",
+        },
+    }
+
+    def _nfr_text(self, support: VerificationSupportContext) -> str:
+        component_text = "\n".join(
+            " ".join(
+                str(part or "")
+                for part in [
+                    getattr(component, "component_name", None),
+                    getattr(component, "role_description", None),
+                    getattr(component, "technology_stack", None),
+                ]
+            )
+            for component in support.components
+        )
+        risk_text = "\n".join(
+            " ".join(
+                str(part or "")
+                for part in [
+                    getattr(risk, "title", None),
+                    getattr(risk, "description", None),
+                    getattr(risk, "mitigation", None),
+                ]
+            )
+            for risk in support.risks
+        )
+        list_text = "\n".join(
+            str(getattr(item, "item_text", "") or "")
+            for item in [*support.assumptions, *support.next_steps]
+        )
+        return "\n".join([support.combined_section_text, component_text, risk_text, list_text]).lower()
+
+    def execute(
+        self,
+        *,
+        rule: VerificationRuleDefinition,
+        context: VerificationExecutionContext,
+        support: VerificationSupportContext,
+    ) -> VerificationCheckResultPayload:
+        del context
+        rule_config = self._RULE_PATTERNS.get(rule.code)
+        if rule_config is None:
+            return self.result(
+                rule=rule,
+                status=CheckResultStatus.NOT_DETERMINED,
+                finding="Правило нефункциональных требований не поддерживается обработчиком проверки.",
+                evidence=rule.code,
+                diagnostics={"group": "nfr"},
+            )
+        haystack = self._nfr_text(support)
+        patterns = list(rule_config["patterns"])
+        matched = [pattern for pattern in patterns if pattern in haystack]
+        related_section_ref = str(rule_config["section"])
+        has_section = related_section_ref in support.section_codes
+        status = CheckResultStatus.PASSED if matched else CheckResultStatus.WARNING
+        return self.result(
+            rule=rule,
+            status=status,
+            finding=None if matched else str(rule_config["finding"]),
+            evidence=", ".join(matched[:8]) if matched else "термины NFR не найдены",
+            diagnostics={
+                "matched_terms": matched[:12],
+                "expected_terms": patterns[:20],
+                "section_present": has_section,
+            },
+            related_section_ref=related_section_ref if has_section else None,
+        )
+
+
 def aggregate_summary_status(
     results: list[VerificationCheckResultPayload],
 ) -> ProtocolSummaryStatus:
@@ -1547,29 +1808,79 @@ def aggregate_summary_status(
     return ProtocolSummaryStatus.PASSED
 
 
+def calculate_verification_score(results: list[VerificationCheckResultPayload]) -> int:
+    severity_weights = {
+        "info": 1.0,
+        "minor": 2.0,
+        "major": 4.0,
+        "critical": 6.0,
+    }
+    status_multipliers = {
+        CheckResultStatus.PASSED: 1.0,
+        CheckResultStatus.NOT_APPLICABLE: 1.0,
+        CheckResultStatus.WARNING: 0.55,
+        CheckResultStatus.FAILED: 0.0,
+        CheckResultStatus.NOT_DETERMINED: 0.0,
+    }
+    total = 0.0
+    earned = 0.0
+    for item in results:
+        severity_value = getattr(item.severity, "value", item.severity)
+        weight = severity_weights.get(str(severity_value or "").lower(), 3.0)
+        total += weight
+        earned += weight * status_multipliers.get(item.status, 0.0)
+    if total <= 0:
+        return 0
+    return max(0, min(100, round((earned / total) * 100)))
+
+
 def build_summary(
     status: ProtocolSummaryStatus, results: list[VerificationCheckResultPayload]
 ) -> str:
     failed = sum(1 for item in results if item.status == CheckResultStatus.FAILED)
     warnings = sum(1 for item in results if item.status == CheckResultStatus.WARNING)
     incomplete = sum(1 for item in results if item.status == CheckResultStatus.NOT_DETERMINED)
+    passed = sum(1 for item in results if item.status == CheckResultStatus.PASSED)
+    score = calculate_verification_score(results)
     group_counts: dict[str, dict[str, int]] = {}
     for item in results:
         group = item.rule_group or "other"
-        bucket = group_counts.setdefault(group, {"failed": 0, "warnings": 0, "incomplete": 0})
+        bucket = group_counts.setdefault(
+            group, {"failed": 0, "warnings": 0, "incomplete": 0, "passed": 0}
+        )
         if item.status == CheckResultStatus.FAILED:
             bucket["failed"] += 1
         elif item.status == CheckResultStatus.WARNING:
             bucket["warnings"] += 1
         elif item.status == CheckResultStatus.NOT_DETERMINED:
             bucket["incomplete"] += 1
+        elif item.status == CheckResultStatus.PASSED:
+            bucket["passed"] += 1
+    group_labels = {
+        "technical": "техническая готовность",
+        "structure": "структура",
+        "normative": "нормативная база",
+        "consistency": "согласованность",
+        "nfr": "NFR",
+        "other": "прочее",
+    }
     group_summary = "; ".join(
-        f"{_rule_group_label(group)}: ошибок={values['failed']}, предупреждений={values['warnings']}, неполных={values['incomplete']}"
+        (
+            f"{group_labels.get(group, group)}: ошибок {values['failed']}, "
+            f"замечаний {values['warnings']}, не определено {values['incomplete']}"
+        )
         for group, values in sorted(group_counts.items())
     )
+    status_labels = {
+        ProtocolSummaryStatus.PASSED: "проверка пройдена без замечаний",
+        ProtocolSummaryStatus.PASSED_WITH_COMMENTS: "проверка пройдена с замечаниями",
+        ProtocolSummaryStatus.FAILED: "есть блокирующие нарушения",
+        ProtocolSummaryStatus.INCOMPLETE: "результат неполный",
+    }
     base = (
-        f"Итог проверки: {_summary_status_label(status)}. "
-        f"Проверок с ошибками: {failed}; предупреждений: {warnings}; "
-        f"неполных проверок: {incomplete}."
+        f"Оценка проверки: {score}/100. Итог: "
+        f"{status_labels.get(status, status.value)}. "
+        f"Пройдено: {passed}; ошибок: {failed}; предупреждений: {warnings}; "
+        f"не определено: {incomplete}."
     )
-    return f"{base} Разбивка по группам правил: {group_summary}." if group_summary else base
+    return f"{base} Разбивка по группам: {group_summary}." if group_summary else base

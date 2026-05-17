@@ -5,10 +5,14 @@ import { useQuery } from '@tanstack/react-query';
 import { getTasks, getSolutionsRegistry } from '../shared/api/tasks';
 import { getVerificationProtocolsRegistry } from '../shared/api/verification';
 import { Badge, Banner, Button, Card, EmptyState, ErrorNotice, Input, LoadingState, PageHeader, Select, StatCard, TabStrip } from '../shared/ui/components';
-import { formatDateTime, truncate } from '../shared/lib/format';
+import { formatDateTime, titleStatus, truncate } from '../shared/lib/format';
+import { matchesSearch } from '../shared/lib/search';
 import type { SolutionRegistryItem, TaskListItem, VerificationProtocolRegistryItem } from '../types/api';
 
 type RegistryTab = 'tasks' | 'solutions' | 'protocols';
+type RegistryTask = TaskListItem & {
+  latest_generation_state?: string | null;
+};
 
 type StatusOption = {
   value: string;
@@ -22,6 +26,7 @@ const STATUS_OPTIONS: Record<RegistryTab, StatusOption[]> = {
   tasks: [
     { value: 'draft', label: 'Черновик' },
     { value: 'submitted', label: 'Принято в работу' },
+    { value: 'running', label: 'В работе' },
     { value: 'needs_clarification', label: 'Нужны уточнения' },
     { value: 'ready_for_generation', label: 'Можно готовить решение' },
     { value: 'completed', label: 'Завершено' },
@@ -39,6 +44,20 @@ const STATUS_OPTIONS: Record<RegistryTab, StatusOption[]> = {
     { value: 'failed', label: 'Ошибка' },
   ],
 };
+
+const ACTIVE_GENERATION_STATES = new Set([
+  'queued',
+  'pending',
+  'running',
+  'preparing',
+  'retrieving',
+  'prompting',
+  'model_generation',
+  'persisting',
+  'validating',
+  'finalizing',
+  'publishing',
+]);
 
 function matchesDate(value: string | null | undefined, from?: string, to?: string) {
   if (!from && !to) return true;
@@ -61,6 +80,12 @@ function taskActionLabel(item: TaskListItem) {
   if (item.state === 'failed') return 'Повторить подготовку';
   if (item.state === 'draft') return 'Продолжить черновик';
   return 'Открыть задачу';
+}
+
+function taskBadgeValue(item: RegistryTask) {
+  return item.latest_generation_state && ACTIVE_GENERATION_STATES.has(item.latest_generation_state)
+    ? 'running'
+    : item.state;
 }
 
 function activeDateRangeLabel(dateFrom: string, dateTo: string) {
@@ -107,13 +132,31 @@ export function RegistryPage() {
   }, [statusFilter, tab]);
 
   const searchValue = search.trim().toLowerCase();
+  const filtersAreActive = Boolean(search || statusFilter || dateFrom || dateTo);
+  const resetFilters = () => {
+    setSearch('');
+    setStatusFilter('');
+    setDateFrom('');
+    setDateTo('');
+  };
 
   const filteredTasks = useMemo(() => {
     const rows = tasksQuery.data ?? [];
-    return rows.filter((item: TaskListItem) => {
-      const haystack = `${item.task_id} ${item.title ?? ''} ${item.state}`.toLowerCase();
-      return (!searchValue || haystack.includes(searchValue))
-        && (!statusFilter || item.state === statusFilter)
+    return rows.filter((item: RegistryTask) => {
+      const badgeStatus = taskBadgeValue(item);
+      const searchParts = [
+        item.task_id,
+        item.title ?? 'Задача без названия',
+        item.state,
+        titleStatus(item.state),
+        badgeStatus,
+        titleStatus(badgeStatus),
+        item.open_clarification_count,
+        item.overdue_clarification_flag ? 'Есть просрочка' : null,
+        taskActionLabel(item),
+      ];
+      return matchesSearch(searchParts, searchValue)
+        && (!statusFilter || item.state === statusFilter || badgeStatus === statusFilter)
         && matchesDate(item.updated_at, dateFrom, dateTo);
     });
   }, [dateFrom, dateTo, searchValue, statusFilter, tasksQuery.data]);
@@ -121,8 +164,20 @@ export function RegistryPage() {
   const filteredSolutions = useMemo(() => {
     const rows = solutionsQuery.data ?? [];
     return rows.filter((item: SolutionRegistryItem) => {
-      const haystack = `${item.solution_version_id} ${item.solution_title} ${item.task_id} ${item.state}`.toLowerCase();
-      return (!searchValue || haystack.includes(searchValue))
+      const searchParts = [
+        item.solution_version_id,
+        item.solution_title,
+        'Задача',
+        item.task_id,
+        item.state,
+        titleStatus(item.state),
+        item.generation_run_id,
+        item.latest_verification_state,
+        titleStatus(item.latest_verification_state),
+        item.latest_protocol_id,
+        item.verification_run_count,
+      ];
+      return matchesSearch(searchParts, searchValue)
         && (!statusFilter || item.state === statusFilter)
         && matchesDate(item.published_at ?? item.created_at, dateFrom, dateTo);
     });
@@ -131,8 +186,21 @@ export function RegistryPage() {
   const filteredProtocols = useMemo(() => {
     const rows = protocolsQuery.data ?? [];
     return rows.filter((item: VerificationProtocolRegistryItem) => {
-      const haystack = `${item.protocol_id} ${item.solution_version_id} ${item.summary_text} ${item.state} ${item.summary_status}`.toLowerCase();
-      return (!searchValue || haystack.includes(searchValue))
+      const searchParts = [
+        item.protocol_id,
+        item.verification_run_id,
+        item.solution_version_id,
+        item.knowledge_version_id,
+        item.summary_text,
+        item.state,
+        titleStatus(item.state),
+        item.summary_status,
+        titleStatus(item.summary_status),
+        item.basis_document_count,
+        item.finding_count,
+        item.has_blockers ? 'Есть блокеры' : null,
+      ];
+      return matchesSearch(searchParts, searchValue)
         && (!statusFilter || item.summary_status === statusFilter || item.state === statusFilter)
         && matchesDate(item.created_at, dateFrom, dateTo);
     });
@@ -175,7 +243,11 @@ export function RegistryPage() {
         <StatCard label="Проверки с ошибкой" value={protocolsQuery.isError ? '—' : String(failedProtocolCount)} hint="Среди загруженных протоколов" />
       </div>
 
-      <Card title="Фильтры" subtitle="Поиск, статус и даты применяются к загруженной выборке текущей вкладки.">
+      <Card
+        title="Фильтры"
+        subtitle="Поиск, статус и даты применяются к загруженной выборке текущей вкладки."
+        actions={filtersAreActive ? <Button onClick={resetFilters}>Сбросить фильтры</Button> : null}
+      >
         <div className="toolbar-grid toolbar-grid-4">
           <TabStrip>
             <button type="button" className={`button ${tab === 'tasks' ? 'button-primary' : ''}`} onClick={() => setTab('tasks')}>Задачи</button>
@@ -194,12 +266,7 @@ export function RegistryPage() {
             <Input type="date" aria-label="Дата до" value={dateTo} onChange={(event: ChangeEvent<HTMLInputElement>) => setDateTo(event.target.value)} />
           </div>
         </div>
-        <div className="actions">
-          <span className="muted small">{activeDateRangeLabel(dateFrom, dateTo)}</span>
-          {(search || statusFilter || dateFrom || dateTo) ? (
-            <Button onClick={() => { setSearch(''); setStatusFilter(''); setDateFrom(''); setDateTo(''); }}>Сбросить фильтры</Button>
-          ) : null}
-        </div>
+        <div className="filter-summary muted small">{activeDateRangeLabel(dateFrom, dateTo)}</div>
       </Card>
 
       {isCurrentTabLoading ? <LoadingState message="Загружаю данные текущей вкладки…" /> : null}
@@ -213,7 +280,7 @@ export function RegistryPage() {
           {tasksQuery.isError ? (
             <ErrorNotice error={tasksQuery.error} fallback="Не удалось загрузить задачи." />
           ) : filteredTasks.length === 0 ? (
-            <EmptyState title="Подходящих задач не найдено" description="Проверь фильтры или создай новую задачу." action={<Link className="button" to="/tasks/new">Создать задачу</Link>} />
+            <EmptyState title="Подходящих задач не найдено" description="Проверьте фильтры или создайте новую задачу." action={<Link className="button" to="/tasks/new">Создать задачу</Link>} />
           ) : (
             <div className="table-wrap">
               <table className="table">
@@ -221,13 +288,13 @@ export function RegistryPage() {
                   <tr><th>Задача</th><th>Статус</th><th>Уточнения</th><th>Обновлена</th><th /></tr>
                 </thead>
                 <tbody>
-                  {filteredTasks.map((item: TaskListItem) => (
+                  {filteredTasks.map((item: RegistryTask) => (
                     <tr key={item.task_id}>
                       <td>
                         <strong>{item.title ?? 'Задача без названия'}</strong>
                         <div className="muted small mono">{truncate(item.task_id, 18)}</div>
                       </td>
-                      <td><Badge value={item.state} /></td>
+                      <td><Badge value={taskBadgeValue(item)} /></td>
                       <td>
                         {item.open_clarification_count ?? 0}
                         {item.overdue_clarification_flag ? <div className="muted small">Есть просрочка</div> : null}
@@ -252,7 +319,7 @@ export function RegistryPage() {
           {solutionsQuery.isError ? (
             <ErrorNotice error={solutionsQuery.error} fallback="Не удалось загрузить решения." />
           ) : filteredSolutions.length === 0 ? (
-            <EmptyState title="Подходящих решений не найдено" description="Проверь фильтры или сначала подготовь решение из задачи." />
+            <EmptyState title="Подходящих решений не найдено" description="Проверьте фильтры или сначала подготовьте решение из задачи." />
           ) : (
             <div className="table-wrap">
               <table className="table">
@@ -297,7 +364,7 @@ export function RegistryPage() {
           {protocolsQuery.isError ? (
             <ErrorNotice error={protocolsQuery.error} fallback="Не удалось загрузить проверки." />
           ) : filteredProtocols.length === 0 ? (
-            <EmptyState title="Подходящих проверок не найдено" description="Проверь фильтры или запусти проверку из готового решения." />
+            <EmptyState title="Подходящих проверок не найдено" description="Проверьте фильтры или запустите проверку из готового решения." />
           ) : (
             <div className="table-wrap">
               <table className="table">

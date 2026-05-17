@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import timedelta
 from typing import Any, cast
 
 from app.core.config import get_settings
 
 settings = get_settings()
+
+DEFAULT_QUEUE = "default"
+KNOWLEDGE_EXTRACTION_QUEUE = "knowledge_extraction"
+KNOWLEDGE_VECTORIZATION_QUEUE = "knowledge_vectorization"
+KNOWLEDGE_LLM_EXTRACTION_QUEUE = "knowledge_llm_extraction"
+ARCHITECTURE_GENERATION_QUEUE = "architecture_generation"
+ARCHITECTURE_VERIFICATION_QUEUE = "architecture_verification"
 
 
 def _scheduled_sync_interval() -> timedelta:
@@ -22,6 +29,9 @@ class _FallbackControl:
     def inspect(self, timeout: float = 1.0) -> _FallbackInspect:
         del timeout
         return _FallbackInspect()
+
+    def revoke(self, *args: Any, **kwargs: Any) -> None:
+        del args, kwargs
 
 
 class _FallbackCeleryConf(dict):
@@ -47,7 +57,15 @@ class _FallbackCelery:
             def _delay(*f_args: Any, **f_kwargs: Any) -> Any:
                 return func(*f_args, **f_kwargs)
 
+            def _apply_async(
+                args: Sequence[Any] | None = None,
+                kwargs: dict[str, Any] | None = None,
+                **_options: Any,
+            ) -> Any:
+                return func(*(args or ()), **(kwargs or {}))
+
             cast(Any, func).delay = _delay
+            cast(Any, func).apply_async = _apply_async
             return func
 
         return decorator
@@ -86,6 +104,28 @@ celery_app.conf.update(
     accept_content=["json"],
     result_serializer="json",
     timezone="UTC",
+    task_default_queue=DEFAULT_QUEUE,
+    task_create_missing_queues=True,
+    task_routes={
+        "app.tasks.jobs.knowledge.run_knowledge_update": {
+            "queue": KNOWLEDGE_EXTRACTION_QUEUE,
+        },
+        "app.tasks.jobs.knowledge.run_scheduled_knowledge_syncs": {
+            "queue": KNOWLEDGE_EXTRACTION_QUEUE,
+        },
+        "app.tasks.jobs.knowledge.extract_document": {
+            "queue": KNOWLEDGE_LLM_EXTRACTION_QUEUE,
+        },
+        "app.tasks.jobs.knowledge.vectorize_document": {
+            "queue": KNOWLEDGE_VECTORIZATION_QUEUE,
+        },
+        "app.tasks.jobs.generation.run_generation_job": {
+            "queue": ARCHITECTURE_GENERATION_QUEUE,
+        },
+        "app.tasks.jobs.verification.run_verification_job": {
+            "queue": ARCHITECTURE_VERIFICATION_QUEUE,
+        },
+    },
     task_track_started=True,
     task_always_eager=settings.celery_task_always_eager,
     task_acks_late=True,
@@ -94,6 +134,7 @@ celery_app.conf.update(
         "knowledge-scheduled-sync": {
             "task": "app.tasks.jobs.knowledge.run_scheduled_knowledge_syncs",
             "schedule": _scheduled_sync_interval(),
+            "options": {"queue": KNOWLEDGE_EXTRACTION_QUEUE},
         },
     },
 )

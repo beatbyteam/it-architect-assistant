@@ -33,6 +33,7 @@ export function TaskWorkspacePage() {
     answerMutation,
     saveDraftMutation,
     generationMutation,
+    cancelGenerationMutation,
     verificationMutation,
     task,
     openClarifications,
@@ -71,6 +72,7 @@ export function TaskWorkspacePage() {
       />
 
       {generationMutation.isError ? <ErrorNotice error={generationMutation.error} fallback="Не удалось запустить подготовку решения." /> : null}
+      {cancelGenerationMutation.isError ? <ErrorNotice error={cancelGenerationMutation.error} fallback="Не удалось остановить подготовку решения." /> : null}
       {generationDispatchNotice?.dispatch_type === 'needs_clarification' ? (
         <Banner tone="warning">Перед подготовкой решения нужно ответить на уточняющие вопросы ниже.</Banner>
       ) : null}
@@ -105,9 +107,16 @@ export function TaskWorkspacePage() {
         latestGenerationRef={latestGenerationRef}
         latestVerificationRef={latestVerificationRef}
         canStartGeneration={Boolean(activeVersionQuery.data)}
+        canCancelGeneration={Boolean(generationState && !isTerminal(generationState))}
         generationPending={generationMutation.isPending}
+        generationCancelPending={cancelGenerationMutation.isPending}
         verificationPending={verificationMutation.isPending}
         onStartGeneration={() => generationMutation.mutate()}
+        onCancelGeneration={() => {
+          if (window.confirm('Остановить текущую подготовку решения? Уже сохранённое решение не будет удалено.')) {
+            cancelGenerationMutation.mutate();
+          }
+        }}
         onStartVerification={() => verificationMutation.mutate()}
       />
 

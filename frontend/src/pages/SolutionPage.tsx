@@ -118,7 +118,7 @@ export function SolutionPage() {
       <KnowledgeScopeSummary
         scope={knowledgeScope}
         title="Область знаний решения"
-        subtitle="Какие версии базы знаний реально участвовали в подготовке решения."
+        subtitle="Какие версии базы знаний участвовали в подготовке решения."
       />
 
       <TabStrip>

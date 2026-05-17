@@ -10,6 +10,7 @@ from app.db.enums import (
     DocumentDeltaKind,
     DocumentType,
     KnowledgeBaseKind,
+    KnowledgeBaseStatus,
     KnowledgeUpdateStatus,
     KnowledgeVersionStatus,
     SourceDocumentStatus,
@@ -150,6 +151,58 @@ def test_archive_source_starts_delete_run_for_archived_source_documents() -> Non
     service.audit.record.assert_called_once()
 
 
+def test_disable_source_starts_delete_run_for_current_documents() -> None:
+    service = KnowledgeSourceService.__new__(KnowledgeSourceService)
+    service.session = Mock()
+    service.audit = Mock()
+    service._assert_source_mutable = lambda *args, **kwargs: None
+
+    source = SimpleNamespace(
+        source_id="src-1",
+        knowledge_base_id="kb-1",
+        status=SourceStatus.ACTIVE,
+        name="Uploaded files",
+    )
+    base = SimpleNamespace(
+        knowledge_base_id="kb-1",
+        kind=KnowledgeBaseKind.USER_MANAGED,
+        status=KnowledgeBaseStatus.ACTIVE,
+    )
+    documents = [
+        SimpleNamespace(document_id="doc-1"),
+        SimpleNamespace(document_id="doc-2"),
+    ]
+    captured: dict[str, object] = {}
+
+    def fake_start_source_update_run(source_arg, principal, **kwargs):
+        captured["source"] = source_arg
+        captured["principal"] = principal
+        captured.update(kwargs)
+        return {"update_run_id": "run-1"}
+
+    service._get_source_compat = lambda source_id, principal: source
+    service._get_base = lambda *args, **kwargs: base
+    service.documents = SimpleNamespace(list_for_source=lambda *args, **kwargs: documents)
+    service.sources = SimpleNamespace(list_for_base=lambda *args, **kwargs: [source])
+    service._start_source_update_run = fake_start_source_update_run
+
+    updated_source = KnowledgeSourceService.disable_source(
+        service,
+        "src-1",
+        _principal(),
+        settings=SimpleNamespace(),
+        execute_inline=True,
+    )
+
+    assert updated_source is source
+    assert updated_source.status == SourceStatus.DISABLED
+    assert captured["run_type"] == UpdateRunType.DELETE
+    assert captured["reason"] == "disable_source:src-1"
+    assert captured["removed_document_ids"] == ["doc-1", "doc-2"]
+    assert getattr(updated_source, "update_run_id") == "run-1"
+    assert base.status == KnowledgeBaseStatus.DISABLED
+
+
 def test_list_base_document_payloads_includes_deleted_entries() -> None:
     service = KnowledgeSourceService.__new__(KnowledgeSourceService)
     service.session = None
@@ -216,7 +269,8 @@ def test_list_base_document_payloads_includes_deleted_entries() -> None:
         ]
     )
     service.sources = SimpleNamespace(
-        get=lambda source_id: SimpleNamespace(name="Repo", source_type=SourceType.REPOSITORY)
+        get=lambda source_id: SimpleNamespace(name="Repo", source_type=SourceType.REPOSITORY),
+        list_for_base=lambda *args, **kwargs: [],
     )
 
     import app.domain.services.knowledge_core as knowledge_core_module
@@ -263,6 +317,121 @@ def test_delete_run_can_activate_empty_user_version_after_last_document_removed(
     assert validation.version_status == KnowledgeVersionStatus.VALIDATED
     assert validation.details["validation"] == "passed"
     assert validation.details["empty_knowledge_version"] is True
+
+
+def test_list_base_document_payloads_prefers_live_status_for_deleted_entries() -> None:
+    service = KnowledgeSourceService.__new__(KnowledgeSourceService)
+    service.session = None
+    now = datetime.now(UTC)
+
+    restored_source = SimpleNamespace(
+        source_id="src-1",
+        name="Repo",
+        source_type=SourceType.REPOSITORY,
+        status=SourceStatus.ACTIVE,
+    )
+    restored_document = SimpleNamespace(
+        document_id="doc-b",
+        title="Restored Policy",
+        uri="file:///restored.md",
+        document_type=DocumentType.NORMATIVE,
+        version_label="v1",
+        status=SourceDocumentStatus.REGISTERED,
+        registered_at=now,
+        discovered_at=now,
+        source=restored_source,
+    )
+    deleted_delta = SimpleNamespace(
+        document_id="doc-b",
+        source_id="src-1",
+        delta_kind=DocumentDeltaKind.DELETED,
+        uri="file:///restored.md",
+        details={"document_status": "archived", "source_status": "archived"},
+        checksum_before="chk-b",
+    )
+    version = SimpleNamespace(
+        knowledge_version_id="kv-1",
+        knowledge_base_id="kb-1",
+        update_run_id="run-1",
+        version_documents=[],
+    )
+    service.versions = SimpleNamespace(
+        get_with_documents=lambda knowledge_version_id: version,
+        get_active=lambda **kwargs: version,
+    )
+    service.document_deltas = SimpleNamespace(list_for_run=lambda update_run_id: [deleted_delta])
+    service.documents = SimpleNamespace(get=lambda document_id: restored_document)
+    service.processing_results = SimpleNamespace(list_for_run=lambda update_run_id: [])
+    service.sources = SimpleNamespace(
+        get=lambda source_id: restored_source,
+        list_for_base=lambda *args, **kwargs: [restored_source],
+    )
+
+    import app.domain.services.knowledge_core as knowledge_core_module
+
+    original_service = knowledge_core_module.KnowledgeBaseService
+    knowledge_core_module.KnowledgeBaseService = lambda session: SimpleNamespace(
+        get_base=lambda knowledge_base_id: SimpleNamespace(knowledge_base_id="kb-1")
+    )
+    try:
+        rows = KnowledgeSourceService.list_base_document_payloads(
+            service, "kb-1", knowledge_version_id="kv-1", include_deleted=True
+        )
+    finally:
+        knowledge_core_module.KnowledgeBaseService = original_service
+
+    assert len(rows) == 1
+    assert rows[0]["document_status"] == "registered"
+    assert rows[0]["source_status"] == "active"
+
+
+def test_restore_document_reenables_disabled_source() -> None:
+    service = KnowledgeSourceService.__new__(KnowledgeSourceService)
+    service.session = Mock()
+    service.audit = Mock()
+    service._assert_base_mutable = lambda *args, **kwargs: None
+    base = SimpleNamespace(
+        knowledge_base_id="kb-1",
+        kind=KnowledgeBaseKind.USER_MANAGED,
+        status=KnowledgeBaseStatus.DISABLED,
+    )
+    service._get_base = lambda *args, **kwargs: base
+
+    document = SimpleNamespace(
+        document_id="doc-1",
+        title="Policy",
+        source_id="src-1",
+        uri="file:///policy.md",
+        status=SourceDocumentStatus.ARCHIVED,
+        is_latest=False,
+        document_metadata={"knowledge_excluded": True, "knowledge_excluded_reason": "removed"},
+    )
+    source = SimpleNamespace(
+        source_id="src-1",
+        knowledge_base_id="kb-1",
+        status=SourceStatus.DISABLED,
+        name="Uploaded files",
+    )
+    service.get_document = lambda *args, **kwargs: document
+    service.get_source = lambda *args, **kwargs: source
+    service.documents = SimpleNamespace(unset_latest_for_uri=Mock())
+    service.sources = SimpleNamespace(list_for_base=lambda *args, **kwargs: [source])
+
+    restored = KnowledgeSourceService.restore_document(
+        service,
+        "doc-1",
+        _principal(),
+        reason="restore_from_archive_page",
+    )
+
+    assert restored is document
+    assert restored.status == SourceDocumentStatus.REGISTERED
+    assert restored.is_latest is True
+    assert restored.document_metadata is None
+    assert source.status == SourceStatus.ACTIVE
+    assert base.status == KnowledgeBaseStatus.ACTIVE
+    service.documents.unset_latest_for_uri.assert_called_once()
+    service.session.commit.assert_called_once()
 
 
 def test_get_generation_run_payload_exposes_knowledge_scope() -> None:

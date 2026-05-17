@@ -33,6 +33,14 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.middleware("http")(request_context_middleware)
 
+    @app.middleware("http")
+    async def json_utf8_charset_middleware(request: Request, call_next):
+        response = await call_next(request)
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("application/json") and "charset=" not in content_type:
+            response.headers["content-type"] = "application/json; charset=utf-8"
+        return response
+
     if settings.allowed_cors_origins:
         app.add_middleware(
             CORSMiddleware,

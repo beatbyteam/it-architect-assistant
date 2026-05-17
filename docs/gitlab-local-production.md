@@ -1,38 +1,41 @@
 # GitLab local production setup
 
-This project is delivered as a local Docker Compose application for each user's personal workstation. GitLab CI/CD validates the code and builds release images, while users can run the same production-style stack locally from the repository.
+Проект поставляется как локальное Docker Compose-приложение для персональной рабочей станции каждого пользователя.
+GitLab CI/CD проверяет код и собирает релизные образы, а пользователи могут запускать тот же production-style стек локально из репозитория.
 
 ## Pipeline
 
 `.gitlab-ci.yml` runs:
 
-- backend linting, selected mypy checks, pytest with JUnit and Cobertura coverage reports;
-- Alembic migration validation against PostgreSQL with pgvector;
-- frontend linting, typecheck, bundled tests, and build;
-- Docker Compose config validation for the default and local-production compose files;
-- shell syntax validation for local release helper scripts;
-- Postman/Newman smoke checks against a running local-production stack;
-- GitLab SAST and Secret Detection templates;
-- backend and frontend image builds on the default branch and tags;
-- `latest` image promotion on the default branch.
+Оставьте включёнными следующие проверки и настройки проекта:
 
-There is no SSH deploy job because production runtime is local on each user's PC.
+- линтинг backend, выборочные проверки mypy, запуск pytest с формированием отчётов JUnit и Cobertura coverage;
+- проверку миграций Alembic на PostgreSQL с расширением pgvector;
+- линтинг frontend, проверку типов, встроенные тесты и сборку;
+- проверку конфигурации Docker Compose для compose-файлов default и local-production;
+- проверку синтаксиса shell-скриптов локального релиза;
+- smoke-проверки Postman/Newman на запущенном local-production-стеке;
+- шаблоны GitLab SAST и Secret Detection;
+- сборку backend- и frontend-образов для основной ветки и тегов;
+- продвижение образа `latest` из основной ветки.
+
+SSH deploy job не используется, так как production runtime разворачивается локально на ПК каждого пользователя.
 
 ## Local Release Runbook
 
-Prerequisites:
+Требования:
 
 - Git;
-- Docker Desktop or Docker Engine with the Docker Compose plugin;
-- enough disk space for PostgreSQL, Redis, Ollama, backend, and frontend images.
+- Docker Desktop или Docker Engine с Docker Compose plugin;
+- Свободное место под PostgreSQL, Redis, Ollama, backend, и frontend images.
 
-Start on Windows PowerShell:
+Первый запуск на Windows:
 
 ```powershell
 .\deploy\scripts\local_release_up.ps1
 ```
 
-The script creates `.env.local` when it is missing, starts Docker Compose, pulls the configured Ollama models, waits for the API, and can run the one-time `knowledge-bootstrap` job for the optional architecture baseline. User-managed knowledge bases are created and selected independently from that baseline. Existing active baselines are left unchanged.
+Скрипт создаёт `.env.local`, если файл ещё не существует, запускает Docker Compose, подтягивает сконфигурированные модели Ollama и ждёт готовности API. Пользовательские базы знаний создаются и выбираются отдельно от системной baseline-базы.
 
 Skip model pulling or knowledge bootstrap when you only need to restart containers:
 
@@ -40,86 +43,105 @@ Skip model pulling or knowledge bootstrap when you only need to restart containe
 .\deploy\scripts\local_release_up.ps1 -SkipModelPull -SkipBootstrapKnowledge
 ```
 
-Start on Linux/macOS:
+Linux/macOS:
 
 ```bash
 sh deploy/scripts/local_release_up.sh
 ```
 
-Skip model pulling or knowledge bootstrap when you only need to restart containers:
+Обновление баз знаний происходит через web-интерфейс.
 
+Быстрый перезапуск:
+```powershell
+.\deploy\scripts\local_release_up.ps1 -SkipModelPull
+```
+Linux/macOS:
 ```bash
 sh deploy/scripts/local_release_up.sh --skip-model-pull --skip-bootstrap-knowledge
 ```
 
-The first run creates `.env.local` from `deploy/local-production.env.example`. Edit `.env.local` for machine-specific values such as model endpoints and ports. Local `.env*` files are ignored by Git.
+При первом запуске файл `.env.local` создается на основе `deploy/local-production.env.example`.
+Отредактируйте `.env.local`, указав значения, зависящие от конкретной машины, например, endpointы и порты.
+Локальные `.env*` файлы игнорируются Git.
 
-Open:
+Создайте резервную копию PostgreSQL, конфигурации развертывания и загруженных документов базы знаний:
+
+```powershell
+.\deploy\scripts\local_backup.ps1 -EnvFile ".env.local" -OutputDir "backups"
+```
+
+Linux/macOS:
+
+```bash
+sh deploy/scripts/local_backup.sh --env-file .env.local --output-dir backups
+```
+
+Документация по восстановлению: [backup-and-restore.md](backup-and-restore.md).
+
+Открыть website проекта:
 
 ```text
 http://localhost:8080
 ```
 
-Stop:
+Остановка проекта:
 
 ```powershell
 .\deploy\scripts\local_release_down.ps1
 ```
 
-Update from GitLab and rebuild:
+Обновление GitLab и пересборка проекта:
 
 ```powershell
 .\deploy\scripts\local_release_update.ps1
 ```
-
-Run Postman/Newman smoke tests against the already running local stack:
-
+Запустить Postman/Newman smoke-тесты на уже поднятом локальном стеке:
 ```powershell
 .\deploy\scripts\run_postman_smoke.ps1
 ```
-
 Linux/macOS:
-
 ```bash
 sh deploy/scripts/run_postman_smoke.sh
 ```
 
 ## Pre-Push Gate
 
-The repository includes a versioned pre-push hook in `.githooks/pre-push`. Enable it once after cloning:
-
+Репозиторий включает версионируемый pre-push хук в `.githooks/pre-push`. Включите его один раз после клонирования проекта:
 ```bash
 git config core.hooksPath .githooks
 ```
 
-The hook runs Docker-based backend checks, frontend checks, Compose validation, and Postman/Newman smoke tests. A failing check stops `git push`.
+Хук запускает Docker-based проверка backend, frontend, валидацию Docker Compose и Postman/Newman smoke-тесты.
+Если одна их проверка завершается ошибкой, git push останавливается
 
-Run the same gate manually on Windows:
-
+Ручной запуск на Windows:
 ```powershell
 .\deploy\scripts\pre_push_check.ps1
 ```
-
-Run it manually on Linux/macOS:
-
+Linux/macOS:
 ```bash
 sh deploy/scripts/pre_push_check.sh
 ```
 
-Use `-SkipPostman` on PowerShell or `SKIP_POSTMAN=true` on shell only when the local stack smoke check is intentionally unavailable.
+Используйте `-SkipPostman` в Powershell или `SKIP_POSTMAN=true` в shell только в случаях, когда smoke-проверка локального стека намеренно недоступна.
 
 ## Runtime Notes
 
-The local-production compose file uses built images, a static nginx frontend, PostgreSQL with pgvector, Redis with append-only persistence, API, worker, gateway, and Ollama. It sets `DEBUG=false` but keeps `APP_ENV=local` and `AUTH_MODE=local_noauth` because the app is intentionally bound to a user's local workstation at `localhost`.
+Compose-файл local-production использует собранные образы, статический nginx frontend,
+PostgreSQL с pgvector, Redis с append-only persistence, API, worker, gateway и Ollama. В нём установлено `DEBUG=false`, но сохранены `APP_ENV=local` и `AUTH_MODE=local_noauth`,
+потому что приложение намеренно привязано к локальной рабочей станции пользователя по адресу localhost.
 
-For a real shared server later, do not reuse this local auth profile. Add an SSO/reverse-proxy auth layer and switch to `APP_ENV=production` with non-local CORS origins.
+
+Для будущего развертывания на общем сервере не используйте этот локальный профиль авторизации. Добавьте слой SO/reverse-proxy аутентификации и переключитесь на
+`APP_ENV=production` с  non-local CORS origins.
+
 
 ## GitLab Project Settings
 
-Keep these project settings enabled:
+Оставляйте включенными следующие параметры проекта:
 
-- protect `main` and disallow force pushes;
-- require merge requests before merging to `main`;
-- enable GitLab Container Registry;
-- use a runner that supports Docker-in-Docker or replace Docker build jobs with the organization's approved builder;
-- keep SAST and Secret Detection jobs enabled.
+- защищать ветку `main` и запретить force pushes;
+- требовать merge request перед слиянием изменений в `main`;
+- включить GitLab Container Registry;
+- использовать runner с поддержкой Docker-in-Docker или заменить задания сборки Docker на утвержденной в организации инструмент разработки;
+- оставить включенным задания SAST и Secret Detection.

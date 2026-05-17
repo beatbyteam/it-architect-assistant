@@ -40,8 +40,11 @@ class PromptArtifact:
 
 
 class GenerationPromptBuilder:
-    def __init__(self, budget_manager: TokenBudgetManager) -> None:
+    def __init__(
+        self, budget_manager: TokenBudgetManager, *, fragment_char_limit: int = 1600
+    ) -> None:
         self.budget_manager = budget_manager
+        self.fragment_char_limit = max(200, int(fragment_char_limit or 1600))
 
     def build(
         self,
@@ -158,8 +161,7 @@ class GenerationPromptBuilder:
         ]
         return included, dropped
 
-    @staticmethod
-    def _format_fragment(fragment: RetrievedFragment) -> str:
+    def _format_fragment(self, fragment: RetrievedFragment) -> str:
         title = fragment.title or fragment.fragment_type or "Knowledge fragment"
         document_title = fragment.metadata.get("document_title") or fragment.document_id
         role_code = fragment.metadata.get("role_code") or "reference_only"
@@ -177,6 +179,7 @@ class GenerationPromptBuilder:
         source_location = fragment.source_location or str(
             fragment.metadata.get("source_location") or "n/a"
         )
+        content, truncated = self._trim_fragment_content(fragment.content)
         return (
             f"[fragment_id={fragment.fragment_id}]\n"
             f"document_title={document_title}\n"
@@ -190,9 +193,16 @@ class GenerationPromptBuilder:
             f"retrieval_score={score}\n"
             f"lexical_score={lexical_score}\n"
             f"vector_score={vector_score}\n"
+            f"content_truncated={'yes' if truncated else 'no'}\n"
             "content:\n"
-            f"{fragment.content}"
+            f"{content}"
         )
+
+    def _trim_fragment_content(self, content: str) -> tuple[str, bool]:
+        normalized = " ".join(str(content or "").split())
+        if len(normalized) <= self.fragment_char_limit:
+            return normalized, False
+        return normalized[: self.fragment_char_limit - 1].rstrip() + "…", True
 
     @staticmethod
     def _fragment_summary(fragment: RetrievedFragment) -> dict[str, Any]:
@@ -210,5 +220,6 @@ class GenerationPromptBuilder:
             "role_code": fragment.metadata.get("role_code"),
             "required_flag": bool(fragment.metadata.get("required_flag")),
             "selection_reason": fragment.metadata.get("selection_reason"),
+            "content_length": len(fragment.content or ""),
             "metadata": fragment.metadata,
         }

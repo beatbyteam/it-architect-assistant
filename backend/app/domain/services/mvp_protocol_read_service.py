@@ -13,13 +13,14 @@ from app.db.models.verification import (
     VerificationProtocol,
     VerificationRun,
 )
-from app.domain.services.knowledge_basis import build_basis_inventory_for_version_documents
+from app.domain.services.knowledge_basis import resolve_basis_assignment
 from app.domain.services.presenters import (
+    clean_display_file_name,
     retention_policy_payload,
 )
 from app.domain.services.verification.document_scope import (
-    filter_version_documents,
-    selected_document_ids_from_scope,
+    filter_version_documents_for_scope,
+    normalize_document_ids,
 )
 from app.schemas.verification import InternalVerificationRunStartRequest
 
@@ -97,7 +98,10 @@ def get_verification_protocol_payload(
         target_type="verification_protocol", target_id=str(protocol.verification_protocol_id)
     )
     basis_documents = list(protocol.basis_documents)
-    if not basis_documents:
+    expected_document_count = _scope_document_count(protocol.verification_run.scope_snapshot)
+    if not basis_documents or (
+        expected_document_count and len(basis_documents) < expected_document_count
+    ):
         basis_documents = service._materialize_basis_documents(protocol)
     findings = sorted(protocol.check_results, key=lambda row: row.sort_order)
     totals_by_status: dict[str, int] = {}
@@ -125,7 +129,9 @@ def get_verification_protocol_payload(
         for item in findings
     ]
     grouped_findings = service._group_verification_findings(finding_rows)
+    run_diagnostics = service._safe_dict(protocol.verification_run.diagnostics)
     compliance_summary = {
+        "score": run_diagnostics.get("verification_score"),
         "groups": {
             group: {
                 "count": len(items),
@@ -144,7 +150,7 @@ def get_verification_protocol_payload(
         "relevant_violation_count": sum(
             1
             for row in finding_rows
-            if row.get("rule_group") in {"structure", "normative"}
+            if row.get("rule_group") in {"structure", "normative", "nfr"}
             and row.get("status") in {"failed", "warning", "not_determined"}
         ),
     }
@@ -168,7 +174,7 @@ def get_verification_protocol_payload(
                 "document_id": str(item.document_id)
                 if getattr(item, "document_id", None)
                 else None,
-                "title": item.title,
+                "title": clean_display_file_name(item.title) or item.title,
                 "role_code": item.role_code,
                 "version_ref": item.version_ref,
                 "required_flag": bool(item.required_flag),
@@ -180,7 +186,7 @@ def get_verification_protocol_payload(
         "grouped_findings": grouped_findings,
         "compliance_summary": compliance_summary,
         "diagnostics": {
-            **service._safe_dict(protocol.verification_run.diagnostics),
+            **run_diagnostics,
             "operation_kind": "verification_run",
             "operation_id": str(protocol.verification_run.verification_run_id),
         },
@@ -270,46 +276,71 @@ def get_verification_protocol_rendered_payload(
 def _materialize_basis_documents(
     service, protocol: VerificationProtocol
 ) -> list[VerificationBasisDocument]:
-    knowledge_version = protocol.verification_run.knowledge_version
-    if knowledge_version is None:
-        return []
-    selected_document_ids = selected_document_ids_from_scope(
-        protocol.verification_run.scope_snapshot
+    version_documents = [
+        item
+        for version in _knowledge_versions_for_protocol(service, protocol)
+        for item in list(getattr(version, "version_documents", []) or [])
+    ]
+    scoped_version_documents = filter_version_documents_for_scope(
+        version_documents,
+        protocol.verification_run.scope_snapshot,
     )
-    scoped_version_documents = filter_version_documents(
-        knowledge_version.version_documents,
-        selected_document_ids,
-    )
-    if selected_document_ids:
-        return [
+    basis_documents: list[VerificationBasisDocument] = []
+    for index, item in enumerate(scoped_version_documents, start=1):
+        document = getattr(item, "document", None)
+        role_code, required_flag = resolve_basis_assignment(item)
+        title = clean_display_file_name(getattr(document, "title", None)) or "Документ без названия"
+        basis_documents.append(
             VerificationBasisDocument(
                 verification_protocol_id=protocol.verification_protocol_id,
                 document_id=getattr(item, "document_id", None),
-                title=getattr(getattr(item, "document", None), "title", None)
-                or "Документ без названия",
-                role_code=getattr(item, "role_code", None) or "reference_only",
-                version_ref=getattr(getattr(item, "document", None), "version_label", None),
-                required_flag=bool(getattr(item, "required_flag", False)),
+                title=title,
+                role_code=role_code,
+                version_ref=getattr(document, "version_label", None),
+                required_flag=bool(required_flag),
                 sort_order=index,
             )
-            for index, item in enumerate(scoped_version_documents, start=1)
-        ]
-    basis_inventory = build_basis_inventory_for_version_documents(scoped_version_documents)
+        )
+    return basis_documents
+
+
+def _scope_document_count(scope_snapshot: Any) -> int:
+    if not isinstance(scope_snapshot, dict):
+        return 0
+    document_scope = scope_snapshot.get("document_scope")
+    if not isinstance(document_scope, dict):
+        return 0
+    count = document_scope.get("document_count")
+    if isinstance(count, int):
+        return max(count, 0)
+    return len(normalize_document_ids(document_scope.get("effective_document_ids") or []))
+
+
+def _knowledge_versions_for_protocol(
+    service, protocol: VerificationProtocol
+) -> list[KnowledgeVersion]:
+    run = protocol.verification_run
+    scope_snapshot = run.scope_snapshot if isinstance(run.scope_snapshot, dict) else {}
+    version_ids = normalize_document_ids(scope_snapshot.get("knowledge_version_ids") or [])
+    if not version_ids:
+        knowledge_version = getattr(run, "knowledge_version", None)
+        return [knowledge_version] if knowledge_version is not None else []
+
+    statement = (
+        select(KnowledgeVersion)
+        .where(KnowledgeVersion.knowledge_version_id.in_(version_ids))
+        .options(
+            selectinload(KnowledgeVersion.version_documents)
+            .selectinload(KnowledgeVersionDocument.document)
+        )
+    )
+    loaded_versions = list(service.session.scalars(statement))
+    version_by_id = {
+        str(getattr(version, "knowledge_version_id", "") or ""): version
+        for version in loaded_versions
+    }
     return [
-        VerificationBasisDocument(
-            verification_protocol_id=protocol.verification_protocol_id,
-            document_id=descriptor.document_id,
-            title=descriptor.title,
-            role_code=descriptor.role_code,
-            version_ref=descriptor.version_ref,
-            required_flag=descriptor.required_flag,
-            sort_order=index,
-        )
-        for index, descriptor in enumerate(
-            sorted(
-                basis_inventory.basis_documents,
-                key=lambda row: ((0 if row.required_flag else 1), row.role_code, row.title),
-            ),
-            start=1,
-        )
+        version_by_id[version_id]
+        for version_id in version_ids
+        if version_id in version_by_id
     ]

@@ -15,6 +15,7 @@ from .knowledge_routes_common import (
     SessionDep,
     SettingsDep,
     UserDep,
+    WriteGuardDep,
     principal_requested_by,
     status,
 )
@@ -88,6 +89,18 @@ def get_knowledge_update(
     _guard: AuthPrincipal = UserDep,
 ):
     return KnowledgeUpdateService(session, settings).get_run_response(update_run_id, principal)
+
+
+@router.post("/update-runs/{update_run_id}/cancel", response_model=KnowledgeUpdateRunResponse)
+def cancel_knowledge_update(
+    update_run_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+    _write_guard: AuthPrincipal = WriteGuardDep,
+):
+    return KnowledgeUpdateService(session, settings).cancel_run(update_run_id, principal)
 
 
 @router.get("/update-runs/{update_run_id}/status", response_model=KnowledgeUpdateRunStatusResponse)

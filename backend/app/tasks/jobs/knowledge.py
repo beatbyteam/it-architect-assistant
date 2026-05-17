@@ -12,7 +12,7 @@ except Exception:  # pragma: no cover - optional dependency fallback
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.domain.services.knowledge_core import KnowledgeUpdateService
-from app.tasks.workers.celery_app import celery_app
+from app.tasks.workers.celery_app import KNOWLEDGE_EXTRACTION_QUEUE, celery_app
 
 logger = get_task_logger(__name__)
 
@@ -24,6 +24,7 @@ def _knowledge_update_time_limits() -> dict[str, int]:
 
 @celery_app.task(
     name="app.tasks.jobs.knowledge.run_knowledge_update",
+    queue=KNOWLEDGE_EXTRACTION_QUEUE,
     **_knowledge_update_time_limits(),
 )
 def run_knowledge_update(update_run_id: str) -> dict[str, str]:
@@ -36,7 +37,10 @@ def run_knowledge_update(update_run_id: str) -> dict[str, str]:
         session.close()
 
 
-@celery_app.task(name="app.tasks.jobs.knowledge.run_scheduled_knowledge_syncs")
+@celery_app.task(
+    name="app.tasks.jobs.knowledge.run_scheduled_knowledge_syncs",
+    queue=KNOWLEDGE_EXTRACTION_QUEUE,
+)
 def run_scheduled_knowledge_syncs() -> dict[str, object]:
     session = SessionLocal()
     try:

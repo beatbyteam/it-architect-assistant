@@ -151,3 +151,40 @@ def test_prepare_document_index_uses_large_document_policy() -> None:
     assert result.canonical_metadata["chunk_overlap_pct"] == 0
     assert result.canonical_metadata["chunk_max_chars"] == 6000
     assert result.canonical_metadata["document_input_size_bytes"] == 13_400_000
+
+
+def test_prepare_document_index_compacts_large_document_chunks_to_target_cap() -> None:
+    sections = [
+        StructuredSection(
+            heading=f"Sheet row group {index}",
+            content=("Customer account service integration mapping " * 8).strip(),
+            source_location=f"xlsx:sheet:1;rows:{index}-{index}",
+        )
+        for index in range(1, 81)
+    ]
+    normalized = NormalizedDocument(
+        text="\n\n".join(section.content for section in sections),
+        content_format="xlsx",
+        parser_name="test",
+        sections=sections,
+    )
+
+    result = prepare_document_index(
+        normalized,
+        document_type=DocumentType.OTHER,
+        document_title="Large workbook",
+        chunk_target_tokens=420,
+        chunk_overlap_pct=5,
+        chunk_max_chars=2200,
+        large_document_threshold_bytes=1024,
+        large_document_chunk_target_tokens=900,
+        large_document_chunk_overlap_pct=0,
+        large_document_chunk_max_chars=6000,
+        original_size_bytes=2_000_000,
+        large_document_max_chunks=10,
+    )
+
+    assert len(result.chunks) <= 10
+    assert result.canonical_metadata["chunk_compaction_applied"] is True
+    assert result.canonical_metadata["chunk_count_before_compaction"] == 80
+    assert any(chunk.metadata.get("compacted_chunk") for chunk in result.chunks)

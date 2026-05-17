@@ -9,9 +9,10 @@ import {
 } from '../shared/api/verification';
 import { queryKeys } from '../shared/api/queryKeys';
 import { sanitizeHtml } from '../shared/lib/html';
+import { matchesSearch } from '../shared/lib/search';
 import { Badge, Banner, Card, CollapsibleCodeBlock, EmptyState, ErrorState, Input, LoadingState, PageHeader, Select, StateBox } from '../shared/ui/components';
 import { KnowledgeScopeSummary } from '../entities/knowledge/KnowledgeScopeSummary';
-import { formatDateTime, solutionSectionLabel, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
+import { cleanDisplayFileName, formatDateTime, solutionSectionLabel, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
 import {
   normalizeVerificationProtocol,
 } from '../shared/api/normalized';
@@ -34,6 +35,25 @@ function normalizeFindings(value: VerificationFinding[] | VerificationProtocolVi
 function ImpactBadge(props: { finding: VerificationFinding }) {
   const impact = verificationFindingImpact(props.finding.status, props.finding.severity);
   return <span className={`badge badge-${impact.tone}`}>{impact.label}</span>;
+}
+
+function findingSearchParts(finding: VerificationFinding) {
+  const impact = verificationFindingImpact(finding.status, finding.severity);
+  const group = finding.rule_group ?? 'other';
+  return [
+    finding,
+    finding.rule_id,
+    finding.rule_name,
+    finding.finding_text,
+    finding.evidence,
+    finding.related_section_ref,
+    titleStatus(finding.status),
+    titleStatus(finding.severity),
+    verificationRuleGroupLabel(group),
+    finding.related_section_ref ? solutionSectionLabel(finding.related_section_ref) : null,
+    impact.label,
+    impact.description,
+  ];
 }
 
 export function ProtocolPage() {
@@ -60,32 +80,34 @@ export function ProtocolPage() {
     enabled: shouldFetchViolations,
   });
 
-    const protocol: NormalizedVerificationProtocol = normalizeVerificationProtocol(protocolQuery.data);
+  const protocol: NormalizedVerificationProtocol = normalizeVerificationProtocol(protocolQuery.data);
   const effectiveFindings = protocol.findings.length > 0
     ? protocol.findings
     : normalizeFindings(violationsQuery.data?.violations);
-  const impactTotals = useMemo(() => effectiveFindings.reduce<Record<string, number>>((acc, finding) => {
+  const filteredFindings = useMemo(
+    () => effectiveFindings.filter((finding: VerificationFinding) => (
+      matchesSearch(findingSearchParts(finding), search)
+      && (!severityFilter || finding.severity === severityFilter)
+      && (!statusFilter || finding.status === statusFilter)
+      && (!groupFilter || (finding.rule_group ?? 'other') === groupFilter)
+    )),
+    [effectiveFindings, groupFilter, search, severityFilter, statusFilter],
+  );
+  const impactTotals = useMemo(() => filteredFindings.reduce<Record<string, number>>((acc, finding) => {
     const label = verificationFindingImpact(finding.status, finding.severity).label;
     acc[label] = (acc[label] ?? 0) + 1;
     return acc;
-  }, {}), [effectiveFindings]);
+  }, {}), [filteredFindings]);
 
   const groupedFindings = useMemo(() => {
-    const filtered = effectiveFindings.filter((finding: VerificationFinding) => {
-      const haystack = `${finding.rule_id ?? ''} ${finding.rule_name ?? ''} ${finding.finding_text ?? ''} ${finding.status} ${finding.severity} ${finding.related_section_ref ?? ''} ${finding.rule_group ?? ''}`.toLowerCase();
-      return haystack.includes(search.toLowerCase())
-        && (!severityFilter || finding.severity === severityFilter)
-        && (!statusFilter || finding.status === statusFilter)
-        && (!groupFilter || finding.rule_group === groupFilter);
-    });
     const groups: Record<string, VerificationFinding[]> = {};
-    filtered.forEach((finding: VerificationFinding) => {
+    filteredFindings.forEach((finding: VerificationFinding) => {
       const key = finding.rule_group ?? 'other';
       groups[key] = groups[key] ?? [];
       groups[key].push(finding);
     });
     return groups;
-  }, [effectiveFindings, groupFilter, search, severityFilter, statusFilter]);
+  }, [filteredFindings]);
 
   if (protocolQuery.isLoading) return <LoadingState message="Открываю протокол проверки…" />;
   if (protocolQuery.isError || !protocolQuery.data) return <ErrorState message="Не удалось загрузить протокол проверки." />;
@@ -122,8 +144,8 @@ export function ProtocolPage() {
       <div className="grid grid-4">
         <Card title="Итог"><Badge value={protocol.summary_status} /></Card>
         <Card title="Статус протокола"><Badge value={protocol.state} /></Card>
+        <Card title="Оценка"><strong>{String(complianceSummary.score ?? '—')}/100</strong></Card>
         <Card title="Критичных нарушений"><strong>{String(complianceSummary.critical_violation_count ?? 0)}</strong></Card>
-        <Card title="Замечаний по TOGAF/ArchiMate"><strong>{String(complianceSummary.relevant_violation_count ?? 0)}</strong></Card>
       </div>
 
       <KnowledgeScopeSummary
@@ -204,6 +226,8 @@ export function ProtocolPage() {
       >
         {effectiveFindings.length === 0 ? (
           <EmptyState title="Проверки пока не найдены" />
+        ) : filteredFindings.length === 0 ? (
+          <EmptyState title="По текущему фильтру ничего не найдено" />
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -217,7 +241,7 @@ export function ProtocolPage() {
                 </tr>
               </thead>
               <tbody>
-                {effectiveFindings.map((finding: VerificationFinding) => {
+                {filteredFindings.map((finding: VerificationFinding) => {
                   const impact = verificationFindingImpact(finding.status, finding.severity);
                   return (
                     <tr key={finding.check_result_id ?? finding.rule_id ?? `${finding.rule_group}-${finding.sort_order}`}>
@@ -294,7 +318,7 @@ export function ProtocolPage() {
         </Card>
       </div>
 
-      <Card title="Материалы проверки" subtitle="Список материалов, которые реально использовались при проверке.">
+      <Card title="Материалы проверки" subtitle="Список материалов, которые использовались при проверке.">
         {protocol.basis_documents.length === 0 ? (
           <EmptyState title="Список документов пуст" description="Это означает, что проверке не хватило материалов-оснований." />
         ) : (
@@ -306,7 +330,7 @@ export function ProtocolPage() {
               <tbody>
                 {protocol.basis_documents.map((item) => (
                   <tr key={item.protocol_basis_document_id ?? `${item.title}-${item.sort_order}`}>
-                    <td>{item.title}</td>
+                    <td>{cleanDisplayFileName(item.title) ?? item.title}</td>
                     <td>{item.role_code ?? '—'}</td>
                     <td>{item.version_ref ?? '—'}</td>
                     <td>{item.required_flag ? 'Да' : 'Нет'}</td>

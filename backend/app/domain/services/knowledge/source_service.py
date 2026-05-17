@@ -16,6 +16,7 @@ from app.db.enums import (
     DocumentDeltaKind,
     DocumentType,
     KnowledgeBaseKind,
+    KnowledgeBaseStatus,
     SourceDocumentStatus,
     SourceScope,
     SourceStatus,
@@ -54,6 +55,7 @@ from app.domain.services.knowledge.update_service import KnowledgeUpdateService
 from app.domain.services.knowledge_bases import KnowledgeBaseService, _owner_key_for_principal
 from app.domain.services.principal_keys import principal_actor_id
 from app.integrations.knowledge.source_readers import (
+    clear_document_explicit_exclusion,
     guess_document_type_from_name,
     mark_document_explicitly_excluded,
 )
@@ -131,11 +133,17 @@ class KnowledgeSourceService:
         except TypeError:
             return service_cls()
 
-    def _get_base(self, knowledge_base_id: str, principal: AuthPrincipal | None = None):
+    def _get_base(
+        self,
+        knowledge_base_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
+    ):
         base_service = self._make_base_service()
         get_base = base_service.get_base
         try:
-            return get_base(knowledge_base_id, principal)
+            return get_base(knowledge_base_id, principal, include_archived=include_archived)
         except TypeError:
             return get_base(knowledge_base_id)
 
@@ -172,19 +180,33 @@ class KnowledgeSourceService:
             return self.get_source(source_id)
 
     def list_sources(
-        self, *, knowledge_base_id: str | None = None, principal: AuthPrincipal | None = None
+        self,
+        *,
+        knowledge_base_id: str | None = None,
+        principal: AuthPrincipal | None = None,
+        include_archived: bool = False,
     ) -> list[KnowledgeSource]:
         if knowledge_base_id is not None:
-            self._get_base(knowledge_base_id, principal)
+            self._get_base(knowledge_base_id, principal, include_archived=include_archived)
         owner_user_id = _owner_key_for_principal(principal) if principal is not None else None
         return self.sources.list_visible(
-            knowledge_base_id=knowledge_base_id, owner_user_id=owner_user_id
+            knowledge_base_id=knowledge_base_id,
+            include_archived=include_archived,
+            owner_user_id=owner_user_id,
         )
 
     def list_source_payloads(
-        self, *, knowledge_base_id: str | None = None, principal: AuthPrincipal | None = None
+        self,
+        *,
+        knowledge_base_id: str | None = None,
+        principal: AuthPrincipal | None = None,
+        include_archived: bool = False,
     ) -> list[dict[str, Any]]:
-        items = self.list_sources(knowledge_base_id=knowledge_base_id, principal=principal)
+        items = self.list_sources(
+            knowledge_base_id=knowledge_base_id,
+            principal=principal,
+            include_archived=include_archived,
+        )
         if not items:
             return []
         source_ids: list[UUID | str] = [item.source_id for item in items]
@@ -214,17 +236,33 @@ class KnowledgeSourceService:
             for item in items
         ]
 
-    def get_source(self, source_id: str, principal: AuthPrincipal | None = None) -> KnowledgeSource:
+    def get_source(
+        self,
+        source_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
+    ) -> KnowledgeSource:
         source = self.sources.get(source_id)
         if source is None:
             raise NotFoundError("KnowledgeSource", source_id)
-        self._get_base(str(source.knowledge_base_id), principal)
+        self._get_base(
+            str(source.knowledge_base_id),
+            principal,
+            include_archived=include_archived,
+        )
         return source
 
     def get_source_payload(
-        self, source_id: str, principal: AuthPrincipal | None = None
+        self,
+        source_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
     ) -> dict[str, Any]:
-        return self._serialize_source(self.get_source(source_id, principal))
+        return self._serialize_source(
+            self.get_source(source_id, principal, include_archived=include_archived)
+        )
 
     def create_source(
         self, payload: SourceCreateRequest, principal: AuthPrincipal, *, auto_commit: bool = True
@@ -341,6 +379,8 @@ class KnowledgeSourceService:
             payload={"status": source.status.value, "criticality": source.criticality.value},
         )
         self.session.flush()
+        if payload.status is not None and payload.status != original_status:
+            self._refresh_base_status_for_source_state(source.knowledge_base_id, principal)
         composition_changed = (
             payload.base_uri is not None and payload.base_uri != original_base_uri
         ) or (payload.status is not None and payload.status != original_status)
@@ -375,6 +415,11 @@ class KnowledgeSourceService:
             source = self.get_source(source_id)
         self._assert_source_mutable(source, principal, operation="disable source")
         self._validate_source_transition(source.status, SourceStatus.DISABLED)
+        disabled_document_ids = [
+            str(document.document_id)
+            for document in self.documents.list_for_source(source.source_id, include_archived=False)
+            if getattr(document, "document_id", None) is not None
+        ]
         source.status = SourceStatus.DISABLED
         self.session.add(source)
         self.audit.record(
@@ -386,14 +431,16 @@ class KnowledgeSourceService:
             severity=AuditSeverity.WARNING,
         )
         self.session.flush()
+        self._refresh_base_status_for_source_state(source.knowledge_base_id, principal)
         if settings is not None:
             run_payload = self._start_source_update_run(
                 source,
                 principal,
                 settings=settings,
-                run_type=UpdateRunType.REBUILD,
+                run_type=UpdateRunType.DELETE,
                 reason=f"disable_source:{source_id}",
                 execute_inline=execute_inline,
+                removed_document_ids=disabled_document_ids,
             )
             self.session.refresh(source)
             cast(Any, source).update_run_id = run_payload.get("update_run_id")
@@ -432,6 +479,7 @@ class KnowledgeSourceService:
             severity=AuditSeverity.WARNING,
         )
         self.session.flush()
+        self._refresh_base_status_for_source_state(source.knowledge_base_id, principal)
         if settings is not None:
             run_payload = self._start_source_update_run(
                 source,
@@ -449,21 +497,66 @@ class KnowledgeSourceService:
         self.session.refresh(source)
         return source
 
+    def restore_source(
+        self,
+        source_id: str,
+        principal: AuthPrincipal,
+    ) -> KnowledgeSource:
+        try:
+            source = self.get_source(source_id, principal, include_archived=True)
+        except TypeError:
+            source = self.get_source(source_id, principal)
+        self._assert_source_mutable(source, principal, operation="restore source")
+        if source.status != SourceStatus.ARCHIVED:
+            return source
+        source.status = SourceStatus.ACTIVE
+        self.session.add(source)
+        self._refresh_base_status_for_source_state(source.knowledge_base_id, principal)
+        self.audit.record(
+            event_type="knowledge.source.restored",
+            target_type="knowledge_source",
+            target_id=source.source_id,
+            message=f"Knowledge source '{source.name}' restored from archive",
+            actor_user_id=principal_actor_id(principal),
+            severity=AuditSeverity.INFO,
+            payload={"requires_knowledge_update": True},
+        )
+        self.session.commit()
+        self.session.refresh(source)
+        return source
+
     def list_documents(
-        self, source_id: str, principal: AuthPrincipal | None = None
+        self,
+        source_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
     ) -> list[SourceDocument]:
-        _ = self.get_source(source_id, principal)
-        return self.documents.list_for_source(source_id)
+        _ = self.get_source(source_id, principal, include_archived=include_archived)
+        return self.documents.list_for_source(source_id, include_archived=include_archived)
 
     def list_document_payloads(
-        self, source_id: str, principal: AuthPrincipal | None = None
+        self,
+        source_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
     ) -> list[dict[str, Any]]:
         return [
-            self._serialize_document(item) for item in self.list_documents(source_id, principal)
+            self._serialize_document(item)
+            for item in self.list_documents(
+                source_id,
+                principal,
+                include_archived=include_archived,
+            )
         ]
 
     def get_document(
-        self, document_id: str, principal: AuthPrincipal | None = None
+        self,
+        document_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
     ) -> SourceDocument:
         document = self.documents.get(document_id)
         if document is None:
@@ -471,13 +564,23 @@ class KnowledgeSourceService:
         if getattr(document, "source_id", None):
             source = self.sources.get(str(document.source_id))
             if source is not None:
-                self._get_base(str(source.knowledge_base_id), principal)
+                self._get_base(
+                    str(source.knowledge_base_id),
+                    principal,
+                    include_archived=include_archived,
+                )
         return document
 
     def get_document_payload(
-        self, document_id: str, principal: AuthPrincipal | None = None
+        self,
+        document_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
     ) -> dict[str, Any]:
-        return self._serialize_document(self.get_document(document_id, principal))
+        return self._serialize_document(
+            self.get_document(document_id, principal, include_archived=include_archived)
+        )
 
     def get_document_snapshot_payload(
         self,
@@ -806,22 +909,115 @@ class KnowledgeSourceService:
         self.session.refresh(document)
         return document, run_payload
 
+    def restore_document(
+        self,
+        document_id: str,
+        principal: AuthPrincipal,
+        *,
+        reason: str | None = None,
+    ) -> SourceDocument:
+        try:
+            document = self.get_document(document_id, principal, include_archived=True)
+        except TypeError:
+            document = self.get_document(document_id, principal)
+        try:
+            source = self.get_source(
+                str(document.source_id),
+                principal,
+                include_archived=True,
+            )
+        except TypeError:
+            source = self.get_source(str(document.source_id), principal)
+        base = self._get_base(
+            str(source.knowledge_base_id),
+            principal,
+            include_archived=True,
+        )
+        self._assert_base_mutable(base, principal, operation="restore document")
+        source_status_before_restore = source.status
+        source_was_archived = source_status_before_restore == SourceStatus.ARCHIVED
+        source_was_disabled = source_status_before_restore == SourceStatus.DISABLED
+        if source_status_before_restore in {SourceStatus.ARCHIVED, SourceStatus.DISABLED}:
+            source.status = SourceStatus.ACTIVE
+            self.session.add(source)
+            self._refresh_base_status_for_source_state(source.knowledge_base_id, principal)
+            self.audit.record(
+                event_type="knowledge.source.restored",
+                target_type="knowledge_source",
+                target_id=source.source_id,
+                message=f"Knowledge source '{source.name}' restored while restoring document '{document.title}'",
+                actor_user_id=principal_actor_id(principal),
+                severity=AuditSeverity.INFO,
+                payload={
+                    "knowledge_base_id": str(source.knowledge_base_id),
+                    "document_id": str(document.document_id),
+                    "source_status_before_restore": getattr(
+                        source_status_before_restore,
+                        "value",
+                        source_status_before_restore,
+                    ),
+                    "reason": reason or "restore_document",
+                    "requires_knowledge_update": True,
+                },
+            )
+        clear_document_explicit_exclusion(document)
+        document.status = SourceDocumentStatus.REGISTERED
+        document.is_latest = True
+        self.documents.unset_latest_for_uri(
+            source_id=document.source_id,
+            uri=document.uri,
+            exclude_document_id=document.document_id,
+        )
+        self.session.add(document)
+        self.audit.record(
+            event_type="knowledge.document.restored",
+            target_type="source_document",
+            target_id=document.document_id,
+            message=f"Document '{document.title}' restored from archive",
+            actor_user_id=principal_actor_id(principal),
+            severity=AuditSeverity.INFO,
+            payload={
+                "knowledge_base_id": str(source.knowledge_base_id),
+                "source_id": str(source.source_id),
+                "source_restored": source_was_archived,
+                "source_reenabled": source_was_disabled,
+                "reason": reason or "restore_document",
+                "requires_knowledge_update": True,
+            },
+        )
+        self.session.commit()
+        self.session.refresh(document)
+        return document
+
     def list_base_document_payloads(
         self,
         knowledge_base_id: str,
         *,
         knowledge_version_id: str | None = None,
         include_deleted: bool = True,
+        include_archived_base: bool = False,
         principal: AuthPrincipal | None = None,
     ) -> list[dict[str, Any]]:
-        base = self._get_base(knowledge_base_id, principal)
+        base = self._get_base(
+            knowledge_base_id,
+            principal,
+            include_archived=include_archived_base,
+        )
         version = (
             self.versions.get_with_documents(knowledge_version_id)
             if knowledge_version_id
             else self.versions.get_active(knowledge_base_id=base.knowledge_base_id, eager=True)
         )
         if version is None:
-            return []
+            return (
+                self._archived_document_payloads_for_base(
+                    base,
+                    knowledge_version_id=None,
+                    excluded_document_ids=set(),
+                )
+                if include_deleted
+                else []
+            )
         if str(version.knowledge_base_id) != str(base.knowledge_base_id):
             raise ValidationError(
                 "Knowledge version does not belong to the selected knowledge base",
@@ -870,6 +1066,15 @@ class KnowledgeSourceService:
                                 "value",
                                 _public_source_type(getattr(source, "source_type", None)),
                             ),
+                            "source_status": (
+                                getattr(
+                                    getattr(source, "status", None),
+                                    "value",
+                                    getattr(source, "status", None),
+                                )
+                                if source is not None
+                                else delta_details.get("source_status")
+                            ),
                             "title": delta_details.get("title")
                             or getattr(document, "title", None)
                             or delta.uri
@@ -896,15 +1101,14 @@ class KnowledgeSourceService:
                             "required_flag": False,
                             "present_in_version": False,
                             "delta_kind": getattr(delta.delta_kind, "value", delta.delta_kind),
-                            "document_status": delta_details.get("document_status")
-                            or (
+                            "document_status": (
                                 getattr(
                                     getattr(document, "status", None),
                                     "value",
                                     getattr(document, "status", None),
                                 )
                                 if document is not None
-                                else None
+                                else delta_details.get("document_status")
                             ),
                             "processing_status": getattr(
                                 getattr(processing, "status", None),
@@ -960,6 +1164,11 @@ class KnowledgeSourceService:
                         "value",
                         _public_source_type(getattr(source, "source_type", None)),
                     ),
+                    "source_status": getattr(
+                        getattr(source, "status", None),
+                        "value",
+                        getattr(source, "status", None),
+                    ),
                     "title": document.title,
                     "uri": document.uri,
                     "document_type": getattr(
@@ -993,7 +1202,73 @@ class KnowledgeSourceService:
                     "discovered_at": document.discovered_at,
                 }
             )
-        return rows + deleted_entries
+        archived_entries = (
+            self._archived_document_payloads_for_base(
+                base,
+                knowledge_version_id=str(version.knowledge_version_id),
+                excluded_document_ids={
+                    str(item["document_id"])
+                    for item in [*rows, *deleted_entries]
+                    if item.get("document_id")
+                },
+            )
+            if include_deleted
+            else []
+        )
+        return rows + deleted_entries + archived_entries
+
+    def _archived_document_payloads_for_base(
+        self,
+        base: Any,
+        *,
+        knowledge_version_id: str | None,
+        excluded_document_ids: set[str],
+    ) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for source in self.sources.list_for_base(base.knowledge_base_id, include_archived=True):
+            source_status = getattr(source.status, "value", source.status)
+            for document in self.documents.list_for_source(source.source_id, include_archived=True):
+                document_id = str(document.document_id)
+                document_status = getattr(document.status, "value", document.status)
+                if document_id in excluded_document_ids:
+                    continue
+                if document_status != SourceDocumentStatus.ARCHIVED.value and source_status != SourceStatus.ARCHIVED.value:
+                    continue
+                entries.append(
+                    {
+                        "document_id": document_id,
+                        "knowledge_base_id": str(base.knowledge_base_id),
+                        "knowledge_version_id": knowledge_version_id or "archive",
+                        "source_id": str(source.source_id),
+                        "source_name": getattr(source, "name", None),
+                        "source_type": getattr(
+                            _public_source_type(getattr(source, "source_type", None)),
+                            "value",
+                            _public_source_type(getattr(source, "source_type", None)),
+                        ),
+                        "source_status": source_status,
+                        "title": document.title,
+                        "uri": document.uri,
+                        "document_type": getattr(
+                            getattr(document, "document_type", None),
+                            "value",
+                            getattr(document, "document_type", None),
+                        ),
+                        "version_label": document.version_label,
+                        "checksum": document.checksum,
+                        "role_code": None,
+                        "required_flag": False,
+                        "present_in_version": False,
+                        "delta_kind": DocumentDeltaKind.DELETED.value,
+                        "document_status": document_status,
+                        "processing_status": None,
+                        "processing_error_code": None,
+                        "processing_error_message": None,
+                        "registered_at": document.registered_at,
+                        "discovered_at": document.discovered_at,
+                    }
+                )
+        return entries
 
     def _assert_base_mutable(self, base, principal: AuthPrincipal, *, operation: str) -> None:
         if (
@@ -1055,6 +1330,26 @@ class KnowledgeSourceService:
             self.session.rollback()
             raise
         return run_payload
+
+    def _refresh_base_status_for_source_state(
+        self,
+        knowledge_base_id: UUID | str,
+        principal: AuthPrincipal | None,
+    ) -> None:
+        base = self._get_base(str(knowledge_base_id), principal, include_archived=True)
+        if getattr(base, "kind", None) != KnowledgeBaseKind.USER_MANAGED:
+            return
+        if getattr(base, "status", None) == KnowledgeBaseStatus.ARCHIVED:
+            return
+        sources = self.sources.list_for_base(base.knowledge_base_id, include_archived=True)
+        has_active_source = any(source.status == SourceStatus.ACTIVE for source in sources)
+        target_status = (
+            KnowledgeBaseStatus.ACTIVE if has_active_source else KnowledgeBaseStatus.DISABLED
+        )
+        if base.status == target_status:
+            return
+        base.status = target_status
+        self.session.add(base)
 
     def _serialize_source(
         self,

@@ -120,6 +120,9 @@ class KnowledgeQueryService:
                 limit=policy.vector_candidate_limit,
             )
         )
+        compute_python_vector_scores = not (
+            vector_backend == "pgvector_hnsw" and db_vector_candidates
+        )
         all_candidates = [
             self._build_candidate(
                 fragment,
@@ -132,6 +135,7 @@ class KnowledgeQueryService:
                 else None,
                 embedding_space_code=active_space.code if active_space is not None else None,
                 vector_score_override=db_vector_score_by_fragment_id.get(str(fragment.fragment_id)),
+                compute_python_vector_score=compute_python_vector_scores,
             )
             for fragment in fragments_raw
         ]
@@ -505,13 +509,15 @@ class KnowledgeQueryService:
         embedding_space_id: str | None = None,
         embedding_space_code: str | None = None,
         vector_score_override: float | None = None,
+        compute_python_vector_score: bool = True,
     ) -> RetrievalCandidate:
         vector_score = float(vector_score_override or 0.0)
         embedding_row = self._embedding_row_for_fragment(
             fragment, embedding_space_id=embedding_space_id
         )
         if (
-            vector_score_override is None
+            compute_python_vector_score
+            and vector_score_override is None
             and embedding_row is not None
             and embedding_row.embedding is not None
         ):

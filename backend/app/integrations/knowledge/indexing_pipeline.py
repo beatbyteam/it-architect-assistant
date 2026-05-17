@@ -9,6 +9,7 @@ from app.integrations.knowledge.text_processing import (
     CHUNKING_POLICY_VERSION,
     ChunkedText,
     chunk_document,
+    estimate_token_count,
     summarize_chunk_distribution,
 )
 
@@ -105,6 +106,10 @@ def prepare_document_index(
         overlap_tokens=overlap_tokens,
         document_title=document_title,
     )
+    compacted_chunk_count_before: int | None = None
+    if is_large_document and large_max_chunks > 0 and len(chunks) > large_max_chunks:
+        compacted_chunk_count_before = len(chunks)
+        chunks = _compact_chunks_to_limit(chunks, max_chunks=large_max_chunks)
     chunk_metrics = summarize_chunk_distribution(chunks)
     canonical_metadata = {
         "indexing_pipeline_version": INDEXING_PIPELINE_VERSION,
@@ -122,6 +127,8 @@ def prepare_document_index(
         "document_input_size_bytes": int(input_size_bytes),
         "section_count": len(normalized.sections),
         "chunk_count": len(chunks),
+        "chunk_compaction_applied": compacted_chunk_count_before is not None,
+        "chunk_count_before_compaction": compacted_chunk_count_before,
     }
     return PreparedDocumentIndex(
         chunks=chunks,
@@ -130,4 +137,81 @@ def prepare_document_index(
             **canonical_metadata,
         },
         canonical_metadata=canonical_metadata,
+    )
+
+
+def _compact_chunks_to_limit(chunks: list[ChunkedText], *, max_chunks: int) -> list[ChunkedText]:
+    if max_chunks <= 0 or len(chunks) <= max_chunks:
+        return chunks
+    remaining_tokens = [max(1, estimate_token_count(chunk.content)) for chunk in chunks]
+    compacted: list[ChunkedText] = []
+    index = 0
+    while index < len(chunks) and len(compacted) < max_chunks:
+        remaining_groups = max_chunks - len(compacted)
+        remaining_token_total = sum(remaining_tokens[index:])
+        target_tokens = max(1, round(remaining_token_total / remaining_groups))
+        group: list[ChunkedText] = []
+        group_tokens = 0
+        while index < len(chunks):
+            group.append(chunks[index])
+            group_tokens += remaining_tokens[index]
+            index += 1
+            chunks_left = len(chunks) - index
+            groups_left = remaining_groups - 1
+            if groups_left <= 0:
+                continue
+            if group_tokens >= target_tokens and chunks_left >= groups_left:
+                break
+            if chunks_left == groups_left:
+                break
+        compacted.append(_merge_chunk_group(group, chunk_index=len(compacted) + 1))
+    if index < len(chunks):
+        tail = _merge_chunk_group(chunks[index:], chunk_index=len(compacted))
+        previous = compacted.pop() if compacted else None
+        compacted.append(
+            _merge_chunk_group(
+                [item for item in [previous, tail] if item is not None],
+                chunk_index=len(compacted) + 1,
+            )
+        )
+    return compacted
+
+
+def _merge_chunk_group(group: list[ChunkedText], *, chunk_index: int) -> ChunkedText:
+    if len(group) == 1:
+        chunk = group[0]
+        metadata = {
+            **(chunk.metadata or {}),
+            "chunk_index": chunk_index,
+            "chunk_token_count": estimate_token_count(chunk.content),
+        }
+        return ChunkedText(
+            title=chunk.title,
+            content=chunk.content,
+            source_location=chunk.source_location,
+            fragment_type=chunk.fragment_type,
+            metadata=metadata,
+        )
+    content = "\n\n".join(chunk.content.strip() for chunk in group if chunk.content.strip())
+    source_locations = [
+        str(chunk.source_location)
+        for chunk in group
+        if str(chunk.source_location or "").strip()
+    ]
+    first = group[0]
+    metadata = {
+        **(first.metadata or {}),
+        "chunk_index": chunk_index,
+        "chunk_token_count": estimate_token_count(content),
+        "compacted_chunk": True,
+        "compacted_source_chunk_count": len(group),
+        "source_locations": source_locations[:50],
+        "source_locations_truncated": len(source_locations) > 50,
+    }
+    return ChunkedText(
+        title=first.title,
+        content=content,
+        source_location=f"compact:{chunk_index}",
+        fragment_type=first.fragment_type,
+        metadata=metadata,
     )

@@ -1,10 +1,10 @@
 # Observability and correlation context
 
-- Structured JSON logs now include request/correlation and operation entity IDs.
-- Generation, verification, and knowledge update runs emit stage-level duration metrics.
-- Operations metrics dashboard aggregates pipeline observability across generation, verification, and knowledge updates.
+- Структурированные JSON-логи теперь содержат идентификаторы заявки/корреляции и идентификаторы сущностей операции.
+- Запуски генерации, верификации и обновления базы знаний передают метрики длительности по каждому этапу.
+- Дашборд операционных метрик агрегирует наблюдаемость pipeline для процессов генерации, верификации и обновления базы знаний.
 
-Key payload locations:
-- generation run -> diagnostics.pipeline_telemetry / diagnostics.stage_metrics
-- verification run -> diagnostics.pipeline_telemetry / diagnostics.stage_metrics
-- knowledge update -> summary.quality_summary.pipeline_telemetry / stage_metrics
+Ключевые точки полезной нагрузки:
+- Генерация решения -> diagnostics.pipeline_telemetry / diagnostics.stage_metrics
+- Верификация базы знаний -> diagnostics.pipeline_telemetry / diagnostics.stage_metrics
+- Обновление базы знаний-> summary.quality_summary.pipeline_telemetry / stage_metrics

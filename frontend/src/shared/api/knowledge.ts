@@ -8,6 +8,7 @@ type KnowledgeBaseResponse = SuccessJson<paths['/knowledge/bases/{knowledge_base
 type KnowledgeBaseDocumentsResponse = SuccessJson<paths['/knowledge/bases/{knowledge_base_id}/documents']['get']>;
 type SourcesResponse = SuccessJson<paths['/knowledge/sources']['get']>;
 type SourceResponse = SuccessJson<paths['/knowledge/sources']['post']>;
+type SourceDocumentsResponse = SuccessJson<paths['/knowledge/sources/{source_id}/documents']['get']>;
 type KnowledgeDocumentResponse = SuccessJson<paths['/knowledge/documents/{document_id}']['get']>;
 type KnowledgeDocumentSnapshotResponse = SuccessJson<paths['/knowledge/documents/{document_id}/snapshot']['get']>;
 type KnowledgeDocumentMemoryResponse = SuccessJson<paths['/knowledge/documents/{document_id}/memory']['get']>;
@@ -26,16 +27,30 @@ export function getActiveKnowledgeVersion(options?: RequestOptions) {
   return request<ActiveKnowledgeVersionResponse>('/knowledge/versions/active', options);
 }
 
-export function getKnowledgeBases(options?: RequestOptions) {
-  return request<KnowledgeBasesResponse>('/knowledge/bases', options);
+export function getKnowledgeBases(options?: RequestOptions & { include_archived?: boolean }) {
+  const { include_archived, ...requestOptions } = options ?? {};
+  return request<KnowledgeBasesResponse>('/knowledge/bases', requestOptions, {
+    include_archived: include_archived == null ? undefined : Number(include_archived),
+  });
 }
 
 export function createKnowledgeBase(payload: { name: string; description?: string | null }) {
   return request<KnowledgeBaseResponse>('/knowledge/bases', { method: 'POST', body: JSON.stringify(payload) });
 }
 
-export function getKnowledgeBase(knowledgeBaseId: string, options?: RequestOptions) {
-  return request<KnowledgeBaseResponse>(`/knowledge/bases/${knowledgeBaseId}`, options);
+export function getKnowledgeBase(knowledgeBaseId: string, options?: RequestOptions & { include_archived?: boolean }) {
+  const { include_archived, ...requestOptions } = options ?? {};
+  return request<KnowledgeBaseResponse>(`/knowledge/bases/${knowledgeBaseId}`, requestOptions, {
+    include_archived: include_archived == null ? undefined : Number(include_archived),
+  });
+}
+
+export function archiveKnowledgeBase(knowledgeBaseId: string) {
+  return request<KnowledgeBaseResponse>(`/knowledge/bases/${knowledgeBaseId}/archive`, { method: 'POST', body: '{}' });
+}
+
+export function restoreKnowledgeBase(knowledgeBaseId: string) {
+  return request<KnowledgeBaseResponse>(`/knowledge/bases/${knowledgeBaseId}/restore`, { method: 'POST', body: '{}' });
 }
 
 export function selectKnowledgeBase(knowledgeBaseId: string, knowledgeVersionId?: string | null) {
@@ -47,16 +62,21 @@ export function selectKnowledgeBase(knowledgeBaseId: string, knowledgeVersionId?
 
 export function getKnowledgeBaseDocuments(
   knowledgeBaseId: string,
-  options?: { knowledge_version_id?: string | null; include_deleted?: boolean; signal?: AbortSignal },
+  options?: { knowledge_version_id?: string | null; include_deleted?: boolean; include_archived_base?: boolean; signal?: AbortSignal },
 ) {
   return request<KnowledgeBaseDocumentsResponse>(`/knowledge/bases/${knowledgeBaseId}/documents`, { signal: options?.signal }, {
     knowledge_version_id: options?.knowledge_version_id ?? undefined,
     include_deleted: options?.include_deleted == null ? undefined : Number(options.include_deleted),
+    include_archived_base: options?.include_archived_base == null ? undefined : Number(options.include_archived_base),
   });
 }
 
-export function getSources(knowledgeBaseId?: string, options?: RequestOptions) {
-  return request<SourcesResponse>('/knowledge/sources', options, { knowledge_base_id: knowledgeBaseId });
+export function getSources(knowledgeBaseId?: string, options?: RequestOptions & { include_archived?: boolean }) {
+  const { include_archived, ...requestOptions } = options ?? {};
+  return request<SourcesResponse>('/knowledge/sources', requestOptions, {
+    knowledge_base_id: knowledgeBaseId,
+    include_archived: include_archived == null ? undefined : Number(include_archived),
+  });
 }
 
 export function createSource(payload: { knowledge_base_id?: string | null; source_type: string; name?: string | null; base_uri?: string | null; criticality: string; refresh_policy?: string | null; sync_mode?: string; source_metadata?: Record<string, unknown> | null }) {
@@ -71,12 +91,26 @@ export function archiveSource(sourceId: string) {
   return request<SourceResponse>(`/knowledge/sources/${sourceId}/archive`, { method: 'POST', body: '{}' });
 }
 
+export function restoreSource(sourceId: string) {
+  return request<SourceResponse>(`/knowledge/sources/${sourceId}/restore`, { method: 'POST', body: '{}' });
+}
+
 export function disableSource(sourceId: string) {
   return request<SourceResponse>(`/knowledge/sources/${sourceId}/disable`, { method: 'POST', body: '{}' });
 }
 
-export function getKnowledgeDocument(documentId: string, options?: RequestOptions) {
-  return request<KnowledgeDocumentResponse>(`/knowledge/documents/${documentId}`, options);
+export function getSourceDocuments(sourceId: string, options?: RequestOptions & { include_archived?: boolean }) {
+  const { include_archived, ...requestOptions } = options ?? {};
+  return request<SourceDocumentsResponse>(`/knowledge/sources/${sourceId}/documents`, requestOptions, {
+    include_archived: include_archived == null ? undefined : Number(include_archived),
+  });
+}
+
+export function getKnowledgeDocument(documentId: string, options?: RequestOptions & { include_archived?: boolean }) {
+  const { include_archived, ...requestOptions } = options ?? {};
+  return request<KnowledgeDocumentResponse>(`/knowledge/documents/${documentId}`, requestOptions, {
+    include_archived: include_archived == null ? undefined : Number(include_archived),
+  });
 }
 
 export async function getKnowledgeDocumentSnapshot(documentId: string, knowledgeVersionId?: string | null, options?: RequestOptions) {
@@ -93,6 +127,15 @@ export function removeKnowledgeDocument(documentId: string, options?: { execute_
     method: 'POST',
     body: JSON.stringify({
       execute_inline: executeInline ?? null,
+      reason: options?.reason ?? null,
+    }),
+  });
+}
+
+export function restoreKnowledgeDocument(documentId: string, options?: { reason?: string | null }) {
+  return request<KnowledgeDocumentRemovalResponse>(`/knowledge/documents/${documentId}/restore`, {
+    method: 'POST',
+    body: JSON.stringify({
       reason: options?.reason ?? null,
     }),
   });
@@ -116,6 +159,13 @@ export function getUpdateRuns(limit = 20, options?: { knowledge_base_id?: string
 
 export function getUpdateRunStatus(updateRunId: string, options?: RequestOptions) {
   return request<KnowledgeUpdateRunStatusResponse>(`/knowledge/update-runs/${updateRunId}/status`, options);
+}
+
+export function cancelKnowledgeUpdateRun(updateRunId: string) {
+  return request<KnowledgeUpdateRunResponse>(`/knowledge/update-runs/${updateRunId}/cancel`, {
+    method: 'POST',
+    body: '{}',
+  });
 }
 
 export function startKnowledgeUpdate(payload: {

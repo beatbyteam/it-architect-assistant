@@ -816,6 +816,53 @@ def test_task_readiness_marks_goal_answer_without_effect_as_partial() -> None:
     assert "бизнес-эффект" in assessment["question_items"][0]["question_text"]
 
 
+def test_task_readiness_sends_long_generic_task_to_clarifications() -> None:
+    policy = TaskReadinessPolicy()
+    task = SimpleNamespace(
+        task_text=(
+            "Нужно подготовить архитектурное решение для новой системы обработки заявок. "
+            "Решение должно быть хорошим, современным и удобным. Нужна архитектура, "
+            "компонентная схема и описание интеграций, ограничения потом уточним."
+        ),
+        task_metadata={},
+    )
+
+    assessment = policy.assess(task).as_dict()
+
+    assert assessment["ready"] is False
+    assert assessment["missing_inputs"] == [
+        "goal",
+        "context",
+        "constraints",
+        "integrations",
+        "expected_output",
+        "nfr",
+    ]
+    assert assessment["signals"]["input_presence"]["goal"]["task_text_status"] == "insufficient"
+    assert assessment["signals"]["input_presence"]["constraints"]["task_text_status"] == "partial"
+
+
+def test_task_readiness_accepts_specific_freeform_task_without_clarification() -> None:
+    policy = TaskReadinessPolicy()
+    task = SimpleNamespace(
+        task_text=(
+            "Цель: сократить время обработки заявок на 30% и снизить ручные ошибки. "
+            "Сейчас заявки ведутся вручную в CRM, часть статусов теряется при передаче. "
+            "Ограничения: SLA не более 5 минут, SSO и соответствие 152-ФЗ обязательны. "
+            "NFR: доступность 99.9%, мониторинг метрик, резервное копирование ежедневно. "
+            "Интеграции: CRM и биллинг по REST API, события передаются через Kafka. "
+            "Ожидаемый результат: high-level HLD для согласования с компонентной схемой."
+        ),
+        task_metadata={},
+    )
+
+    assessment = policy.assess(task).as_dict()
+
+    assert assessment["ready"] is True
+    assert assessment["missing_inputs"] == []
+    assert all(item["present"] for item in assessment["signals"]["input_presence"].values())
+
+
 def test_task_readiness_accepts_short_but_explicit_no_integration_answer() -> None:
     policy = TaskReadinessPolicy()
     task = SimpleNamespace(

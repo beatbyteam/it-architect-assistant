@@ -28,12 +28,14 @@ def list_sources(
     settings: SettingsDep,
     principal: PrincipalDep,
     knowledge_base_id: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
     _guard: AuthPrincipal = UserDep,
 ):
     service = KnowledgeSourceService(session, settings)
     payload = service.list_source_payloads(
         knowledge_base_id=knowledge_base_id,
         principal=principal,
+        include_archived=include_archived,
     )
     return [SourceResponse.model_validate(item) for item in payload]
 
@@ -64,10 +66,15 @@ def get_source(
     session: SessionDep,
     settings: SettingsDep,
     principal: PrincipalDep,
+    include_archived: bool = Query(default=False),
     _guard: AuthPrincipal = UserDep,
 ):
     return SourceResponse.model_validate(
-        KnowledgeSourceService(session, settings).get_source_payload(source_id, principal)
+        KnowledgeSourceService(session, settings).get_source_payload(
+            source_id,
+            principal,
+            include_archived=include_archived,
+        )
     )
 
 
@@ -102,6 +109,21 @@ def archive_source(
     )
 
 
+@router.post("/sources/{source_id}/restore", response_model=SourceResponse)
+def restore_source(
+    source_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+):
+    service = KnowledgeSourceService(session, settings)
+    source = service.restore_source(source_id, principal)
+    return SourceResponse.model_validate(
+        service.get_source_payload(str(source.source_id), principal)
+    )
+
+
 @router.post("/sources/{source_id}/disable", response_model=SourceResponse)
 def disable_source(
     source_id: str,
@@ -123,11 +145,13 @@ def list_source_documents(
     session: SessionDep,
     settings: SettingsDep,
     principal: PrincipalDep,
+    include_archived: bool = Query(default=False),
     _guard: AuthPrincipal = UserDep,
 ):
     documents = KnowledgeSourceService(session, settings).list_document_payloads(
         source_id,
         principal,
+        include_archived=include_archived,
     )
     return [SourceDocumentResponse.model_validate(item) for item in documents]
 

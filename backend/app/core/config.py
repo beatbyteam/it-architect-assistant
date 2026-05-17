@@ -164,6 +164,17 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/1", alias="CELERY_RESULT_BACKEND"
     )
     celery_task_always_eager: bool = Field(default=False, alias="CELERY_TASK_ALWAYS_EAGER")
+    celery_worker_queues: list[str] = Field(
+        default_factory=lambda: [
+            "default",
+            "knowledge_extraction",
+            "knowledge_vectorization",
+            "knowledge_llm_extraction",
+            "architecture_generation",
+            "architecture_verification",
+        ],
+        alias="CELERY_WORKER_QUEUES",
+    )
 
     health_check_worker: bool = Field(default=False, alias="HEALTH_CHECK_WORKER")
     health_check_redis: bool = Field(default=False, alias="HEALTH_CHECK_REDIS")
@@ -224,7 +235,10 @@ class Settings(BaseSettings):
         default=240, alias="KNOWLEDGE_LARGE_DOCUMENT_MAX_CHUNKS"
     )
     knowledge_llm_extraction_max_chunks: int = Field(
-        default=12, alias="KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS"
+        default=48, alias="KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS"
+    )
+    knowledge_local_embedding_max_chunks: int = Field(
+        default=96, alias="KNOWLEDGE_LOCAL_EMBEDDING_MAX_CHUNKS"
     )
     knowledge_auto_sync_interval_days: int = Field(
         default=30, alias="KNOWLEDGE_AUTO_SYNC_INTERVAL_DAYS"
@@ -252,23 +266,34 @@ class Settings(BaseSettings):
     reranker_model_id: str | None = Field(default=None, alias="RERANKER_MODEL_ID")
 
     generation_execute_inline: bool = Field(default=False, alias="GENERATION_EXECUTE_INLINE")
+    generation_retrieval_limit: int = Field(default=12, alias="GENERATION_RETRIEVAL_LIMIT")
+    generation_section_retrieval_limit: int = Field(
+        default=1, alias="GENERATION_SECTION_RETRIEVAL_LIMIT"
+    )
     generation_prompt_max_input_tokens: int = Field(
         default=3000, alias="GENERATION_PROMPT_MAX_INPUT_TOKENS"
     )
     generation_prompt_reserved_output_tokens: int = Field(
         default=1200, alias="GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS"
     )
+    generation_prompt_fragment_char_limit: int = Field(
+        default=1600, alias="GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT"
+    )
     llm_provider: str = Field(default="openai_compatible", alias="LLM_PROVIDER")
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
     llm_api_key: str | None = Field(default=None, alias="LLM_API_KEY")
     llm_timeout_sec: float = Field(default=60.0, alias="LLM_TIMEOUT_SEC")
     llm_model_id: str | None = Field(default=None, alias="LLM_MODEL_ID")
+    llm_temperature: float | None = Field(default=0.1, alias="LLM_TEMPERATURE")
+    llm_top_p: float | None = Field(default=None, alias="LLM_TOP_P")
+    llm_max_tokens: int | None = Field(default=None, alias="LLM_MAX_TOKENS")
     llm_fallback_provider: str | None = Field(default=None, alias="LLM_FALLBACK_PROVIDER")
     llm_fallback_base_url: str | None = Field(default=None, alias="LLM_FALLBACK_BASE_URL")
     llm_fallback_api_key: str | None = Field(default=None, alias="LLM_FALLBACK_API_KEY")
     llm_fallback_model_id: str | None = Field(default=None, alias="LLM_FALLBACK_MODEL_ID")
 
     verification_execute_inline: bool = Field(default=False, alias="VERIFICATION_EXECUTE_INLINE")
+    verification_rule_rag_limit: int = Field(default=2, alias="VERIFICATION_RULE_RAG_LIMIT")
 
     @field_validator(
         "allowed_cors_origins",
@@ -280,6 +305,13 @@ class Settings(BaseSettings):
     @classmethod
     def parse_list_values(cls, value: Any) -> list[str]:
         return _parse_env_list(value)
+
+    @field_validator("llm_temperature", "llm_top_p", "llm_max_tokens", mode="before")
+    @classmethod
+    def parse_optional_numeric_values(cls, value: Any) -> Any:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     def normalized_app_env(self) -> str:
         return (self.app_env or "").strip().lower()
@@ -385,6 +417,11 @@ class Settings(BaseSettings):
                 "KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS must be non-negative",
                 error_code="KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS_INVALID",
             )
+        if self.knowledge_local_embedding_max_chunks < 0:
+            raise ValidationError(
+                "KNOWLEDGE_LOCAL_EMBEDDING_MAX_CHUNKS must be non-negative",
+                error_code="KNOWLEDGE_LOCAL_EMBEDDING_MAX_CHUNKS_INVALID",
+            )
         if self.knowledge_fetch_timeout_sec <= 0:
             raise ValidationError(
                 "KNOWLEDGE_FETCH_TIMEOUT_SEC must be positive",
@@ -399,6 +436,51 @@ class Settings(BaseSettings):
             raise ValidationError(
                 "KNOWLEDGE_MAX_UPLOAD_SIZE_BYTES must be positive",
                 error_code="KNOWLEDGE_MAX_UPLOAD_SIZE_INVALID",
+            )
+        if self.generation_retrieval_limit <= 0:
+            raise ValidationError(
+                "GENERATION_RETRIEVAL_LIMIT must be positive",
+                error_code="GENERATION_RETRIEVAL_LIMIT_INVALID",
+            )
+        if self.generation_section_retrieval_limit < 0:
+            raise ValidationError(
+                "GENERATION_SECTION_RETRIEVAL_LIMIT must be non-negative",
+                error_code="GENERATION_SECTION_RETRIEVAL_LIMIT_INVALID",
+            )
+        if self.generation_prompt_max_input_tokens <= 0:
+            raise ValidationError(
+                "GENERATION_PROMPT_MAX_INPUT_TOKENS must be positive",
+                error_code="GENERATION_PROMPT_MAX_INPUT_TOKENS_INVALID",
+            )
+        if self.generation_prompt_reserved_output_tokens < 0:
+            raise ValidationError(
+                "GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS must be non-negative",
+                error_code="GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS_INVALID",
+            )
+        if self.generation_prompt_fragment_char_limit <= 0:
+            raise ValidationError(
+                "GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT must be positive",
+                error_code="GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT_INVALID",
+            )
+        if self.verification_rule_rag_limit < 0:
+            raise ValidationError(
+                "VERIFICATION_RULE_RAG_LIMIT must be non-negative",
+                error_code="VERIFICATION_RULE_RAG_LIMIT_INVALID",
+            )
+        if self.llm_temperature is not None and not 0.0 <= float(self.llm_temperature) <= 2.0:
+            raise ValidationError(
+                "LLM_TEMPERATURE must be between 0 and 2",
+                error_code="LLM_TEMPERATURE_INVALID",
+            )
+        if self.llm_top_p is not None and not 0.0 < float(self.llm_top_p) <= 1.0:
+            raise ValidationError(
+                "LLM_TOP_P must be greater than 0 and at most 1",
+                error_code="LLM_TOP_P_INVALID",
+            )
+        if self.llm_max_tokens is not None and int(self.llm_max_tokens) <= 0:
+            raise ValidationError(
+                "LLM_MAX_TOKENS must be positive when configured",
+                error_code="LLM_MAX_TOKENS_INVALID",
             )
 
         if self.knowledge_auto_sync_interval_days < 1:

@@ -8,64 +8,63 @@ from typing import Any, Callable, cast
 import httpx
 
 from app.db.enums import DocumentType, ExtractedKnowledgeType, ExtractionQualityStatus
+from app.integrations.knowledge.extraction_markers import (
+    ARCHITECTURE_CONCEPT_MARKERS,
+    CONSTRAINT_MARKERS,
+    INTEGRATION_MARKERS,
+    PREFIX_MARKERS,
+    RISK_MARKERS,
+    RULE_MARKERS,
+    TECH_MARKERS,
+)
 from app.integrations.openai_compatible import resolve_openai_compatible_endpoint
 
-_RULE_MARKERS = (
-    "must",
-    "shall",
-    "required",
-    "should",
-    "обязан",
-    "должен",
-    "необходимо",
-    "обязательно",
-    "не должен",
-    "запрещено",
+
+def _normalize_marker_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.casefold().replace("ё", "е").strip())
+
+
+_MARKER_WORD_CHARS = "0-9A-Za-zА-Яа-яЕе_"
+_PREFIX_MARKERS = frozenset(
+    _normalize_marker_text(marker)
+    for marker in PREFIX_MARKERS
 )
-_CONSTRAINT_MARKERS = (
-    "constraint",
-    "limitation",
-    "cannot",
-    "must not",
-    "shall not",
-    "не может",
-    "огранич",
-    "запрещено",
-)
-_INTEGRATION_MARKERS = (
-    "api",
-    "rest",
-    "grpc",
-    "kafka",
-    "rabbitmq",
-    "webhook",
-    "queue",
-    "topic",
-    "message",
-    "integration",
-    "endpoint",
-    "http",
-    "https",
-    "sync",
-    "batch",
-    "интеграц",
-)
-_TECH_MARKERS = (
-    "postgres",
-    "redis",
-    "docker",
-    "kubernetes",
-    "tls",
-    "oauth",
-    "sso",
-    "ldap",
-    "nginx",
-    "fastapi",
-    "react",
-    "oracle",
-    "mysql",
-)
-_RISK_MARKERS = ("risk", "dependency", "assumption", "uncertainty", "риск", "зависим", "допущен")
+_EXTRACTION_SENTENCE_LIMIT = 80
+_EXTRACTION_SENTENCE_SCAN_LIMIT = 500
+_MAX_SENTENCE_CHARS = 1400
+
+
+@dataclass(frozen=True, slots=True)
+class _MarkerCatalog:
+    markers: tuple[str, ...]
+    pattern: re.Pattern[str]
+
+
+def _compile_marker_catalog(markers: tuple[str, ...]) -> _MarkerCatalog:
+    normalized_markers = tuple(
+        sorted(
+            {_normalize_marker_text(marker) for marker in markers if marker.strip()},
+            key=lambda marker: (-len(marker), marker),
+        )
+    )
+    alternatives: list[str] = []
+    for marker in normalized_markers:
+        escaped = re.escape(marker)
+        if marker in _PREFIX_MARKERS:
+            alternatives.append(rf"(?<![{_MARKER_WORD_CHARS}]){escaped}[{_MARKER_WORD_CHARS}-]*")
+        else:
+            alternatives.append(rf"(?<![{_MARKER_WORD_CHARS}]){escaped}(?![{_MARKER_WORD_CHARS}])")
+    pattern = re.compile("|".join(alternatives) if alternatives else r"(?!x)x")
+    return _MarkerCatalog(markers=normalized_markers, pattern=pattern)
+
+
+_RULE_MARKER_CATALOG = _compile_marker_catalog(RULE_MARKERS)
+_CONSTRAINT_MARKER_CATALOG = _compile_marker_catalog(CONSTRAINT_MARKERS)
+_INTEGRATION_MARKER_CATALOG = _compile_marker_catalog(INTEGRATION_MARKERS)
+_TECH_MARKER_CATALOG = _compile_marker_catalog(TECH_MARKERS)
+_RISK_MARKER_CATALOG = _compile_marker_catalog(RISK_MARKERS)
+_ARCHITECTURE_CONCEPT_MARKER_CATALOG = _compile_marker_catalog(ARCHITECTURE_CONCEPT_MARKERS)
+
 _TERM_RE = re.compile(r"^(?P<term>[A-ZА-Я][\w\- /]{1,120})\s*(?:[:\-—]|is)\s*(?P<definition>.+)$")
 _RELATION_RE = re.compile(
     r"(?P<src>[A-ZА-Я][\w .\-/]{1,80})\s*(?:->|→|to)\s*(?P<dst>[A-ZА-Я][\w .\-/]{1,80})",
@@ -76,8 +75,9 @@ _ALLOWED_ITEM_TYPES = {item.value: item for item in ExtractedKnowledgeType}
 _ALLOWED_QUALITY_STATUSES = {item.value: item for item in ExtractionQualityStatus}
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
 _LLM_EXTRACTION_WRAPPER_KEYS = ("result", "payload", "data", "response", "extraction")
-_LLM_CHUNK_BATCH_SIZE = 4
-_LLM_CHUNK_CHAR_LIMIT = 4000
+_LLM_CHUNK_BATCH_SIZE = 8
+_LLM_CHUNK_CHAR_LIMIT = 2200
+_LLM_CHUNK_COMPACT_SENTENCE_LIMIT = 10
 
 
 @dataclass(slots=True)
@@ -135,6 +135,9 @@ class ExtractedDocumentMemory:
     fallback_applied: bool = False
     llm_attempted: bool = False
     fallback_reason: str | None = None
+    llm_source_chunk_count: int = 0
+    llm_selected_chunk_count: int = 0
+    llm_selection_applied: bool = False
 
 
 def extract_document_memory(
@@ -144,11 +147,18 @@ def extract_document_memory(
     normalized_text: str,
     chunks: list[dict[str, Any]],
     llm_config: DocumentMemoryLlmConfig | None = None,
+    llm_max_chunks: int | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> ExtractedDocumentMemory:
     items: list[ExtractedKnowledgeCandidate]
     summary_text: str
 
+    heuristic_memory = _extract_document_memory_heuristic(
+        document_title=document_title,
+        document_type=document_type,
+        normalized_text=normalized_text,
+        chunks=chunks,
+    )
     llm_memory: ExtractedDocumentMemory | None = None
     llm_attempted = bool(llm_config is not None and llm_config.is_available())
     fallback_reason: str | None = None
@@ -161,6 +171,7 @@ def extract_document_memory(
                 normalized_text=normalized_text,
                 chunks=chunks,
                 llm_config=llm_config,
+                max_chunks=llm_max_chunks,
                 progress_callback=progress_callback,
             )
         except Exception as exc:
@@ -168,47 +179,36 @@ def extract_document_memory(
             llm_memory = None
 
     if llm_memory is not None:
-        items = llm_memory.items
+        summary_items = [
+            item for item in llm_memory.items if item.item_type == ExtractedKnowledgeType.SUMMARY
+        ]
+        if not summary_items:
+            summary_items = [
+                item
+                for item in heuristic_memory.items
+                if item.item_type == ExtractedKnowledgeType.SUMMARY
+            ]
+        items = (
+            summary_items[:1]
+            + [
+                item
+                for item in llm_memory.items
+                if item.item_type != ExtractedKnowledgeType.SUMMARY
+            ]
+            + [
+                item
+                for item in heuristic_memory.items
+                if item.item_type != ExtractedKnowledgeType.SUMMARY
+            ]
+        )
         summary_text = llm_memory.summary
-        extraction_method = "llm"
+        extraction_method = "hybrid" if llm_memory.llm_selection_applied else "llm"
         fallback_applied = False
     else:
         extraction_method = "heuristic"
         fallback_applied = llm_attempted
-        items = []
-        for chunk in chunks:
-            chunk_content = str(chunk.get("content") or "").strip()
-            if not chunk_content:
-                continue
-            chunk_title = str(chunk.get("title") or document_title or "").strip() or None
-            source_location = chunk.get("source_location")
-            items.extend(
-                _extract_from_chunk(
-                    document_type=document_type,
-                    document_title=document_title,
-                    chunk_title=chunk_title,
-                    chunk_content=chunk_content,
-                    source_location=source_location,
-                )
-            )
-        summary_text = _build_summary(normalized_text, document_title=document_title)
-        items.insert(
-            0,
-            ExtractedKnowledgeCandidate(
-                item_type=ExtractedKnowledgeType.SUMMARY,
-                title=document_title,
-                content=summary_text,
-                source_location=chunks[0].get("source_location") if chunks else "document:summary",
-                confidence_score=0.92,
-                quality_status=ExtractionQualityStatus.INFERRED,
-                evidence_quote=_truncate(normalized_text, 260),
-                structured_payload={
-                    "document_title": document_title,
-                    "document_type": document_type.value,
-                    "extraction_method": "heuristic",
-                },
-            ),
-        )
+        items = heuristic_memory.items
+        summary_text = heuristic_memory.summary
 
     deduped: list[ExtractedKnowledgeCandidate] = []
     seen: set[tuple[str, str, str]] = set()
@@ -233,6 +233,58 @@ def extract_document_memory(
         fallback_applied=fallback_applied,
         llm_attempted=llm_attempted,
         fallback_reason=fallback_reason,
+        llm_source_chunk_count=llm_memory.llm_source_chunk_count if llm_memory else 0,
+        llm_selected_chunk_count=llm_memory.llm_selected_chunk_count if llm_memory else 0,
+        llm_selection_applied=llm_memory.llm_selection_applied if llm_memory else False,
+    )
+
+
+def _extract_document_memory_heuristic(
+    *,
+    document_title: str,
+    document_type: DocumentType,
+    normalized_text: str,
+    chunks: list[dict[str, Any]],
+) -> ExtractedDocumentMemory:
+    items: list[ExtractedKnowledgeCandidate] = []
+    for chunk in chunks:
+        chunk_content = str(chunk.get("content") or "").strip()
+        if not chunk_content:
+            continue
+        chunk_title = str(chunk.get("title") or document_title or "").strip() or None
+        source_location = chunk.get("source_location")
+        items.extend(
+            _extract_from_chunk(
+                document_type=document_type,
+                document_title=document_title,
+                chunk_title=chunk_title,
+                chunk_content=chunk_content,
+                source_location=source_location,
+            )
+        )
+    summary_text = _build_summary(normalized_text, document_title=document_title)
+    items.insert(
+        0,
+        ExtractedKnowledgeCandidate(
+            item_type=ExtractedKnowledgeType.SUMMARY,
+            title=document_title,
+            content=summary_text,
+            source_location=chunks[0].get("source_location") if chunks else "document:summary",
+            confidence_score=0.92,
+            quality_status=ExtractionQualityStatus.INFERRED,
+            evidence_quote=_truncate(normalized_text, 260),
+            structured_payload={
+                "document_title": document_title,
+                "document_type": document_type.value,
+                "extraction_method": "heuristic",
+            },
+        ),
+    )
+    return ExtractedDocumentMemory(
+        summary=summary_text,
+        items=items,
+        counters={},
+        extraction_method="heuristic",
     )
 
 
@@ -243,6 +295,7 @@ def _extract_document_memory_with_llm(
     normalized_text: str,
     chunks: list[dict[str, Any]],
     llm_config: DocumentMemoryLlmConfig,
+    max_chunks: int | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> ExtractedDocumentMemory:
     request_url = _resolve_chat_completions_url(llm_config.base_url or "")
@@ -254,7 +307,10 @@ def _extract_document_memory_with_llm(
             "document_chunk_id": str(chunk.get("document_chunk_id") or ""),
             "title": str(chunk.get("title") or "").strip() or None,
             "source_location": str(chunk.get("source_location") or "").strip() or None,
-            "content": _truncate(str(chunk.get("content") or ""), _LLM_CHUNK_CHAR_LIMIT),
+            "content": _compact_chunk_for_llm(
+                str(chunk.get("content") or ""),
+                char_limit=_LLM_CHUNK_CHAR_LIMIT,
+            ),
         }
         for chunk in chunks
         if str(chunk.get("content") or "").strip()
@@ -268,6 +324,10 @@ def _extract_document_memory_with_llm(
                 "content": _truncate(normalized_text, _LLM_CHUNK_CHAR_LIMIT),
             }
         )
+    source_chunk_count = len(serialized_chunks)
+    selected_chunks = _select_llm_chunks(serialized_chunks, max_chunks=max_chunks)
+    selection_applied = len(selected_chunks) < source_chunk_count
+    serialized_chunks = selected_chunks
     chunk_batches = _batch_items(serialized_chunks, _LLM_CHUNK_BATCH_SIZE)
     batch_count = len(chunk_batches)
     batch_memories: list[ExtractedDocumentMemory] = []
@@ -280,6 +340,9 @@ def _extract_document_memory_with_llm(
                 "total_batches": batch_count,
                 "completed_chunks": 0,
                 "total_chunks": len(serialized_chunks),
+                "source_chunks": source_chunk_count,
+                "selected_chunks": len(serialized_chunks),
+                "selection_applied": selection_applied,
                 "batch_size": _LLM_CHUNK_BATCH_SIZE,
             }
         )
@@ -297,6 +360,9 @@ def _extract_document_memory_with_llm(
                             (batch_index - 1) * _LLM_CHUNK_BATCH_SIZE, len(serialized_chunks)
                         ),
                         "total_chunks": len(serialized_chunks),
+                        "source_chunks": source_chunk_count,
+                        "selected_chunks": len(serialized_chunks),
+                        "selection_applied": selection_applied,
                         "batch_size": len(chunk_batch),
                     }
                 )
@@ -326,6 +392,9 @@ def _extract_document_memory_with_llm(
                             batch_index * _LLM_CHUNK_BATCH_SIZE, len(serialized_chunks)
                         ),
                         "total_chunks": len(serialized_chunks),
+                        "source_chunks": source_chunk_count,
+                        "selected_chunks": len(serialized_chunks),
+                        "selection_applied": selection_applied,
                         "batch_size": len(chunk_batch),
                     }
                 )
@@ -356,6 +425,8 @@ def _extract_document_memory_with_llm(
                 "extraction_method": "llm",
                 "extraction_batches": batch_count,
                 "covered_chunk_count": len(serialized_chunks),
+                "source_chunk_count": source_chunk_count,
+                "selection_applied": selection_applied,
             },
         ),
     )
@@ -367,6 +438,9 @@ def _extract_document_memory_with_llm(
         fallback_applied=False,
         llm_attempted=True,
         fallback_reason=None,
+        llm_source_chunk_count=source_chunk_count,
+        llm_selected_chunk_count=len(serialized_chunks),
+        llm_selection_applied=selection_applied,
     )
 
 
@@ -515,6 +589,80 @@ def _extract_document_memory_batch_with_llm(
     )
 
 
+def _compact_chunk_for_llm(text: str, *, char_limit: int = _LLM_CHUNK_CHAR_LIMIT) -> str:
+    content = str(text or "").strip()
+    if not content:
+        return ""
+    if len(content) <= char_limit:
+        return content
+    selected_sentences = _select_extraction_sentences(
+        content,
+        limit=_LLM_CHUNK_COMPACT_SENTENCE_LIMIT,
+    )
+    compacted = "\n".join(selected_sentences).strip()
+    if not compacted:
+        compacted = content
+    return _truncate(compacted, char_limit)
+
+
+def _select_llm_chunks(
+    chunks: list[dict[str, Any]], *, max_chunks: int | None
+) -> list[dict[str, Any]]:
+    if not chunks:
+        return []
+    limit = int(max_chunks or 0)
+    if limit <= 0 or len(chunks) <= limit:
+        return chunks
+    if limit == 1:
+        return [chunks[0]]
+
+    keep_indexes = {0, len(chunks) - 1}
+    remaining_slots = max(limit - len(keep_indexes), 0)
+    scored = [
+        (_score_llm_chunk(chunk, index=index, total=len(chunks)), index)
+        for index, chunk in enumerate(chunks)
+        if index not in keep_indexes
+    ]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    keep_indexes.update(index for _score, index in scored[:remaining_slots])
+    return [chunk for index, chunk in enumerate(chunks) if index in keep_indexes]
+
+
+def _score_llm_chunk(chunk: dict[str, Any], *, index: int, total: int) -> float:
+    content = str(chunk.get("content") or "")
+    title = str(chunk.get("title") or "")
+    source_location = str(chunk.get("source_location") or "")
+    sentences = _select_extraction_sentences(content, limit=12)
+    score = 0.0
+    marker_weights = {
+        "rule": 4.0,
+        "constraint": 3.8,
+        "integration": 3.4,
+        "architecture": 3.0,
+        "technology": 2.7,
+        "risk": 2.6,
+    }
+    for sentence in sentences:
+        marker_matches = _match_marker_categories(sentence)
+        for category, markers in marker_matches.items():
+            score += marker_weights.get(category, 1.0) * len(markers)
+        if _RELATION_RE.search(sentence):
+            score += 2.5
+        if _ENDPOINT_RE.search(sentence):
+            score += 3.0
+
+    title_markers = _match_marker_categories(title)
+    score += sum(len(markers) for markers in title_markers.values()) * 1.5
+    score += min(len(content) / 1200.0, 2.0)
+    if index <= 1:
+        score += 1.2
+    if index >= max(total - 2, 0):
+        score += 0.8
+    if re.search(r"\b(table|section|chapter|page|лист|табл|раздел)\b", source_location, re.I):
+        score += 0.2
+    return score
+
+
 def _batch_items(items: list[dict[str, Any]], batch_size: int) -> list[list[dict[str, Any]]]:
     if batch_size <= 0:
         return [items] if items else []
@@ -591,7 +739,7 @@ def _extract_from_chunk(
     source_location: str | None,
 ) -> list[ExtractedKnowledgeCandidate]:
     items: list[ExtractedKnowledgeCandidate] = []
-    sentences = _split_sentences(chunk_content)
+    sentences = _select_extraction_sentences(chunk_content)
 
     if document_type == DocumentType.API:
         for match in _ENDPOINT_RE.finditer(chunk_content):
@@ -646,7 +794,7 @@ def _extract_from_chunk(
             ExtractedKnowledgeCandidate(
                 item_type=ExtractedKnowledgeType.ENTITY,
                 title=entity,
-                content=f"Entity referenced in document '{document_title}'",
+                content="Потенциальная сущность, найденная эвристическим извлечением",
                 normalized_value=entity,
                 source_location=source_location,
                 confidence_score=0.62,
@@ -657,8 +805,8 @@ def _extract_from_chunk(
         )
 
     for sentence in sentences:
-        lowered = sentence.casefold()
-        if any(marker in lowered for marker in _RISK_MARKERS):
+        marker_matches = _match_marker_categories(sentence)
+        if risk_markers := marker_matches["risk"]:
             items.append(
                 ExtractedKnowledgeCandidate(
                     ExtractedKnowledgeType.RISK,
@@ -667,10 +815,14 @@ def _extract_from_chunk(
                     source_location=source_location,
                     confidence_score=0.79,
                     evidence_quote=sentence,
-                    structured_payload={"category": "risk", "extraction_method": "heuristic"},
+                    structured_payload={
+                        "category": "risk",
+                        "matched_markers": list(risk_markers),
+                        "extraction_method": "heuristic",
+                    },
                 )
             )
-        if any(marker in lowered for marker in _CONSTRAINT_MARKERS):
+        if constraint_markers := marker_matches["constraint"]:
             items.append(
                 ExtractedKnowledgeCandidate(
                     ExtractedKnowledgeType.CONSTRAINT,
@@ -679,15 +831,20 @@ def _extract_from_chunk(
                     source_location=source_location,
                     confidence_score=0.86,
                     evidence_quote=sentence,
-                    structured_payload={"category": "constraint", "extraction_method": "heuristic"},
+                    structured_payload={
+                        "category": "constraint",
+                        "matched_markers": list(constraint_markers),
+                        "extraction_method": "heuristic",
+                    },
                 )
             )
-        if any(marker in lowered for marker in _RULE_MARKERS):
+        if rule_markers := marker_matches["rule"]:
             item_type = (
                 ExtractedKnowledgeType.NORMATIVE_RULE
                 if document_type == DocumentType.NORMATIVE
                 else ExtractedKnowledgeType.MANDATORY_REQUIREMENT
             )
+            lowered = sentence.casefold()
             if "principle" in lowered or "принцип" in lowered:
                 item_type = ExtractedKnowledgeType.ARCHITECTURAL_PRINCIPLE
             items.append(
@@ -700,11 +857,12 @@ def _extract_from_chunk(
                     evidence_quote=sentence,
                     structured_payload={
                         "category": item_type.value,
+                        "matched_markers": list(rule_markers),
                         "extraction_method": "heuristic",
                     },
                 )
             )
-        if any(marker in lowered for marker in _INTEGRATION_MARKERS):
+        if integration_markers := marker_matches["integration"]:
             items.append(
                 ExtractedKnowledgeCandidate(
                     ExtractedKnowledgeType.INTEGRATION_REQUIREMENT,
@@ -715,11 +873,12 @@ def _extract_from_chunk(
                     evidence_quote=sentence,
                     structured_payload={
                         "category": "integration",
+                        "matched_markers": list(integration_markers),
                         "extraction_method": "heuristic",
                     },
                 )
             )
-        if any(marker in lowered for marker in _TECH_MARKERS):
+        if technology_markers := marker_matches["technology"]:
             items.append(
                 ExtractedKnowledgeCandidate(
                     ExtractedKnowledgeType.TECHNOLOGY_STANDARD,
@@ -730,6 +889,30 @@ def _extract_from_chunk(
                     evidence_quote=sentence,
                     structured_payload={
                         "category": "technology_standard",
+                        "matched_markers": list(technology_markers),
+                        "extraction_method": "heuristic",
+                    },
+                )
+            )
+        if architecture_markers := marker_matches["architecture"]:
+            lowered = sentence.casefold()
+            item_type = (
+                ExtractedKnowledgeType.ARCHITECTURAL_PRINCIPLE
+                if "principle" in lowered or "принцип" in lowered
+                else ExtractedKnowledgeType.TERM
+            )
+            items.append(
+                ExtractedKnowledgeCandidate(
+                    item_type,
+                    _derive_title(sentence),
+                    sentence,
+                    source_location=source_location,
+                    confidence_score=0.78,
+                    quality_status=ExtractionQualityStatus.INFERRED,
+                    evidence_quote=sentence,
+                    structured_payload={
+                        "category": "architecture_concept",
+                        "matched_markers": list(architecture_markers),
                         "extraction_method": "heuristic",
                     },
                 )
@@ -755,15 +938,79 @@ def _extract_from_chunk(
     return items
 
 
-def _split_sentences(text: str) -> list[str]:
-    collapsed = re.sub(r"\s+", " ", text).strip()
-    if not collapsed:
+def _select_extraction_sentences(
+    text: str,
+    *,
+    limit: int = _EXTRACTION_SENTENCE_LIMIT,
+) -> list[str]:
+    candidates = _split_sentences(text, limit=_EXTRACTION_SENTENCE_SCAN_LIMIT)
+    if len(candidates) <= limit:
+        return candidates
+
+    selected: list[str] = []
+    selected_keys: set[str] = set()
+
+    def add_sentence(sentence: str) -> bool:
+        key = sentence.casefold()
+        if key in selected_keys:
+            return False
+        selected.append(sentence)
+        selected_keys.add(key)
+        return len(selected) >= limit
+
+    for sentence in candidates:
+        marker_matches = _match_marker_categories(sentence)
+        has_markers = any(marker_matches.values())
+        if (has_markers or _RELATION_RE.search(sentence)) and add_sentence(sentence):
+            return selected
+
+    for sentence in candidates:
+        if add_sentence(sentence):
+            return selected
+    return selected
+
+
+def _match_marker_categories(sentence: str) -> dict[str, tuple[str, ...]]:
+    return {
+        "risk": _find_marker_matches(sentence, _RISK_MARKER_CATALOG),
+        "constraint": _find_marker_matches(sentence, _CONSTRAINT_MARKER_CATALOG),
+        "rule": _find_marker_matches(sentence, _RULE_MARKER_CATALOG),
+        "integration": _find_marker_matches(sentence, _INTEGRATION_MARKER_CATALOG),
+        "technology": _find_marker_matches(sentence, _TECH_MARKER_CATALOG),
+        "architecture": _find_marker_matches(sentence, _ARCHITECTURE_CONCEPT_MARKER_CATALOG),
+    }
+
+
+def _find_marker_matches(sentence: str, catalog: _MarkerCatalog) -> tuple[str, ...]:
+    normalized_sentence = _normalize_marker_text(sentence)
+    if not normalized_sentence:
+        return ()
+    return tuple(
+        dict.fromkeys(
+            match.group(0).strip() for match in catalog.pattern.finditer(normalized_sentence)
+        )
+    )
+
+
+def _split_sentences(text: str, *, limit: int = 20) -> list[str]:
+    if not text.strip():
         return []
-    return [
-        item.strip(" -•\n\t")
-        for item in re.split(r"(?<=[.!?;])\s+", collapsed)
-        if len(item.strip(" -•\n\t")) >= 20
-    ][:20]
+
+    sentences: list[str] = []
+    for block in re.split(r"[\r\n]+", text):
+        collapsed = re.sub(r"\s+", " ", block).strip(" -•\n\t")
+        if not collapsed:
+            continue
+        for item in re.split(r"(?<=[.!?;])\s+|\s+[•]\s+", collapsed):
+            cleaned = re.sub(r"\s+", " ", item).strip(" -•\n\t")
+            if len(cleaned) < 20:
+                continue
+            if len(cleaned) > _MAX_SENTENCE_CHARS:
+                cleaned = cleaned[: _MAX_SENTENCE_CHARS - 1].rstrip() + "…"
+            sentences.append(cleaned)
+            if len(sentences) >= limit:
+                return sentences
+    return sentences
 
 
 def _build_summary(text: str, *, document_title: str) -> str:

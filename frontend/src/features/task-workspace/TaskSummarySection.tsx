@@ -14,6 +14,8 @@ import { formatDateTime, formatSeconds, titleStatus } from '../../shared/lib/for
 import type { NormalizedGenerationRun } from '../../shared/api/normalized';
 import type { GenerationRunRef, SolutionVerificationRunRef, TaskSnapshot } from '../../types/api';
 
+const TERMINAL_GENERATION_STATES = new Set(['completed', 'completed_with_warnings', 'failed', 'canceled']);
+
 interface TaskSummarySectionProps {
   task: TaskSnapshot;
   activeKnowledgeBanner: ReactNode;
@@ -30,9 +32,12 @@ interface TaskSummarySectionProps {
   latestGenerationRef: GenerationRunRef | null;
   latestVerificationRef: SolutionVerificationRunRef | null;
   canStartGeneration: boolean;
+  canCancelGeneration?: boolean;
   generationPending: boolean;
+  generationCancelPending?: boolean;
   verificationPending: boolean;
   onStartGeneration: () => void;
+  onCancelGeneration?: () => void;
   onStartVerification: () => void;
 }
 
@@ -52,9 +57,12 @@ export function TaskSummarySection({
   latestGenerationRef,
   latestVerificationRef,
   canStartGeneration,
+  canCancelGeneration = false,
   generationPending,
+  generationCancelPending = false,
   verificationPending,
   onStartGeneration,
+  onCancelGeneration,
   onStartVerification,
 }: TaskSummarySectionProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -65,7 +73,8 @@ export function TaskSummarySection({
 
   const effectiveGenerationStage = generationCurrentStage;
   const effectiveGenerationState = generationState ?? latestGenerationRef?.state ?? 'draft';
-  const generationIsInProgress = effectiveGenerationState === 'running' || generationPending;
+  const generationIsActive = effectiveGenerationState !== 'draft' && !TERMINAL_GENERATION_STATES.has(effectiveGenerationState);
+  const generationIsInProgress = generationIsActive || generationPending;
   const generationIsTerminalWithSolution = Boolean(solutionId) && ['completed', 'completed_with_warnings'].includes(effectiveGenerationState);
   const canClickGeneration = canStartGeneration && !generationIsInProgress && !generationIsTerminalWithSolution;
   const generationElapsedSec = generationRunElapsedSeconds(generationRun, nowMs);
@@ -146,6 +155,11 @@ export function TaskSummarySection({
               ) : null}
               {solutionId ? <Link className="button" to={`/solutions/${solutionId}`}>Открыть решение</Link> : null}
               {generationOperationId ? <Link className="button" to={`/operations/${generationOperationId}`}>Ход выполнения</Link> : null}
+              {canCancelGeneration && onCancelGeneration ? (
+                <Button onClick={onCancelGeneration} disabled={generationCancelPending}>
+                  {generationCancelPending ? 'Останавливаю…' : 'Остановить подготовку'}
+                </Button>
+              ) : null}
             </div>
           </div>
         </Card>

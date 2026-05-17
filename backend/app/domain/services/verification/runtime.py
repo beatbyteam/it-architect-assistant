@@ -15,6 +15,11 @@ from app.domain.services.observability import (
 
 from .common import TERMINAL_VERIFICATION_STATUSES, VerificationExecutionContext, logger
 from .document_scope import selected_document_ids_from_scope
+from .rule_executors import calculate_verification_score
+
+
+class VerificationRunCanceled(Exception):
+    """Internal signal used to stop a verification worker after an API cancellation."""
 
 
 def execute_verification_run(service: Any, verification_run_id: str) -> VerificationRun:
@@ -62,6 +67,7 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
         service.session.add(run)
         service.session.commit()
         try:
+            _raise_if_verification_canceled(service, run)
             stage_obs: StageObservation
             with observe_stage(
                 stage_metrics, "preparing", logger=logger, log_message="verification_stage"
@@ -75,6 +81,7 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
                     support_context,
                     selected_document_ids,
                 ) = _prepare_verification_context(service, run=run, solution=solution)
+                _raise_if_verification_canceled(service, run)
                 stage_obs.update(
                     {
                         "knowledge_version_count": len(knowledge_versions),
@@ -96,6 +103,7 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
                     selected_document_ids=selected_document_ids,
                     stage_metrics=stage_metrics,
                 )
+                _raise_if_verification_canceled(service, run)
                 stage_obs.update(
                     {
                         "check_count": validation_summary.get("check_count"),
@@ -118,6 +126,7 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
                     stage_metrics=stage_metrics,
                     total_duration_sec=max(0.0, perf_counter() - pipeline_started),
                 )
+                _raise_if_verification_canceled(service, run)
                 protocol = getattr(completed_run, "protocol", None)
                 if protocol is not None:
                     stage_obs["verification_protocol_id"] = str(protocol.verification_protocol_id)
@@ -144,6 +153,20 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
                 },
             )
             return completed_run
+        except VerificationRunCanceled:
+            canceled_run = service.get_run(verification_run_id)
+            logger.info(
+                "verification_run_canceled",
+                extra={
+                    "stage": canceled_run.current_stage,
+                    "stage_status": "canceled",
+                    "run_id": str(canceled_run.verification_run_id),
+                    "entity_id": str(canceled_run.solution_version_id),
+                    "outcome": "canceled",
+                    "event_type": "pipeline_finished",
+                },
+            )
+            return canceled_run
         except Exception as exc:
             _fail_verification_run(
                 service,
@@ -153,6 +176,15 @@ def execute_verification_run(service: Any, verification_run_id: str) -> Verifica
                 total_duration_sec=max(0.0, perf_counter() - pipeline_started),
             )
             raise
+
+
+def _raise_if_verification_canceled(service: Any, run: VerificationRun) -> None:
+    try:
+        service.session.refresh(run)
+    except Exception:
+        logger.warning("verification_run_cancel_refresh_failed", exc_info=True)
+    if run.status == VerificationRunStatus.CANCELED:
+        raise VerificationRunCanceled()
 
 
 def _attach_pipeline_observability(
@@ -206,7 +238,9 @@ def _prepare_verification_context(
     support_context = service._build_rule_support_context(
         solution=solution,
         knowledge_versions=knowledge_versions,
+        rules=rules,
         selected_document_ids=selected_document_ids,
+        principal=service._principal_for_run(run),
     )
     return (
         knowledge_versions,
@@ -316,6 +350,7 @@ def _publish_verification_protocol(
     protocol, published_artifact = service.persistence.persist(
         run=run, payload=payload, rule_lookup=rule_lookup
     )
+    verification_score = calculate_verification_score(payload.check_results)
     run.status = VerificationRunStatus.COMPLETED
     run.current_stage = "completed"
     run.finished_at = datetime.now(UTC)
@@ -338,6 +373,7 @@ def _publish_verification_protocol(
                 "published_artifact_id": str(published_artifact.published_artifact_id),
                 "publication_revision_no": published_artifact.revision_no,
                 "summary_status": payload.final_status.value,
+                "verification_score": verification_score,
                 "check_count": len(payload.check_results),
                 "validation": validation_summary,
                 "current_rule_group": rule_groups[-1] if rule_groups else None,
@@ -348,12 +384,14 @@ def _publish_verification_protocol(
                     "failed_count": validation_summary.get("failed_count", 0),
                     "warning_count": validation_summary.get("warning_count", 0),
                     "incomplete_count": validation_summary.get("incomplete_count", 0),
+                    "score": verification_score,
                 },
                 "verification_telemetry": {
                     "rule_group_count": len(rule_groups),
                     "rule_count": len(rules),
                     "check_count": len(payload.check_results),
                     "final_status": payload.final_status.value,
+                    "score": verification_score,
                     "support_summary": support_context.get("support_summary"),
                 },
             },

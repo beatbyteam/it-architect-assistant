@@ -188,7 +188,7 @@ export function ExternalArchitectureCheckPage() {
     <div className="stack">
       <PageHeader
         title="Проверка существующей архитектуры"
-        subtitle="Вставь готовое описание или документ по архитектуре. Проверка пройдет по тем же правилам и документам, что и протоколы для подготовленных решений."
+        subtitle="Вставьте готовое описание или документ по архитектуре. Проверка пройдет по тем же правилам и документам, что и протоколы для подготовленных решений."
         actions={<Link to="/registry" className="button">Реестр проверок</Link>}
       />
 
@@ -223,7 +223,7 @@ export function ExternalArchitectureCheckPage() {
                 setArchitectureText(event.target.value);
                 markDraftChanged();
               }}
-              placeholder="Вставь описание архитектуры, разделы TOGAF, перечень компонентов, интеграции, риски и ограничения."
+              placeholder="Вставьте описание архитектуры, разделы TOGAF, перечень компонентов, интеграции, риски и ограничения."
               required
               style={{ minHeight: 360 }}
             />

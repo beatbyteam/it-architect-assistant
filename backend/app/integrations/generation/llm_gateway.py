@@ -98,11 +98,17 @@ class HttpJsonSolutionProvider:
         api_key: str | None = None,
         timeout_sec: float = 60.0,
         model_id: str = "http-json-model",
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         self.base_url = base_url
         self.api_key = api_key
         self.timeout_sec = timeout_sec
         self.model_id = model_id
+        self.temperature = temperature
+        self.top_p = top_p
+        self.max_tokens = max_tokens
 
     def generate_solution(
         self, payload: dict[str, Any]
@@ -291,6 +297,12 @@ class OpenAICompatibleSolutionProvider(HttpJsonSolutionProvider):
             "messages": messages,
             "response_format": {"type": "json_object"},
         }
+        if self.temperature is not None:
+            body["temperature"] = float(self.temperature)
+        if self.top_p is not None:
+            body["top_p"] = float(self.top_p)
+        if self.max_tokens is not None:
+            body["max_tokens"] = int(self.max_tokens)
         started = time.perf_counter()
         with httpx.Client(timeout=self.timeout_sec) as client:
             response = client.post(request_url, json=body, headers=headers)
@@ -384,14 +396,23 @@ class LLMGateway:
         fallback_base_url: str | None = None,
         fallback_api_key: str | None = None,
         fallback_model_id: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        max_tokens: int | None = None,
     ) -> None:
         self.last_call_diagnostics: dict[str, Any] = {}
+        self.temperature = temperature
+        self.top_p = top_p
+        self.max_tokens = max_tokens
         self.primary_provider = self._build_provider(
             provider_name=provider,
             base_url=base_url,
             api_key=api_key,
             timeout_sec=timeout_sec,
             model_id=model_id,
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
         )
         self.fallback_provider = None
         if fallback_provider:
@@ -401,6 +422,9 @@ class LLMGateway:
                 api_key=fallback_api_key,
                 timeout_sec=timeout_sec,
                 model_id=fallback_model_id,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
             )
 
     def generate_solution(
@@ -441,6 +465,11 @@ class LLMGateway:
                     ),
                     "retrieved_fragment_count": len(retrieved_fragments),
                     "raw_documents_included": False,
+                    "request_options": {
+                        "temperature": self.temperature,
+                        "top_p": self.top_p,
+                        "max_tokens": self.max_tokens,
+                    },
                 }
                 result = _enrich_required_generation_lists(
                     result,
@@ -575,6 +604,9 @@ class LLMGateway:
         api_key: str | None,
         timeout_sec: float,
         model_id: str | None,
+        temperature: float | None,
+        top_p: float | None,
+        max_tokens: int | None,
     ) -> SolutionProvider:
         resolved_model_id = model_id or f"{provider_name}-default"
         if provider_name == "http_json":
@@ -583,6 +615,9 @@ class LLMGateway:
                 api_key=api_key,
                 timeout_sec=timeout_sec,
                 model_id=resolved_model_id,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
             )
         if provider_name == "openai_compatible":
             return OpenAICompatibleSolutionProvider(
@@ -590,6 +625,9 @@ class LLMGateway:
                 api_key=api_key,
                 timeout_sec=timeout_sec,
                 model_id=resolved_model_id,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
             )
         if provider_name in {"local_inference", "ollama", "local_openai_compatible"}:
             return LocalInferenceSolutionProvider(
@@ -597,6 +635,9 @@ class LLMGateway:
                 api_key=api_key,
                 timeout_sec=timeout_sec,
                 model_id=resolved_model_id,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
             )
         raise DependencyUnavailableError(
             "llm_provider",

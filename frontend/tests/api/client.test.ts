@@ -64,7 +64,7 @@ test('request formats FastAPI validation detail arrays', async () => {
     await assert.rejects(async () => {
       await request('/tasks');
     }, (error: unknown) => {
-      assert.equal(getApiErrorMessage(error), 'body.raw_text: Field required');
+      assert.equal(getApiErrorMessage(error), 'описание задачи: Поле обязательно.');
       return true;
     });
   } finally {
@@ -86,7 +86,7 @@ test('request prefers backend validation details over generic validation summary
     await assert.rejects(async () => {
       await request('/tasks');
     }, (error: unknown) => {
-      assert.equal(getApiErrorMessage(error), 'body.raw_text: Field required');
+      assert.equal(getApiErrorMessage(error), 'описание задачи: Поле обязательно.');
       return true;
     });
   } finally {

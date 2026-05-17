@@ -56,6 +56,8 @@ const UNIFIED_MEMORY_TYPE_ORDER = [
 
 type DocumentViewMode = 'read' | 'verify' | 'debug';
 
+const FINAL_SOURCE_DOCUMENT_PROCESSING_STATUSES = new Set(['extracted', 'reused', 'skipped']);
+
 function cleanKnowledgeText(value?: string | null) {
   return (value ?? '').replace(/\s+/g, ' ').trim();
 }
@@ -77,10 +79,29 @@ function unifiedTypeOrder(itemType: string) {
   return index === -1 ? UNIFIED_MEMORY_TYPE_ORDER.length : index;
 }
 
-function buildUnifiedMemoryBlocks(memory: NormalizedDocumentMemory) {
+function sourceDocumentLifecycleStatus(document: SourceDocument) {
+  const processingStatus = document.last_processing_status ?? null;
+  if (document.last_error_code === 'CANCELED_BY_USER') return 'canceled';
+  if (processingStatus === 'failed') return 'failed';
+  if (processingStatus && !FINAL_SOURCE_DOCUMENT_PROCESSING_STATUSES.has(processingStatus)) return 'running';
+  if (processingStatus === 'extracted' || processingStatus === 'reused') return 'parsed';
+  return document.status;
+}
+
+function isSourceDocumentProcessing(document: SourceDocument) {
+  const processingStatus = document.last_processing_status ?? null;
+  return Boolean(processingStatus && !FINAL_SOURCE_DOCUMENT_PROCESSING_STATUSES.has(processingStatus) && processingStatus !== 'failed');
+}
+
+function buildUnifiedMemoryBlocks(
+  memory: NormalizedDocumentMemory,
+  items: ExtractedKnowledgeItem[],
+  options?: { includeSummary?: boolean },
+) {
   const blocks: Array<{ key: string; title: string; content: string; meta?: string; item?: ExtractedKnowledgeItem }> = [];
   const summary = cleanKnowledgeText(memory.summary);
-  if (summary && !isLikelyTruncatedKnowledgeText(summary)) {
+  const includeSummary = options?.includeSummary ?? true;
+  if (includeSummary && summary && !isLikelyTruncatedKnowledgeText(summary)) {
     blocks.push({
       key: 'summary',
       title: 'Краткая выжимка',
@@ -89,7 +110,7 @@ function buildUnifiedMemoryBlocks(memory: NormalizedDocumentMemory) {
     });
   }
 
-  const knowledgeItems = memory.items
+  const knowledgeItems = items
     .filter((item) => item.item_type !== 'summary' && cleanKnowledgeText(item.content))
     .sort((left, right) => {
       const byType = unifiedTypeOrder(left.item_type) - unifiedTypeOrder(right.item_type);
@@ -124,7 +145,7 @@ export function KnowledgeDocumentPage() {
   const [viewMode, setViewMode] = useState<DocumentViewMode>('read');
   const [expandedEvidenceId, setExpandedEvidenceId] = useState('');
 
-  const documentQuery = useQuery({ queryKey: queryKeys.knowledgeDocument(documentId), queryFn: ({ signal }) => getKnowledgeDocument(documentId, { signal }), enabled: Boolean(documentId) });
+  const documentQuery = useQuery({ queryKey: queryKeys.knowledgeDocument(documentId), queryFn: ({ signal }) => getKnowledgeDocument(documentId, { signal, include_archived: true }), enabled: Boolean(documentId) });
   const snapshotQuery = useQuery({ queryKey: queryKeys.knowledgeDocumentSnapshot(documentId, knowledgeVersionId), queryFn: ({ signal }) => getKnowledgeDocumentSnapshot(documentId, knowledgeVersionId, { signal }), enabled: Boolean(documentId) });
   const memoryQuery = useQuery({ queryKey: queryKeys.knowledgeDocumentMemory(documentId, knowledgeVersionId), queryFn: ({ signal }) => getKnowledgeDocumentMemory(documentId, knowledgeVersionId, { signal }), enabled: Boolean(documentId) });
 
@@ -137,11 +158,25 @@ export function KnowledgeDocumentPage() {
     () => (memory?.items ?? []).filter((item) => (!filterType || item.item_type === filterType) && (!filterQuality || item.quality_status === filterQuality)),
     [filterQuality, filterType, memory?.items],
   );
+  const filtersActive = Boolean(filterType || filterQuality);
   const unifiedMemoryBlocks = useMemo(
-    () => (memory ? buildUnifiedMemoryBlocks(memory) : []),
-    [memory],
+    () => {
+      if (!memory) return [];
+      const items = viewMode === 'debug' ? filteredItems : memory.items;
+      return buildUnifiedMemoryBlocks(memory, items, {
+        includeSummary: !(viewMode === 'debug' && filtersActive),
+      });
+    },
+    [filteredItems, filtersActive, memory, viewMode],
   );
-  const availableTypes = useMemo(() => Object.keys(memory?.counters ?? {}).sort(), [memory?.counters]);
+  const availableTypeCounts = useMemo(
+    () => (memory?.items ?? []).reduce<Record<string, number>>((acc, item) => {
+      acc[item.item_type] = (acc[item.item_type] ?? 0) + 1;
+      return acc;
+    }, {}),
+    [memory?.items],
+  );
+  const availableTypes = useMemo(() => Object.keys(availableTypeCounts).sort(), [availableTypeCounts]);
   const qualityOptions = useMemo(() => Array.from(new Set((memory?.items ?? []).map((item) => item.quality_status))).sort(), [memory?.items]);
   const grouped = useMemo(() => {
     const map = new Map<string, typeof filteredItems>();
@@ -168,6 +203,8 @@ export function KnowledgeDocumentPage() {
   const resolvedUri = document.resolved_uri ?? document.uri;
   const canOpenResolved = isOpenableUri(resolvedUri);
   const canOpenSource = isOpenableUri(document.uri);
+  const documentLifecycle = sourceDocumentLifecycleStatus(document);
+  const documentProcessing = isSourceDocumentProcessing(document);
   const showVerificationEvidence = viewMode === 'verify' || viewMode === 'debug';
   const showDebugBlocks = viewMode === 'debug';
 
@@ -199,9 +236,11 @@ export function KnowledgeDocumentPage() {
             <div><strong>Источник:</strong> {sourceTypeLabel(String(document.source_type ?? document.document_metadata?.source_type ?? '')) || '—'}</div>
             <div><strong>Путь или URL:</strong> <span className="mono">{document.uri}</span></div>
             {document.resolved_uri && document.resolved_uri !== document.uri ? <div><strong>Итоговый путь или URL:</strong> <span className="mono">{document.resolved_uri}</span></div> : null}
-            <div><strong>Статус:</strong> <Badge value={document.status} /></div>
+            <div><strong>Статус обработки:</strong> <Badge value={documentLifecycle} /></div>
+            {documentLifecycle !== document.status ? <div><strong>Статус документа:</strong> <Badge value={document.status} /></div> : null}
             <div><strong>Получен:</strong> {formatDateTime(document.fetched_at ?? document.registered_at)}</div>
             <div><strong>Последняя обработка:</strong> {formatDateTime(document.last_processed_at)}</div>
+            {document.last_error_message ? <div><strong>Последняя ошибка:</strong> {document.last_error_message}</div> : null}
             <div><strong>Checksum:</strong> <span className="mono">{document.checksum ?? '—'}</span></div>
             <div className="actions">
               {canOpenSource ? <a className="button" href={document.uri} target="_blank" rel="noreferrer">Открыть исходный URL</a> : null}
@@ -218,7 +257,7 @@ export function KnowledgeDocumentPage() {
             {memory.fallback_reason ? <div className="muted small">Причина резервного режима: {memory.fallback_reason}</div> : null}
             <div className="actions">
               {availableTypes.map((key) => (
-                <span key={key} className="muted small">{extractedItemTypeLabel(key)}: {memory.counters[key]}</span>
+                <span key={key} className="muted small">{extractedItemTypeLabel(key)}: {availableTypeCounts[key]}</span>
               ))}
             </div>
             {showDebugBlocks ? (
@@ -227,7 +266,7 @@ export function KnowledgeDocumentPage() {
                   <Select value={filterType} onChange={(event: ChangeEvent<HTMLSelectElement>) => setFilterType(event.target.value)}>
                     <option value="">Все извлечённые элементы</option>
                     {availableTypes.map((key) => (
-                      <option key={key} value={key}>{extractedItemTypeLabel(key)} ({memory.counters[key]})</option>
+                      <option key={key} value={key}>{extractedItemTypeLabel(key)} ({availableTypeCounts[key]})</option>
                     ))}
                   </Select>
                   <Select value={filterQuality} onChange={(event: ChangeEvent<HTMLSelectElement>) => setFilterQuality(event.target.value)}>
@@ -257,6 +296,12 @@ export function KnowledgeDocumentPage() {
       {memory.fallback_applied ? (
         <Banner tone="warning">
           Для этого документа LLM-извлечение не завершилось штатно, поэтому часть памяти построена в резервном режиме. Подробности видны в диагностике каждого извлечённого элемента.
+        </Banner>
+      ) : null}
+
+      {documentProcessing && memory.items.length > 0 ? (
+        <Banner tone="warning">
+          Документ ещё обрабатывается. Показанная память может относиться к предыдущей успешной версии, а итоговые сведения обновятся после завершения обработки.
         </Banner>
       ) : null}
 

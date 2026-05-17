@@ -14,6 +14,7 @@ GROUP_LABELS = {
     "structure": "Структура TOGAF",
     "normative": "Соответствие ArchiMate / нормативам",
     "consistency": "Семантическая согласованность",
+    "nfr": "Нефункциональные требования",
     "other": "Прочие проверки",
 }
 
@@ -65,6 +66,7 @@ METADATA_LABELS = {
     "basis_document_count": "Документов-оснований",
     "findings_with_evidence": "Замечаний с основанием",
     "findings_without_section_links": "Замечаний без ссылки на раздел",
+    "verification_score": "Оценка проверки",
 }
 
 
@@ -111,7 +113,14 @@ class VerificationProtocolRenderer:
             status_counters[item.status.value] = status_counters.get(item.status.value, 0) + 1
 
         group_sections: list[str] = []
-        preferred_group_order = ["technical", "structure", "normative", "consistency", "other"]
+        preferred_group_order = [
+            "technical",
+            "structure",
+            "normative",
+            "consistency",
+            "nfr",
+            "other",
+        ]
         ordered_group_codes = [group for group in preferred_group_order if group in grouped_results]
         ordered_group_codes.extend(
             sorted(group for group in grouped_results if group not in preferred_group_order)

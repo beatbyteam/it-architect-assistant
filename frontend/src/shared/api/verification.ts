@@ -49,6 +49,12 @@ export async function getVerificationRun(verificationRunId: string, options?: Re
   return normalizeVerificationRun(await request<VerificationRunStatusResponse>(`/verification-runs/${verificationRunId}`, options));
 }
 
+export async function cancelVerificationRun(verificationRunId: string) {
+  return normalizeVerificationRun(await request<VerificationRunStatusResponse>(`/verification-runs/${verificationRunId}/cancel`, {
+    method: 'POST',
+  }));
+}
+
 export async function getVerificationProtocol(protocolId: string, options?: RequestOptions) {
   return normalizeVerificationProtocol(await request<VerificationProtocolResponse>(`/verification-protocols/${protocolId}`, options));
 }

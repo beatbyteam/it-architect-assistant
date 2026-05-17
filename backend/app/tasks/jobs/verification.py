@@ -12,12 +12,15 @@ except Exception:  # pragma: no cover - optional dependency fallback
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.domain.services.verification_core import VerificationRunService
-from app.tasks.workers.celery_app import celery_app
+from app.tasks.workers.celery_app import ARCHITECTURE_VERIFICATION_QUEUE, celery_app
 
 logger = get_task_logger(__name__)
 
 
-@celery_app.task(name="app.tasks.jobs.verification.run_verification_job")
+@celery_app.task(
+    name="app.tasks.jobs.verification.run_verification_job",
+    queue=ARCHITECTURE_VERIFICATION_QUEUE,
+)
 def run_verification_job(verification_run_id: str) -> dict[str, str]:
     session = SessionLocal()
     try:

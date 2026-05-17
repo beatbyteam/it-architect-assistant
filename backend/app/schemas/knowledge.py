@@ -662,6 +662,7 @@ class KnowledgeBaseDocumentResponse(BaseModel):
     source_id: UUID | str | None = None
     source_name: str | None = None
     source_type: SourceType | str | None = None
+    source_status: SourceStatus | str | None = None
     title: str
     uri: str | None = None
     document_type: DocumentType | str | None = None

@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { getKnowledgeBaseDocuments, getKnowledgeBases } from '../../shared/api/knowledge';
+import { cleanDisplayFileName } from '../../shared/lib/format';
 import { Badge, Banner, Button, EmptyState, ErrorNotice, LoadingState } from '../../shared/ui/components';
 import type { KnowledgeBase, KnowledgeBaseDocument } from '../../types/api';
 
@@ -23,6 +24,16 @@ function selectedBaseFromList(bases: KnowledgeBase[]) {
 
 function selectedVersionId(base: KnowledgeBase | null) {
   return base?.selected_knowledge_version_id ?? base?.active_knowledge_version_id ?? '';
+}
+
+function documentDisplayTitle(document: KnowledgeBaseDocument) {
+  return cleanDisplayFileName(document.title) ?? cleanDisplayFileName(document.uri) ?? 'Документ';
+}
+
+function documentDisplayUri(document: KnowledgeBaseDocument) {
+  if (!document.uri) return '—';
+  if (/^file:\/\//i.test(document.uri)) return cleanDisplayFileName(document.uri) ?? document.uri;
+  return document.uri;
 }
 
 export function KnowledgeDocumentScopePicker({
@@ -145,7 +156,7 @@ export function KnowledgeDocumentScopePicker({
                           disabled={disabled}
                           onChange={() => toggleDocument(documentId)}
                         />
-                        <strong>{document.title}</strong>
+                        <strong>{documentDisplayTitle(document)}</strong>
                       </span>
                       <div className="actions">
                         {document.role_code ? <Badge value={document.role_code} /> : null}
@@ -153,7 +164,7 @@ export function KnowledgeDocumentScopePicker({
                       </div>
                     </div>
                     <div className="muted small">
-                      Источник: {document.source_name ?? '—'} · путь или URL: {document.uri ?? '—'}
+                      Источник: {document.source_name ?? '—'} · файл или URL: {documentDisplayUri(document)}
                     </div>
                   </label>
                 );

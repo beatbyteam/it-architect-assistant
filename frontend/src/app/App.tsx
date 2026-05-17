@@ -8,6 +8,7 @@ import { TaskWorkspacePage } from '../pages/TaskWorkspacePage';
 import { SolutionPage } from '../pages/SolutionPage';
 import { ProtocolPage } from '../pages/ProtocolPage';
 import { KnowledgePage } from '../pages/KnowledgePage';
+import { KnowledgeArchivePage } from '../pages/KnowledgeArchivePage';
 import { KnowledgeBaseDetailsPage } from '../pages/KnowledgeBaseDetailsPage';
 import { KnowledgeDocumentPage } from '../pages/KnowledgeDocumentPage';
 import { OperationsPage } from '../pages/OperationsPage';
@@ -44,7 +45,8 @@ function AppLayout() {
           <NavLink to="/" end className={navClassName}>Главная</NavLink>
           <NavLink to="/tasks/new" className={navClassName}>Новая задача</NavLink>
           <NavLink to="/registry" className={navClassName}>Задачи и результаты</NavLink>
-          <NavLink to="/knowledge" className={navClassName}>База знаний</NavLink>
+          <NavLink to="/knowledge" end className={navClassName}>База знаний</NavLink>
+          <NavLink to="/knowledge/archive" className={navClassName}>Архив</NavLink>
           <NavLink to="/operations" className={navClassName}>Журнал</NavLink>
         </nav>
       </aside>
@@ -70,6 +72,7 @@ function AppRoutes() {
         <Route path="solutions/:solutionId" element={<SolutionPage />} />
         <Route path="protocols/:protocolId" element={<ProtocolPage />} />
         <Route path="knowledge" element={<KnowledgePage />} />
+        <Route path="knowledge/archive" element={<KnowledgeArchivePage />} />
         <Route path="knowledge/bases/:knowledgeBaseId" element={<KnowledgeBaseDetailsPage />} />
         <Route path="knowledge/documents/:documentId" element={<KnowledgeDocumentPage />} />
         <Route path="operations" element={<OperationsPage />} />

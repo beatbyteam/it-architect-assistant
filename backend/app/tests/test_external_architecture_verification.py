@@ -109,6 +109,38 @@ def test_selected_document_normative_check_passes_without_section_citations() ->
     assert result.diagnostics["selected_document_scope"] is True
 
 
+def test_normative_missing_basis_fragments_warns_when_materials_exist() -> None:
+    support = _support_with_sections("application_architecture")
+    support.required_fragments_by_role = {}
+    support.basis_inventory = SimpleNamespace(
+        basis_documents=[SimpleNamespace(document_id="doc-archimate")]
+    )
+    support.support_summary = {"scoped_document_count": 1}
+    rule = VerificationRuleDefinition(
+        "VR-NRM-02",
+        "Solution follows ArchiMate 3.2 semantics",
+        "normative",
+        Severity.MAJOR,
+    )
+
+    result = NormativeRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.WARNING
+    assert result.diagnostics["missing_basis_fragments"] is True
+    VerificationPostValidator().validate(
+        VerificationProtocolPayload(
+            summary="Synthetic normative warning.",
+            check_results=[result],
+            final_status=ProtocolSummaryStatus.PASSED_WITH_COMMENTS,
+        ),
+        expected_rule_codes=["VR-NRM-02"],
+    )
+
+
 def test_structural_warnings_fallback_to_existing_solution_section() -> None:
     support = _support_with_sections("general_information")
     support.combined_section_text = "Solution exposes API integration points."
