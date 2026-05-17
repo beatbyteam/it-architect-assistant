@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,17 +10,20 @@ import pytest
 
 from app.api.v1.routes import knowledge_documents_routes as routes
 from app.bootstrap.bundles import _resolve_requested_by
-from app.core.exceptions import ValidationError
+from app.core.exceptions import ConflictError, ValidationError
 from app.core.security import AuthPrincipal
 from app.db.enums import (
     AccountType,
     BusinessTaskStatus,
     GenerationRunStatus,
+    KnowledgeUpdateStatus,
+    KnowledgeVersionStatus,
     ProtocolSummaryStatus,
     SourceScope,
     UpdateRunType,
     VerificationRunStatus,
 )
+from app.domain.services.generation.run_service import GenerationRunService
 from app.domain.services.generation.runtime import _run_publication_stage
 from app.domain.services.knowledge.update_service import KnowledgeUpdateService
 from app.domain.services.mvp_task_write_service import _canonical_task_state
@@ -643,6 +647,106 @@ def test_generation_publication_keeps_completed_state_when_refresh_fails_after_c
     assert session.commits == 1
     assert session.refresh_calls == 1
     assert audit_calls == ["generation.run.completed"]
+
+
+def test_generation_cancel_run_marks_current_step_and_audit_event() -> None:
+    commits: list[bool] = []
+    records: list[dict[str, Any]] = []
+    audit_calls: list[dict[str, Any]] = []
+    run = SimpleNamespace(
+        generation_run_id="run-1",
+        business_task_id="task-1",
+        business_task=SimpleNamespace(created_by_user_id="user-1"),
+        status=GenerationRunStatus.RUNNING,
+        current_stage="model_generation",
+        diagnostics={},
+        started_by_user_id="user-1",
+        correlation_id="corr-1",
+        finished_at=None,
+    )
+    service = object.__new__(GenerationRunService)
+    service.get_run = lambda _run_id, _principal=None: run
+    service.session = SimpleNamespace(
+        add=lambda _obj: None,
+        commit=lambda: commits.append(True),
+        refresh=lambda _obj: None,
+    )
+    service._record_operation_step = lambda _run, **kwargs: records.append(kwargs)
+    service.audit = SimpleNamespace(record=lambda **kwargs: audit_calls.append(kwargs))
+
+    result = service.cancel_run("run-1", _principal())
+
+    assert result is run
+    assert run.status == GenerationRunStatus.CANCELED
+    assert run.current_stage == "canceled"
+    assert run.finished_at is not None
+    assert run.diagnostics["error_code"] == "CANCELED_BY_USER"
+    assert [item["stage"] for item in records] == ["model_generation", "canceled"]
+    assert [item["status"] for item in records] == ["canceled", "canceled"]
+    assert audit_calls[0]["event_type"] == "generation.run.canceled"
+    assert commits == [True]
+
+
+def test_generation_cancel_run_rejects_finished_run() -> None:
+    run = SimpleNamespace(status=GenerationRunStatus.COMPLETED)
+    service = object.__new__(GenerationRunService)
+    service.get_run = lambda _run_id, _principal=None: run
+
+    with pytest.raises(ConflictError):
+        service.cancel_run("run-1", _principal())
+
+
+def test_knowledge_update_cancel_run_rejects_candidate_and_records_cancellation() -> None:
+    commits: list[bool] = []
+    records: list[dict[str, Any]] = []
+    audit_calls: list[dict[str, Any]] = []
+    run = SimpleNamespace(
+        update_run_id="update-1",
+        knowledge_base_id="kb-1",
+        status=KnowledgeUpdateStatus.INDEXING,
+        current_stage="indexing",
+        started_at=datetime.now(UTC),
+        finished_at=None,
+        duration_sec=None,
+        summary={"stage_history": []},
+        initiator_user_id="user-1",
+        correlation_id="corr-1",
+    )
+    candidate = SimpleNamespace(
+        knowledge_version_id="version-1",
+        status=KnowledgeVersionStatus.PREPARING,
+        summary={},
+    )
+    service = object.__new__(KnowledgeUpdateService)
+    service.get_run = lambda _run_id, _principal=None: run
+    service._serialize_run = lambda item: {
+        "update_run_id": item.update_run_id,
+        "status": item.status,
+        "current_stage": item.current_stage,
+        "summary": item.summary,
+    }
+    service._append_stage_history = (
+        lambda history, stage, detail=None, stage_status=None: list(history or [])
+        + [{"stage": stage, "detail": detail, "status": stage_status}]
+    )
+    service._record_operation_step = lambda _run, **kwargs: records.append(kwargs)
+    service.versions = SimpleNamespace(get_by_update_run_id=lambda _run_id: candidate)
+    service.session = SimpleNamespace(
+        add=lambda _obj: None,
+        commit=lambda: commits.append(True),
+        refresh=lambda _obj: None,
+    )
+    service.audit = SimpleNamespace(record=lambda **kwargs: audit_calls.append(kwargs))
+
+    result = service.cancel_run("update-1", _principal())
+
+    assert result["status"] == KnowledgeUpdateStatus.CANCELED
+    assert run.current_stage == "canceled"
+    assert run.summary["quality_summary"]["error_code"] == "CANCELED_BY_USER"
+    assert candidate.status == KnowledgeVersionStatus.REJECTED
+    assert [item["stage"] for item in records] == ["indexing", "canceled"]
+    assert audit_calls[0]["event_type"] == "knowledge.refresh.canceled"
+    assert commits == [True]
 
 
 def test_canonical_task_state_marks_legacy_ready_task_completed_when_solution_exists() -> None:

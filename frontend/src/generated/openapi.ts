@@ -21,6 +21,8 @@ export interface components {
       file: string;
       title?: string | null;
       knowledge_base_id?: string | null;
+      refresh_policy?: string | null;
+      source_status?: string | null;
       execute_update_inline?: boolean | null;
       reason?: string | null;
     };
@@ -28,6 +30,8 @@ export interface components {
       files: string[];
       title?: string | null;
       knowledge_base_id?: string | null;
+      refresh_policy?: string | null;
+      source_status?: string | null;
       execute_update_inline?: boolean | null;
       reason?: string | null;
     };
@@ -35,6 +39,8 @@ export interface components {
       file: string;
       title?: string | null;
       knowledge_base_id?: string | null;
+      refresh_policy?: string | null;
+      source_status?: string | null;
     };
     "ClarificationAnswerItemRequest": {
       question_code: string;
@@ -145,6 +151,8 @@ export interface components {
       title: string;
       architecture_text: string;
       source_ref?: string | null;
+      draft_task_id?: string | null;
+      knowledge_document_ids?: string[];
       sections?: components['schemas']["ExternalArchitectureSectionRequest"][];
       components?: components['schemas']["ExternalArchitectureComponentRequest"][];
       integrations?: components['schemas']["ExternalArchitectureIntegrationRequest"][];
@@ -258,6 +266,7 @@ export interface components {
       source_id?: string | null;
       source_name?: string | null;
       source_type?: components['schemas']["SourceType"] | string | null;
+      source_status?: components['schemas']["SourceStatus"] | string | null;
       title: string;
       uri?: string | null;
       document_type?: components['schemas']["DocumentType"] | string | null;
@@ -752,7 +761,7 @@ export interface components {
     "SourceCreateRequest": {
       knowledge_base_id?: string | null;
       source_type: components['schemas']["SourceType"];
-      name: string;
+      name?: string | null;
       base_uri?: string | null;
       criticality?: components['schemas']["Criticality"] | null;
       refresh_policy?: string | null;
@@ -860,7 +869,9 @@ export interface components {
       state: string;
       created_at: string;
       updated_at: string;
+      metadata?: Record<string, unknown> | null;
       latest_knowledge_version_id?: string | null;
+      latest_generation_state?: string | null;
       open_clarification_count?: number;
       overdue_clarification_flag?: boolean;
     };
@@ -988,6 +999,7 @@ export interface components {
     "VerificationRunCreateRequest": {
       idempotency_key?: string | null;
       correlation_id?: string | null;
+      knowledge_document_ids?: string[];
     };
     "VerificationRunResponse": {
       verification_run_id: string;
@@ -1290,6 +1302,27 @@ export interface paths {
       };
     };
   };
+  "/generation-runs/{generation_run_id}/cancel": {
+    post: {
+      parameters: {
+        path: {
+          generation_run_id: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["GenerationRunResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
   "/solutions/{solution_version_id}": {
     get: {
       parameters: {
@@ -1442,6 +1475,27 @@ export interface paths {
       };
     };
   };
+  "/verification-runs/{verification_run_id}/cancel": {
+    post: {
+      parameters: {
+        path: {
+          verification_run_id: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["VerificationRunResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
   "/verification-protocols/{protocol_id}": {
     get: {
       parameters: {
@@ -1518,10 +1572,20 @@ export interface paths {
   };
   "/knowledge/bases": {
     get: {
+      parameters: {
+        query: {
+          include_archived?: boolean;
+        };
+      };
       responses: {
         "200": {
           content: {
             "application/json": components['schemas']["KnowledgeBaseResponse"][];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
           };
         };
       };
@@ -1551,6 +1615,9 @@ export interface paths {
       parameters: {
         path: {
           knowledge_base_id: string;
+        };
+        query: {
+          include_archived?: boolean;
         };
       };
       responses: {
@@ -1591,6 +1658,48 @@ export interface paths {
       };
     };
   };
+  "/knowledge/bases/{knowledge_base_id}/archive": {
+    post: {
+      parameters: {
+        path: {
+          knowledge_base_id: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["KnowledgeBaseResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
+  "/knowledge/bases/{knowledge_base_id}/restore": {
+    post: {
+      parameters: {
+        path: {
+          knowledge_base_id: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["KnowledgeBaseResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
   "/knowledge/bases/{knowledge_base_id}/documents": {
     get: {
       parameters: {
@@ -1600,6 +1709,7 @@ export interface paths {
         query: {
           knowledge_version_id?: string | null;
           include_deleted?: boolean;
+          include_archived_base?: boolean;
         };
       };
       responses: {
@@ -1769,6 +1879,7 @@ export interface paths {
       parameters: {
         query: {
           knowledge_base_id?: string | null;
+          include_archived?: boolean;
         };
       };
       responses: {
@@ -1809,6 +1920,9 @@ export interface paths {
       parameters: {
         path: {
           source_id: string;
+        };
+        query: {
+          include_archived?: boolean;
         };
       };
       responses: {
@@ -1870,6 +1984,27 @@ export interface paths {
       };
     };
   };
+  "/knowledge/sources/{source_id}/restore": {
+    post: {
+      parameters: {
+        path: {
+          source_id: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["SourceResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
   "/knowledge/sources/{source_id}/disable": {
     post: {
       parameters: {
@@ -1896,6 +2031,9 @@ export interface paths {
       parameters: {
         path: {
           source_id: string;
+        };
+        query: {
+          include_archived?: boolean;
         };
       };
       responses: {
@@ -2004,6 +2142,9 @@ export interface paths {
       parameters: {
         path: {
           document_id: string;
+        };
+        query: {
+          include_archived?: boolean;
         };
       };
       responses: {
@@ -2218,6 +2359,35 @@ export interface paths {
       };
     };
   };
+  "/knowledge/documents/{document_id}/restore": {
+    post: {
+      parameters: {
+        path: {
+          document_id: string;
+        };
+        query: {
+          reason?: string | null;
+        };
+      };
+      requestBody?: {
+        content: {
+          "application/json": components['schemas']["KnowledgeReindexRequest"] | null;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["DocumentMutationResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
   "/knowledge/notifications": {
     get: {
       parameters: {
@@ -2284,6 +2454,27 @@ export interface paths {
   };
   "/knowledge/update-runs/{update_run_id}": {
     get: {
+      parameters: {
+        path: {
+          update_run_id: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["KnowledgeUpdateRunResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
+  "/knowledge/update-runs/{update_run_id}/cancel": {
+    post: {
       parameters: {
         path: {
           update_run_id: string;

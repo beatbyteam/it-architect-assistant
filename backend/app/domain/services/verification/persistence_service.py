@@ -5,7 +5,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.enums import (
     ProtocolSummaryStatus,
@@ -13,7 +14,10 @@ from app.db.enums import (
     VerificationRunStatus,
 )
 from app.db.models.knowledge import (
+    KnowledgeVersion,
+    KnowledgeVersionDocument,
     NormativeRule,
+    SourceDocument,
 )
 from app.db.models.verification import (
     CheckResult,
@@ -25,14 +29,18 @@ from app.db.repositories.verification import (
     CheckResultRepository,
     VerificationProtocolRepository,
 )
-from app.domain.services.knowledge_basis import build_basis_inventory_for_version_documents
+from app.domain.services.knowledge_basis import resolve_basis_assignment
+from app.domain.services.presenters import clean_display_file_name
 from app.domain.services.publication import PublicationArtifactService
 from app.integrations.verification import (
     VerificationProtocolPayload,
     VerificationProtocolRenderer,
 )
 
-from .document_scope import filter_version_documents, selected_document_ids_from_scope
+from .document_scope import (
+    filter_version_documents_for_scope,
+    normalize_document_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -96,50 +104,7 @@ class VerificationProtocolPersistenceService:
                 )
             )
 
-        knowledge_version = getattr(run, "knowledge_version", None)
-        version_documents = (
-            getattr(knowledge_version, "version_documents", [])
-            if knowledge_version is not None
-            else []
-        )
-        selected_document_ids = selected_document_ids_from_scope(run.scope_snapshot)
-        scoped_version_documents = filter_version_documents(
-            version_documents, selected_document_ids
-        )
-        if selected_document_ids:
-            basis_documents = [
-                VerificationBasisDocument(
-                    verification_protocol_id=protocol.verification_protocol_id,
-                    document_id=getattr(item, "document_id", None),
-                    title=getattr(getattr(item, "document", None), "title", None)
-                    or "Документ без названия",
-                    role_code=getattr(item, "role_code", None) or "reference_only",
-                    version_ref=getattr(getattr(item, "document", None), "version_label", None),
-                    required_flag=bool(getattr(item, "required_flag", False)),
-                    sort_order=index,
-                )
-                for index, item in enumerate(scoped_version_documents, start=1)
-            ]
-        else:
-            basis_inventory = build_basis_inventory_for_version_documents(scoped_version_documents)
-            basis_documents = [
-                VerificationBasisDocument(
-                    verification_protocol_id=protocol.verification_protocol_id,
-                    document_id=basis_item.document_id,
-                    title=basis_item.title,
-                    role_code=basis_item.role_code,
-                    version_ref=basis_item.version_ref,
-                    required_flag=basis_item.required_flag,
-                    sort_order=index,
-                )
-                for index, basis_item in enumerate(
-                    sorted(
-                        basis_inventory.basis_documents,
-                        key=lambda row: ((0 if row.required_flag else 1), row.role_code, row.title),
-                    ),
-                    start=1,
-                )
-            ]
+        basis_documents = self._basis_documents_for_run(protocol, run)
         for basis_document in basis_documents:
             self.session.add(basis_document)
         protocol.status = (
@@ -201,3 +166,60 @@ class VerificationProtocolPersistenceService:
             },
         )
         return protocol, artifact
+
+    def _basis_documents_for_run(
+        self, protocol: VerificationProtocol, run: VerificationRun
+    ) -> list[VerificationBasisDocument]:
+        version_documents = [
+            item
+            for version in self._knowledge_versions_for_run(run)
+            for item in list(getattr(version, "version_documents", []) or [])
+        ]
+        scoped_version_documents = filter_version_documents_for_scope(
+            version_documents,
+            run.scope_snapshot,
+        )
+        basis_documents: list[VerificationBasisDocument] = []
+        for index, item in enumerate(scoped_version_documents, start=1):
+            document = getattr(item, "document", None)
+            role_code, required_flag = resolve_basis_assignment(item)
+            title = clean_display_file_name(getattr(document, "title", None)) or "Документ без названия"
+            basis_documents.append(
+                VerificationBasisDocument(
+                    verification_protocol_id=protocol.verification_protocol_id,
+                    document_id=getattr(item, "document_id", None),
+                    title=title,
+                    role_code=role_code,
+                    version_ref=getattr(document, "version_label", None),
+                    required_flag=bool(required_flag),
+                    sort_order=index,
+                )
+            )
+        return basis_documents
+
+    def _knowledge_versions_for_run(self, run: VerificationRun) -> list[KnowledgeVersion]:
+        scope_snapshot = run.scope_snapshot if isinstance(run.scope_snapshot, dict) else {}
+        version_ids = normalize_document_ids(scope_snapshot.get("knowledge_version_ids") or [])
+        if not version_ids:
+            knowledge_version = getattr(run, "knowledge_version", None)
+            return [knowledge_version] if knowledge_version is not None else []
+
+        statement = (
+            select(KnowledgeVersion)
+            .where(KnowledgeVersion.knowledge_version_id.in_(version_ids))
+            .options(
+                selectinload(KnowledgeVersion.version_documents)
+                .selectinload(KnowledgeVersionDocument.document)
+                .selectinload(SourceDocument.source)
+            )
+        )
+        loaded_versions = list(self.session.scalars(statement))
+        version_by_id = {
+            str(getattr(version, "knowledge_version_id", "") or ""): version
+            for version in loaded_versions
+        }
+        return [
+            version_by_id[version_id]
+            for version_id in version_ids
+            if version_id in version_by_id
+        ]

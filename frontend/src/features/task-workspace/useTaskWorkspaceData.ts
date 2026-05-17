@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   answerClarification,
+  cancelGenerationRun,
   getGenerationRun,
   getSolution,
   getSolutionRendered,
@@ -164,6 +165,21 @@ export function useTaskWorkspaceData(taskId: string) {
     },
   });
 
+  const cancelGenerationMutation = useMutation({
+    mutationFn: () => {
+      if (!effectiveGenerationRunId) {
+        throw new Error('Нет активного запуска подготовки решения для отмены.');
+      }
+      return cancelGenerationRun(effectiveGenerationRunId);
+    },
+    onSuccess: (run) => {
+      setGenerationRunId(run.generation_run_id);
+      queryClient.setQueryData(queryKeys.generationRun(run.generation_run_id), run);
+      queryClient.invalidateQueries({ queryKey: queryKeys.generationRun(run.generation_run_id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.task(taskId) });
+    },
+  });
+
   const verificationMutation = useMutation({
     mutationFn: () => startVerificationRun(solutionId as string),
     onSuccess: (run) => {
@@ -208,6 +224,7 @@ export function useTaskWorkspaceData(taskId: string) {
     answerMutation,
     saveDraftMutation,
     generationMutation,
+    cancelGenerationMutation,
     verificationMutation,
     task: task as NormalizedTaskSnapshot | null,
     openClarifications,

@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import {
   activateKnowledgeVersion,
+  archiveKnowledgeBase,
   archiveSource,
+  cancelKnowledgeUpdateRun,
   createSource,
   disableSource,
   getKnowledgeBase,
@@ -15,13 +17,17 @@ import {
   getUpdateRunStatus,
   getUpdateRuns,
   removeKnowledgeDocument,
+  restoreKnowledgeBase,
+  restoreKnowledgeDocument,
+  restoreSource,
   selectKnowledgeBase,
   syncKnowledgeBase,
   updateSource,
   uploadAndIngestKnowledgeFiles,
 } from '../shared/api/knowledge';
+import { queryKeys } from '../shared/api/queryKeys';
 import { getTasks } from '../shared/api/tasks';
-import { formatDateTime, formatSeconds, knowledgeBaseKindLabel, refreshPolicyLabel, sourceTypeLabel, titleStatus } from '../shared/lib/format';
+import { cleanDisplayFileName, formatDateTime, formatSeconds, knowledgeBaseKindLabel, refreshPolicyLabel, sourceTypeLabel, titleStatus, userErrorText } from '../shared/lib/format';
 import { GENERATION_SELECTION_LOCK_REASON, hasRunningGeneration } from '../entities/knowledge/generationSelectionLock';
 import { KNOWLEDGE_REFRESH_POLICY_OPTIONS, allowedSourceStatuses, selectableKnowledgeVersions } from '../entities/knowledge/policies';
 import {
@@ -41,13 +47,20 @@ import type { KnowledgeBase, KnowledgeBaseDocument, KnowledgeNotification, Knowl
 
 type SourceDraft = { refresh_policy: string; status: string };
 type KnowledgeBaseDocumentWithProcessing = KnowledgeBaseDocument & {
+  source_status?: string | null;
   processing_status?: string | null;
   processing_error_code?: string | null;
   processing_error_message?: string | null;
 };
+type DocumentActionNotice = {
+  action: 'archive' | 'restore';
+  documentId: string;
+  updateRunId?: string | null;
+};
 
 const DASHBOARD_KNOWLEDGE_BASES_KEY = ['dashboard-knowledge-bases'] as const;
 const FINAL_DOCUMENT_PROCESSING_STATUSES = new Set(['extracted', 'reused', 'skipped']);
+const KNOWLEDGE_UPDATE_TERMINAL_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'canceled']);
 const DEFAULT_UPLOAD_SOURCE_DRAFT: SourceDraft = { refresh_policy: 'manual', status: 'active' };
 const ACTIVE_STAGE_OPERATION_LABELS: Record<string, string> = {
   chunking_prepared: 'Подготовка чанков',
@@ -61,6 +74,15 @@ function isKnowledgeRunInProgress(run?: KnowledgeUpdateRun | null) {
   return Boolean(run && !isKnowledgeRunTerminal(run.status));
 }
 
+function isKnowledgeBaseDraft(base?: KnowledgeBase | null) {
+  return Boolean(base && !base.active_knowledge_version_id && !base.active_version_no);
+}
+
+function isKnowledgeBaseUpdating(base?: KnowledgeBase | null, run?: KnowledgeUpdateRun | null) {
+  return isKnowledgeRunInProgress(run)
+    || Boolean(base?.latest_sync_status && !KNOWLEDGE_UPDATE_TERMINAL_STATUSES.has(base.latest_sync_status));
+}
+
 function toSourceDraft(source: Source): SourceDraft {
   return {
     refresh_policy: source.refresh_policy ?? 'monthly',
@@ -69,22 +91,72 @@ function toSourceDraft(source: Source): SourceDraft {
 }
 
 function documentLifecycleStatus(document: KnowledgeBaseDocumentWithProcessing) {
-  if (document.present_in_version === false || document.delta_kind === 'deleted') return 'deleted';
-  if (document.document_status === 'archived') return 'deleted';
+  if (document.document_status === 'archived' || document.source_status === 'archived') return 'deleted';
+  if (document.source_status === 'disabled') return 'disabled';
   const processingStatus = document.processing_status ?? null;
   if (document.processing_error_code === 'CANCELED_BY_USER') return 'canceled';
   if (processingStatus === 'failed') return 'failed';
   if (processingStatus && !FINAL_DOCUMENT_PROCESSING_STATUSES.has(processingStatus)) return 'running';
   if (processingStatus === 'extracted' || processingStatus === 'reused') return 'parsed';
+  if (document.present_in_version === false || document.delta_kind === 'deleted') return 'pending_update';
   return document.document_status ?? null;
 }
 
 function isRemovedFromKnowledgeBase(document: KnowledgeBaseDocument) {
   return (
-    document.present_in_version === false
-    || document.delta_kind === 'deleted'
-    || document.document_status === 'archived'
+    document.document_status === 'archived'
+    || document.source_status === 'archived'
+    || (
+      (document.present_in_version === false || document.delta_kind === 'deleted')
+      && document.source_status !== 'disabled'
+    )
   );
+}
+
+function canRestoreDocumentFromArchive(document: KnowledgeBaseDocument) {
+  return document.document_status === 'archived' || document.source_status === 'archived';
+}
+
+function documentAvailabilityHint(document: KnowledgeBaseDocumentWithProcessing) {
+  if (document.document_status === 'archived' || document.source_status === 'archived') {
+    return 'Документ сейчас вне активного состава версии. После разархивации запустите обновление базы, чтобы вернуть его в новую версию знаний.';
+  }
+  if (document.source_status === 'disabled') {
+    return 'Источник документа отключён. Чтобы снова использовать документ, включите источник и запустите обновление базы.';
+  }
+  if (document.present_in_version === false || document.delta_kind === 'deleted') {
+    return 'Документ возвращён, но текущая активная версия ещё собрана без него. Запустите обновление базы, чтобы включить его в новую версию знаний.';
+  }
+  return null;
+}
+
+function documentDisplayTitle(document: KnowledgeBaseDocument) {
+  return cleanDisplayFileName(document.title) ?? cleanDisplayFileName(document.uri) ?? 'Документ';
+}
+
+function documentDisplayUri(document: KnowledgeBaseDocument) {
+  if (!document.uri) return '—';
+  if (/^file:\/\//i.test(document.uri)) return cleanDisplayFileName(document.uri) ?? document.uri;
+  return document.uri;
+}
+
+function dedupeDocuments(documents: KnowledgeBaseDocument[]) {
+  const byKey = new Map<string, KnowledgeBaseDocument>();
+
+  for (const document of documents) {
+    const key = document.document_id
+      ?? `${document.source_id ?? ''}:${documentDisplayTitle(document)}:${document.checksum ?? document.uri ?? ''}`;
+    const current = byKey.get(key);
+    if (!current) {
+      byKey.set(key, document);
+      continue;
+    }
+    if (!current.present_in_version && document.present_in_version) {
+      byKey.set(key, document);
+    }
+  }
+
+  return Array.from(byKey.values());
 }
 
 function progressDetail(record: Record<string, unknown>, completedKey: string, totalKey: string, label: string) {
@@ -144,11 +216,12 @@ export function KnowledgeBaseDetailsPage() {
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadSourceDefaults, setUploadSourceDefaults] = useState<SourceDraft>(DEFAULT_UPLOAD_SOURCE_DRAFT);
   const [uploadRunId, setUploadRunId] = useState<string | null>(null);
+  const [documentActionNotice, setDocumentActionNotice] = useState<DocumentActionNotice | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   const baseQuery = useQuery({
     queryKey: ['knowledge-base', knowledgeBaseId],
-    queryFn: ({ signal }) => getKnowledgeBase(knowledgeBaseId, { signal }),
+    queryFn: ({ signal }) => getKnowledgeBase(knowledgeBaseId, { signal, include_archived: true }),
     enabled: Boolean(knowledgeBaseId),
     refetchInterval: 5_000,
   });
@@ -161,7 +234,7 @@ export function KnowledgeBaseDetailsPage() {
   });
   const sourcesQuery = useQuery({
     queryKey: ['knowledge-base-sources', knowledgeBaseId],
-    queryFn: ({ signal }) => getSources(knowledgeBaseId, { signal }),
+    queryFn: ({ signal }) => getSources(knowledgeBaseId, { signal, include_archived: true }),
     enabled: Boolean(knowledgeBaseId),
     staleTime: 10_000,
   });
@@ -191,7 +264,7 @@ export function KnowledgeBaseDetailsPage() {
   });
   const documentsQuery = useQuery({
     queryKey: ['knowledge-base-documents', knowledgeBaseId, documentViewVersionId],
-    queryFn: ({ signal }) => getKnowledgeBaseDocuments(knowledgeBaseId, { knowledge_version_id: documentViewVersionId || undefined, include_deleted: true, signal }),
+    queryFn: ({ signal }) => getKnowledgeBaseDocuments(knowledgeBaseId, { knowledge_version_id: documentViewVersionId || undefined, include_deleted: true, include_archived_base: true, signal }),
     enabled: Boolean(knowledgeBaseId),
     staleTime: 5_000,
     refetchInterval: 5_000,
@@ -204,6 +277,8 @@ export function KnowledgeBaseDetailsPage() {
   });
 
   const base = baseQuery.data as KnowledgeBase | undefined;
+  const isArchivedBase = base?.status === 'archived';
+  const isDisabledBase = base?.status === 'disabled';
   const generationSelectionLocked = hasRunningGeneration(generationLockQuery.data);
   const versions = versionsQuery.data ?? [];
   const selectableVersions = useMemo(() => selectableKnowledgeVersions(versions), [versions]);
@@ -296,6 +371,30 @@ export function KnowledgeBaseDetailsPage() {
     onSuccess: invalidate,
   });
 
+  const archiveBaseMutation = useMutation({
+    mutationFn: () => archiveKnowledgeBase(knowledgeBaseId),
+    onSuccess: invalidate,
+  });
+
+  const restoreBaseMutation = useMutation({
+    mutationFn: () => restoreKnowledgeBase(knowledgeBaseId),
+    onSuccess: invalidate,
+  });
+
+  const cancelUpdateMutation = useMutation({
+    mutationFn: (updateRunId: string) => cancelKnowledgeUpdateRun(updateRunId),
+    onSuccess: (run) => {
+      queryClient.setQueryData(['knowledge-base-run-status', run.update_run_id], run);
+      queryClient.setQueryData<KnowledgeUpdateRun[] | undefined>(
+        ['knowledge-base-runs', knowledgeBaseId],
+        (current) => current?.map((item) => (item.update_run_id === run.update_run_id ? run : item)),
+      );
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ['knowledge-base-run-status', run.update_run_id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.operationDetail(run.update_run_id) });
+    },
+  });
+
   const selectMutation = useMutation({
     mutationFn: (knowledgeVersionId?: string | null) => selectKnowledgeBase(knowledgeBaseId, knowledgeVersionId ?? null),
     onSuccess: () => {
@@ -310,7 +409,7 @@ export function KnowledgeBaseDetailsPage() {
   });
 
   const sourceMutation = useMutation({
-    mutationFn: () => createSource({ knowledge_base_id: knowledgeBaseId, source_type: newSourceType, name: newSourceName.trim(), base_uri: newSourceUri.trim(), criticality: 'optional' }),
+    mutationFn: () => createSource({ knowledge_base_id: knowledgeBaseId, source_type: newSourceType, name: newSourceName.trim() || undefined, base_uri: newSourceUri.trim(), criticality: 'optional' }),
     onSuccess: () => {
       setNewSourceName('');
       setNewSourceUri('');
@@ -320,6 +419,9 @@ export function KnowledgeBaseDetailsPage() {
 
   const sourceSettingsMutation = useMutation({
     mutationFn: async ({ sourceId, refresh_policy, status }: { sourceId: string; refresh_policy: string; status?: string }) => {
+      if (status === 'active_from_archive') {
+        return restoreSource(sourceId);
+      }
       if (status === 'archived') {
         await updateSource(sourceId, { refresh_policy });
         return archiveSource(sourceId);
@@ -368,15 +470,32 @@ export function KnowledgeBaseDetailsPage() {
 
   const removeMutation = useMutation({
     mutationFn: (documentId: string) => removeKnowledgeDocument(documentId, { reason: 'removed_from_knowledge_base' }),
-    onSuccess: invalidate,
+    onSuccess: (data, documentId) => {
+      setDocumentActionNotice({
+        action: 'archive',
+        documentId,
+        updateRunId: data.update_run?.update_run_id ?? null,
+      });
+      invalidate();
+    },
+  });
+
+  const restoreDocumentMutation = useMutation({
+    mutationFn: (documentId: string) => restoreKnowledgeDocument(documentId, { reason: 'restore_to_knowledge_base' }),
+    onSuccess: (_data, documentId) => {
+      setDocumentActionNotice({ action: 'restore', documentId });
+      invalidate();
+    },
   });
 
   const latestRun = (runsQuery.data ?? [])[0] as KnowledgeUpdateRun | undefined;
   const syncStartedRun = syncMutation.data as KnowledgeUpdateRun | undefined;
   const updateCardRun = latestRun ?? syncStartedRun;
+  const activeUpdateRun = isKnowledgeRunInProgress(updateCardRun) ? updateCardRun : null;
   const updateRunLinkId = updateCardRun?.update_run_id ?? base?.latest_sync_run_id ?? null;
   const updateCardRunDetails = runActiveStageDetails(updateCardRun, nowMs);
   const trackedUploadRun = uploadStatusQuery.data ?? (uploadRunId ? (runsQuery.data ?? []).find((run: KnowledgeUpdateRun) => run.update_run_id === uploadRunId) : undefined);
+  const activeUploadRun = isKnowledgeRunInProgress(trackedUploadRun) ? trackedUploadRun : null;
   const uploadLearningInProgress = isKnowledgeRunInProgress(trackedUploadRun);
   const trackedUploadStage = knowledgeRunStage(trackedUploadRun);
   const trackedUploadQuality = qualitySummaryOf(trackedUploadRun);
@@ -408,6 +527,41 @@ export function KnowledgeBaseDetailsPage() {
     [activeDocumentsVersionId, versions],
   );
   const isViewingActiveDocumentsVersion = !documentViewVersionId || documentViewVersionId === (base?.active_knowledge_version_id ?? '');
+  const displayedDocuments = useMemo(
+    () => dedupeDocuments((documentsQuery.data ?? []) as KnowledgeBaseDocument[]),
+    [documentsQuery.data],
+  );
+
+  useEffect(() => {
+    setDocumentActionNotice(null);
+  }, [documentViewVersionId]);
+
+  useEffect(() => {
+    if (!documentActionNotice) return undefined;
+    if (documentActionNotice.action === 'archive' && documentActionNotice.updateRunId) {
+      const matchingRun = (runsQuery.data ?? []).find((run: KnowledgeUpdateRun) => run.update_run_id === documentActionNotice.updateRunId);
+      if (matchingRun && isKnowledgeRunTerminal(matchingRun.status)) {
+        setDocumentActionNotice(null);
+      }
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDocumentActionNotice((current) => (
+        current?.action === documentActionNotice.action && current.documentId === documentActionNotice.documentId
+          ? null
+          : current
+      ));
+    }, 8_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [documentActionNotice, runsQuery.data]);
+
+  const cancelKnowledgeRun = (run?: KnowledgeUpdateRun | null) => {
+    if (!run) return;
+    if (window.confirm('Остановить текущее обновление базы знаний? Уже активная версия базы не будет изменена.')) {
+      cancelUpdateMutation.mutate(run.update_run_id);
+    }
+  };
 
   if (baseQuery.isLoading) {
     return <LoadingState message="Открываю карточку базы знаний…" />;
@@ -421,7 +575,37 @@ export function KnowledgeBaseDetailsPage() {
       <PageHeader
         title={base.name}
         subtitle="Настройки источников, версии, состав документов, история синхронизаций и ошибки последнего обновления."
-        actions={<Link to="/knowledge" className="button">Назад в реестр</Link>}
+        actions={(
+          <>
+            {isKnowledgeBaseDraft(base) ? <Badge value="draft" /> : null}
+            {isKnowledgeBaseUpdating(base, updateCardRun) ? <Badge value="updating" /> : null}
+            {isDisabledBase ? <Badge value="disabled" /> : null}
+            {isArchivedBase ? <Badge value="archived" /> : null}
+            {!isSystemBase && !isArchivedBase ? (
+              <Button
+                onClick={() => {
+                  if (window.confirm(`Архивировать базу «${base.name}»? Она исчезнет из рабочих списков, но останется в архиве.`)) {
+                    archiveBaseMutation.mutate();
+                  }
+                }}
+                disabled={archiveBaseMutation.isPending || Boolean(activeUpdateRun)}
+              >
+                {archiveBaseMutation.isPending ? 'Архивирую…' : 'Архивировать базу'}
+              </Button>
+            ) : null}
+            {!isSystemBase && isArchivedBase ? (
+              <Button
+                primary
+                onClick={() => restoreBaseMutation.mutate()}
+                disabled={restoreBaseMutation.isPending}
+              >
+                {restoreBaseMutation.isPending ? 'Возвращаю…' : 'Разархивировать базу'}
+              </Button>
+            ) : null}
+            <Link to="/knowledge" className="button">Назад в реестр</Link>
+            <Link to="/knowledge/archive" className="button">Архив</Link>
+          </>
+        )}
       />
 
       <div className="grid grid-4">
@@ -439,7 +623,18 @@ export function KnowledgeBaseDetailsPage() {
       {!hasGenerationVersion ? (
         <Banner tone="warning">У выбранной базы пока нет активной версии знаний. Подготовка решений станет доступна после активации проверенной версии.</Banner>
       ) : null}
-      {isSystemBase ? <Banner tone="info">Это системная baseline-база. Она всегда доступна в перечне баз знаний, защищена от пользовательских изменений состава документов.</Banner> : null}
+      {isSystemBase ? <Banner tone="info">Это системная база. Она всегда доступна в перечне баз знаний, защищена от пользовательских изменений состава документов.</Banner> : null}
+      {isArchivedBase ? (
+        <Banner tone="warning">База находится в архиве: она скрыта из рабочих списков и не используется для подготовки решений. Разархивируйте базу, если снова хотите обновлять её или выбирать для генерации.</Banner>
+      ) : null}
+      {isDisabledBase ? (
+        <Banner tone="warning">База отключена: у неё нет активных источников, поэтому она не должна использоваться для подготовки решений до включения источника.</Banner>
+      ) : null}
+      {!isArchivedBase && (base.source_count ?? 0) > 0 && (base.active_source_count ?? 0) === 0 ? (
+        <Banner tone="warning">У базы нет активных источников: документы не будут попадать в новые версии знаний, пока хотя бы один источник не будет включён.</Banner>
+      ) : null}
+      {archiveBaseMutation.isError ? <ErrorNotice error={archiveBaseMutation.error} fallback="Не удалось архивировать базу знаний." /> : null}
+      {restoreBaseMutation.isError ? <ErrorNotice error={restoreBaseMutation.error} fallback="Не удалось разархивировать базу знаний." /> : null}
 
       <div className="grid grid-2">
         <Card title="Выбор базы для подготовки решений" subtitle="Можно выбрать базу и зафиксировать конкретную версию для следующих запусков подготовки решения.">
@@ -449,7 +644,7 @@ export function KnowledgeBaseDetailsPage() {
               <Select value={selectedGenerationVersionId} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
                 setGenerationVersionId(event.target.value);
                 setGenerationVersionDirty(true);
-              }} disabled={isSystemBase || generationSelectionLocked || selectMutation.isPending}>
+              }} disabled={isSystemBase || isArchivedBase || isDisabledBase || generationSelectionLocked || selectMutation.isPending}>
                 <option value="">Активная версия базы</option>
                 {selectableVersions.map((version: KnowledgeVersion) => (
                   <option key={version.knowledge_version_id} value={version.knowledge_version_id}>{version.version_no} · {formatDateTime(version.created_at)}</option>
@@ -459,7 +654,7 @@ export function KnowledgeBaseDetailsPage() {
             {selectedGenerationVersion ? <div className="muted small">Для подготовки решений будет использоваться версия {selectedGenerationVersion.version_no} · статус {titleStatus(selectedGenerationVersion.status)}.</div> : null}
             {selectMutation.isError ? <ErrorNotice error={selectMutation.error} fallback="Не удалось выбрать базу для подготовки решений." /> : null}
             <div className="actions">
-              <Button primary onClick={() => selectMutation.mutate(isSystemBase ? null : selectedGenerationVersionId || null)} disabled={selectMutation.isPending || generationSelectionLocked}>
+              <Button primary onClick={() => selectMutation.mutate(isSystemBase ? null : selectedGenerationVersionId || null)} disabled={selectMutation.isPending || isArchivedBase || isDisabledBase || generationSelectionLocked}>
                 {selectMutation.isPending ? 'Сохраняю…' : 'Выбрать для подготовки решений'}
               </Button>
             </div>
@@ -480,9 +675,15 @@ export function KnowledgeBaseDetailsPage() {
               </Banner>
             ) : null}
             {syncMutation.isError ? <ErrorNotice error={syncMutation.error} fallback="Не удалось запустить синхронизацию." /> : null}
+            {cancelUpdateMutation.isError ? <ErrorNotice error={cancelUpdateMutation.error} fallback="Не удалось остановить обновление базы знаний." /> : null}
             <div className="actions">
-              <Button primary onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>{syncMutation.isPending ? 'Запускаю…' : 'Обновить сейчас'}</Button>
+              <Button primary onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending || isArchivedBase || isDisabledBase || Boolean(activeUpdateRun)}>{syncMutation.isPending ? 'Запускаю…' : 'Обновить сейчас'}</Button>
               {updateRunLinkId ? <Link className="button" to={`/operations/${updateRunLinkId}`}>Ход событий</Link> : null}
+              {activeUpdateRun ? (
+                <Button onClick={() => cancelKnowledgeRun(activeUpdateRun)} disabled={cancelUpdateMutation.isPending}>
+                  {cancelUpdateMutation.isPending ? 'Останавливаю…' : 'Остановить обновление'}
+                </Button>
+              ) : null}
             </div>
           </div>
         </Card>
@@ -506,7 +707,7 @@ export function KnowledgeBaseDetailsPage() {
                     <div className="muted small">{sourceTypeLabel(source.source_type)} · {source.base_uri ?? 'Адрес источника не задан'}</div>
                     <div className="actions" style={{ marginTop: 8 }}>
                       {source.base_uri && /^https?:\/\//i.test(source.base_uri) ? <a className="button" href={source.base_uri} target="_blank" rel="noreferrer">Открыть источник</a> : null}
-                      {!isSystemBase && source.status !== 'archived' ? (
+                      {!isSystemBase && !isArchivedBase && source.status !== 'archived' ? (
                         <Button
                           onClick={() => {
                             if (window.confirm(`Архивировать источник «${source.name}»? Он будет исключен из следующих версий базы знаний.`)) {
@@ -522,11 +723,23 @@ export function KnowledgeBaseDetailsPage() {
                           Архивировать
                         </Button>
                       ) : null}
+                      {!isSystemBase && !isArchivedBase && source.status === 'archived' ? (
+                        <Button
+                          onClick={() => sourceSettingsMutation.mutate({
+                            sourceId: source.source_id,
+                            refresh_policy: draft.refresh_policy,
+                            status: 'active_from_archive',
+                          })}
+                          disabled={sourceSettingsMutation.isPending}
+                        >
+                          Разархивировать источник
+                        </Button>
+                      ) : null}
                     </div>
                     <div className="muted small">Документов: {source.document_count ?? 0} · обнаружено: {formatDateTime(source.last_discovered_at)} · последнее обновление: {formatDateTime(source.last_sync_time)}</div>
                     <div className="muted small">Следующее обновление: {formatDateTime(source.next_sync_time)} · политика: {refreshPolicyLabel(source.refresh_policy)}</div>
-                    {source.last_error_message ? <div className="muted small">Последняя ошибка: {source.last_error_message}</div> : null}
-                    {!isSystemBase ? (
+                    {source.last_error_message ? <div className="muted small">Последняя ошибка: {userErrorText(source.last_error_message)}</div> : null}
+                    {!isSystemBase && !isArchivedBase ? (
                       <div className="grid grid-2" style={{ marginTop: 12 }}>
                         <FormRow label="Политика обновления">
                           <Select value={draft.refresh_policy} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
@@ -573,7 +786,7 @@ export function KnowledgeBaseDetailsPage() {
           ) : <EmptyState title="Источников пока нет" />}
           {sourceSettingsMutation.isError ? <ErrorNotice error={sourceSettingsMutation.error} fallback="Не удалось сохранить настройки источника." /> : null}
 
-          {!isSystemBase ? (
+          {!isSystemBase && !isArchivedBase ? (
             <div className="stack compact" style={{ marginTop: 16 }}>
               <FormRow label="Новый источник">
                 <Input value={newSourceName} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceName(event.target.value)} placeholder="Можно оставить пустым" />
@@ -589,11 +802,11 @@ export function KnowledgeBaseDetailsPage() {
                 </Button>
               </div>
             </div>
-          ) : null}
+          ) : isArchivedBase ? <EmptyState title="База в архиве" description="Разархивируйте базу, чтобы добавлять и настраивать источники." /> : null}
         </Card>
 
         <Card title="Дозагрузка документа" subtitle="Добавляет документ в базу и запускает его обработку в новой версии знаний.">
-          {isSystemBase ? <EmptyState title="Для системной базы дозагрузка через UI запрещена" /> : (
+          {isSystemBase ? <EmptyState title="Для системной базы дозагрузка через UI запрещена" /> : isArchivedBase ? <EmptyState title="База в архиве" description="Разархивируйте базу, чтобы добавлять документы." /> : (
             <div className="stack compact">
               <FormRow label="Название в системе">
                 <Input value={uploadTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadTitle(event.target.value)} placeholder="Можно оставить пустым" />
@@ -652,6 +865,11 @@ export function KnowledgeBaseDetailsPage() {
                 <Button primary onClick={() => uploadMutation.mutate()} disabled={uploadMutation.isPending || uploadLearningInProgress || uploadFiles.length === 0 || !uploadSourceReady}>
                   {uploadMutation.isPending ? 'Загружаю файл…' : uploadLearningInProgress ? 'База изучает документ…' : 'Дозагрузить и запустить обучение'}
                 </Button>
+                {activeUploadRun ? (
+                  <Button onClick={() => cancelKnowledgeRun(activeUploadRun)} disabled={cancelUpdateMutation.isPending}>
+                    {cancelUpdateMutation.isPending ? 'Останавливаю…' : 'Остановить обновление'}
+                  </Button>
+                ) : null}
               </div>
             </div>
           )}
@@ -683,7 +901,7 @@ export function KnowledgeBaseDetailsPage() {
                       <Button onClick={() => setDocumentViewVersionId(version.knowledge_version_id)}>Показать состав</Button>
                       <Button onClick={() => {
                         if (window.confirm(`Активировать версию ${version.version_no}?`)) activateMutation.mutate(version.knowledge_version_id);
-                      }} disabled={!canActivate || activateMutation.isPending || generationSelectionLocked}>Активировать</Button>
+                      }} disabled={!canActivate || activateMutation.isPending || isArchivedBase || isDisabledBase || generationSelectionLocked}>Активировать</Button>
                     </div>
                   </div>
                 );
@@ -714,6 +932,11 @@ export function KnowledgeBaseDetailsPage() {
                     </div>
                     <div className="actions">
                       <Link className="button" to={`/operations/${run.update_run_id}`}>Ход обновления</Link>
+                      {isKnowledgeRunInProgress(run) ? (
+                        <Button onClick={() => cancelKnowledgeRun(run)} disabled={cancelUpdateMutation.isPending}>
+                          {cancelUpdateMutation.isPending ? 'Останавливаю…' : 'Остановить обновление'}
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -723,12 +946,25 @@ export function KnowledgeBaseDetailsPage() {
         </Card>
       </div>
 
-      <Card title="Состав выбранной версии" subtitle="Документы активной или явно выбранной версии. Удалённые материалы остаются в списке только как история изменений и помечаются отдельно.">
-        {removeMutation.isError ? <ErrorNotice error={removeMutation.error} fallback="Не удалось удалить документ из базы знаний." /> : null}
-        {removeMutation.isSuccess && removeMutation.data?.update_run ? (
+      <Card title="Состав выбранной версии" subtitle="Документы активной или явно выбранной версии. Архивные материалы остаются в истории и могут быть возвращены в источник перед следующим обновлением базы.">
+        {removeMutation.isError ? <ErrorNotice error={removeMutation.error} fallback="Не удалось архивировать документ." /> : null}
+        {restoreDocumentMutation.isError ? <ErrorNotice error={restoreDocumentMutation.error} fallback="Не удалось разархивировать документ." /> : null}
+        {documentActionNotice?.action === 'archive' ? (
           <Banner tone="info">
-            <strong>Документ помечен удалённым.</strong>
-            <div>Запущено обновление базы; после подготовки новой версии он будет исключён из актуального состава.</div>
+            <strong>Документ отправлен в архив.</strong>
+            <div>Запущено обновление базы; после подготовки новой версии он будет исключён из актуального состава, но останется доступен в архиве.</div>
+            <div className="actions" style={{ marginTop: 8 }}>
+              <Button type="button" onClick={() => setDocumentActionNotice(null)}>Скрыть</Button>
+            </div>
+          </Banner>
+        ) : null}
+        {documentActionNotice?.action === 'restore' ? (
+          <Banner tone="warning">
+            <strong>Документ возвращён из архива.</strong>
+            <div>Чтобы он снова вошёл в активную версию знаний, запустите обновление базы.</div>
+            <div className="actions" style={{ marginTop: 8 }}>
+              <Button type="button" onClick={() => setDocumentActionNotice(null)}>Скрыть</Button>
+            </div>
           </Banner>
         ) : null}
         <div className="actions between" style={{ marginBottom: 12 }}>
@@ -738,37 +974,53 @@ export function KnowledgeBaseDetailsPage() {
             {versions.map((version: KnowledgeVersion) => <option key={version.knowledge_version_id} value={version.knowledge_version_id}>{version.version_no}</option>)}
           </Select>
         </div>
-        {documentsQuery.isLoading ? <LoadingState message="Загружаю состав версии…" /> : documentsQuery.isError ? <ErrorNotice error={documentsQuery.error} fallback="Не удалось загрузить состав версии." /> : (documentsQuery.data ?? []).length === 0 ? <EmptyState title="В выбранной версии нет документов" /> : (
+        {documentsQuery.isLoading ? <LoadingState message="Загружаю состав версии…" /> : documentsQuery.isError ? <ErrorNotice error={documentsQuery.error} fallback="Не удалось загрузить состав версии." /> : displayedDocuments.length === 0 ? <EmptyState title="В выбранной версии нет документов" /> : (
           <div className="timeline">
-            {(documentsQuery.data ?? []).map((document: KnowledgeBaseDocument) => {
+            {displayedDocuments.map((document: KnowledgeBaseDocument) => {
               const documentWithProcessing = document as KnowledgeBaseDocumentWithProcessing;
               const lifecycleStatus = documentLifecycleStatus(documentWithProcessing);
               const removedFromKnowledgeBase = isRemovedFromKnowledgeBase(document);
+              const availabilityHint = documentAvailabilityHint(documentWithProcessing);
+              const displayTitle = documentDisplayTitle(document);
               const canRemoveDocument = !isSystemBase
+                && !isArchivedBase
                 && isViewingActiveDocumentsVersion
                 && Boolean(document.document_id)
                 && Boolean(document.present_in_version)
                 && !removedFromKnowledgeBase;
+              const canRestoreDocument = !isSystemBase
+                && !isArchivedBase
+                && isViewingActiveDocumentsVersion
+                && Boolean(document.document_id)
+                && canRestoreDocumentFromArchive(document);
               return (
                 <div className="timeline-item" key={`${document.document_id ?? document.uri}:${document.delta_kind ?? 'present'}`}>
                   <div className="actions between">
-                    <strong>{document.title}</strong>
+                    <strong>{displayTitle}</strong>
                     <div className="actions">
                       {document.delta_kind ? <Badge value={document.delta_kind} /> : null}
                       {lifecycleStatus ? <Badge value={lifecycleStatus} /> : null}
                     </div>
                   </div>
                   <div className="muted small">Источник: {document.source_name ?? '—'} · тип: {document.document_type ?? '—'} · роль: {document.role_code ?? 'reference_only'}</div>
-                  <div className="muted small">Путь или URL: {document.uri ?? '—'}</div>
+                  <div className="muted small">Файл или URL: {documentDisplayUri(document)}</div>
+                  {availabilityHint ? (
+                    <div className="muted small">{availabilityHint}</div>
+                  ) : null}
                   {documentWithProcessing.processing_error_message ? (
-                    <div className="muted small">Ошибка обработки: {documentWithProcessing.processing_error_message}</div>
+                    <div className="muted small">Ошибка обработки: {userErrorText(documentWithProcessing.processing_error_message)}</div>
                   ) : null}
                   <div className="actions">
                     {document.document_id ? <Link className="button" to={`/knowledge/documents/${document.document_id}?knowledge_version_id=${encodeURIComponent(document.knowledge_version_id)}`}>Открыть документ</Link> : null}
                     {canRemoveDocument ? (
                       <Button onClick={() => {
-                        if (window.confirm(`Удалить документ «${document.title}» из состава базы?`)) removeMutation.mutate(document.document_id as string);
-                      }} disabled={removeMutation.isPending}>Удалить из базы</Button>
+                        if (window.confirm(`Архивировать документ «${displayTitle}» и исключить его из активного состава базы?`)) removeMutation.mutate(document.document_id as string);
+                      }} disabled={removeMutation.isPending}>Архивировать</Button>
+                    ) : null}
+                    {canRestoreDocument ? (
+                      <Button onClick={() => {
+                        if (window.confirm(`Разархивировать документ «${displayTitle}»? После этого нужно будет обновить базу знаний.`)) restoreDocumentMutation.mutate(document.document_id as string);
+                      }} disabled={restoreDocumentMutation.isPending}>Разархивировать</Button>
                     ) : null}
                   </div>
                 </div>
@@ -802,10 +1054,10 @@ export function KnowledgeBaseDetailsPage() {
               {latestFailureItems.map((item: Record<string, unknown>, index: number) => (
                 <div className="timeline-item" key={`${String(item.document_id ?? item.source_id)}:${index}`}>
                   <div className="actions between">
-                    <strong>{String(item.document_title ?? item.source_name ?? 'Источник')}</strong>
+                    <strong>{cleanDisplayFileName(String(item.document_title ?? item.source_name ?? 'Источник')) ?? String(item.document_title ?? item.source_name ?? 'Источник')}</strong>
                     <Badge value="failed" />
                   </div>
-                  <div>{String(item.error_message ?? 'Ошибка обработки')}</div>
+                  <div>{userErrorText(String(item.error_message ?? 'Ошибка обработки'))}</div>
                   <div className="muted small">Этап: {titleStatus(String(item.stage ?? 'failed'))} · код: {String(item.error_code ?? '—')}</div>
                 </div>
               ))}

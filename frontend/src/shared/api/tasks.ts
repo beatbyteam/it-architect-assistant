@@ -57,6 +57,13 @@ export async function getGenerationRun(generationRunId: string, options?: Reques
   return normalizeGenerationRun(await request<GenerationRunResponse>(`/generation-runs/${generationRunId}`, options));
 }
 
+export async function cancelGenerationRun(generationRunId: string) {
+  return normalizeGenerationRun(await request<GenerationRunResponse>(`/generation-runs/${generationRunId}/cancel`, {
+    method: 'POST',
+    body: '{}',
+  }));
+}
+
 export async function getSolution(solutionVersionId: string, options?: RequestOptions) {
   return normalizeSolution(await request<SolutionResponse>(`/solutions/${solutionVersionId}`, options));
 }

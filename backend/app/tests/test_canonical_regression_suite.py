@@ -52,8 +52,13 @@ def test_regression_cases_capture_canonical_or_rejected_structure(case: dict) ->
 
 def test_rulebook_version_is_new_canonical_registry() -> None:
     registry = VerificationRuleRegistry()
-    assert registry.version == "mvp-v4-sectioned-togaf-archimate"
-    assert {rule.code for rule in registry.list_rules()} >= {"VR-STR-06", "VR-NRM-05", "VR-CNS-06"}
+    assert registry.version == "mvp-v5-sectioned-togaf-archimate-nfr"
+    assert {rule.code for rule in registry.list_rules()} >= {
+        "VR-STR-06",
+        "VR-NRM-05",
+        "VR-CNS-06",
+        "VR-NFR-05",
+    }
 
 
 def test_source_code_enforces_canonical_only_section_mode() -> None:

@@ -49,6 +49,59 @@ def test_normalize_pdf_payload_skips_duplicate_and_legal_pages(monkeypatch) -> N
     ]
 
 
+def test_normalize_pdf_payload_skips_toc_and_keeps_content_with_legal_footer(monkeypatch) -> None:
+    class _Page:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def extract_text(self) -> str:
+            return self._text
+
+    content_with_footer = (
+        "Architecture governance defines the architecture board, compliance review, "
+        "stakeholder concerns, business capability map, target architecture, baseline "
+        "architecture, transition architecture, and implementation governance. "
+        * 4
+    ) + "© The Open Group, All Rights Reserved. Evaluation Copy. Not for redistribution"
+
+    class _Reader:
+        def __init__(self, _handle) -> None:
+            self.pages = [
+                _Page("TOGAF Standard Evaluation Copy. © The Open Group, All Rights Reserved. Not for redistribution"),
+                _Page(
+                    "Table of Contents\n"
+                    "1. Architecture Vision . . . . . . . . . . . . . . 1\n"
+                    "2. Business Architecture . . . . . . . . . . . . 5\n"
+                    "3. Data Architecture . . . . . . . . . . . . . . 9\n"
+                    "4. Application Architecture . . . . . . . . . 12\n"
+                    "5. Technology Architecture . . . . . . . . . 18\n"
+                ),
+                _Page(
+                    "6. Opportunities and Solutions . . . . . . . 24\n"
+                    "7. Migration Planning . . . . . . . . . . . . 31\n"
+                    "8. Implementation Governance . . . . . . . 40\n"
+                    "9. Architecture Change Management . . . . 49\n"
+                    "10. Requirements Management . . . . . . . 55\n"
+                    "11. Architecture Repository . . . . . . . . . 63\n"
+                    "12. Architecture Board . . . . . . . . . . . 70\n"
+                    "13. Architecture Compliance . . . . . . . . 78\n"
+                ),
+                _Page(content_with_footer),
+            ]
+
+    monkeypatch.setattr(content_loader, "PdfReader", _Reader)
+
+    payload = normalize_document_payload("togaf.pdf", b"%PDF")
+
+    assert "Architecture governance defines the architecture board" in payload.text
+    assert "Table of Contents" not in payload.text
+    assert payload.metadata["skipped_pages"] == [
+        {"page_number": 1, "reason": "legal_disclaimer"},
+        {"page_number": 2, "reason": "table_of_contents"},
+        {"page_number": 3, "reason": "table_of_contents"},
+    ]
+
+
 def test_normalize_pdf_payload_falls_back_when_parser_requires_optional_crypto(
     monkeypatch,
 ) -> None:

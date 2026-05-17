@@ -30,6 +30,7 @@ backend/var/
 backend/.pytest_cache/
 backend/.coverage
 backend/coverage.xml
+backups/
 
 # Frontend
 node_modules/
@@ -44,6 +45,7 @@ frontend/.vite/
 *.sqlite
 *.sqlite3
 *.db
+*.dump
 
 # Archives and OS/editor files
 *.zip

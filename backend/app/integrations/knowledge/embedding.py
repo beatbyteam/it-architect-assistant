@@ -15,6 +15,7 @@ from app.integrations.openai_compatible import resolve_openai_compatible_endpoin
 
 TOKEN_RE = re.compile(r"[\w\-/\.]+", re.UNICODE)
 DEFAULT_REMOTE_EMBEDDING_BATCH_SIZE = 64
+LOCAL_INFERENCE_PROVIDER_NAMES = {"local_inference", "ollama", "local_openai_compatible"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -430,7 +431,8 @@ class EmbeddingService:
                 dimensions=self.profile.dimensions,
                 diagnostics={"text_count": 0, "mode": "empty"},
             )
-        if self.provider_name in {"statistical", "local"} or len(payloads) <= self.remote_batch_size:
+        effective_batch_size = self._effective_remote_batch_size(payloads)
+        if self.provider_name in {"statistical", "local"} or len(payloads) <= effective_batch_size:
             if progress_callback is not None:
                 progress_callback(
                     {
@@ -459,21 +461,11 @@ class EmbeddingService:
         provider_name = self.provider.provider_name
         model_id = self.profile.model_id
         batch_count = 0
-        total_batches = math.ceil(len(payloads) / self.remote_batch_size)
+        total_batches = math.ceil(len(payloads) / effective_batch_size)
         total_latency_ms = 0.0
         last_diagnostics: dict[str, object] = {}
-        for batch in _batch_items(payloads, self.remote_batch_size):
+        for batch in _batch_items(payloads, effective_batch_size):
             batch_count += 1
-            if progress_callback is not None:
-                progress_callback(
-                    {
-                        "completed_batches": batch_count - 1,
-                        "total_batches": total_batches,
-                        "completed_texts": len(vectors),
-                        "total_texts": len(payloads),
-                        "batch_size": len(batch),
-                    }
-                )
             result = self.provider.encode_texts(batch, dimensions=self.profile.dimensions)
             vectors.extend(result.vectors)
             provider_name = result.provider_name
@@ -489,7 +481,7 @@ class EmbeddingService:
                         "total_batches": total_batches,
                         "completed_texts": len(vectors),
                         "total_texts": len(payloads),
-                        "batch_size": self.remote_batch_size,
+                        "batch_size": effective_batch_size,
                         "last_batch": last_diagnostics,
                     }
                 )
@@ -502,12 +494,25 @@ class EmbeddingService:
             diagnostics={
                 "text_count": len(payloads),
                 "mode": "batched",
-                "batch_size": self.remote_batch_size,
+                "batch_size": effective_batch_size,
                 "batch_count": batch_count,
                 "latency_ms_total": round(total_latency_ms, 2),
                 "last_batch": last_diagnostics,
             },
         )
+
+    def _effective_remote_batch_size(self, payloads: list[str]) -> int:
+        batch_size = self.remote_batch_size
+        if self.provider_name not in LOCAL_INFERENCE_PROVIDER_NAMES:
+            return batch_size
+        if not payloads:
+            return batch_size
+        avg_chars = sum(len(payload) for payload in payloads) / max(len(payloads), 1)
+        if avg_chars >= 6_000:
+            return min(batch_size, 4)
+        if avg_chars >= 3_000:
+            return min(batch_size, 8)
+        return min(batch_size, 16)
 
     def encode_text(self, text: str) -> EmbeddingBatchResult:
         return self.encode_query(text)

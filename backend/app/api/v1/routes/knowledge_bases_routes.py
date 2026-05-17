@@ -36,10 +36,14 @@ router = APIRouter()
 def list_knowledge_bases(
     session: SessionDep,
     principal: PrincipalDep,
+    include_archived: bool = Query(default=False),
     _guard: AuthPrincipal = UserDep,
 ):
     service = KnowledgeBaseService(session)
-    return [KnowledgeBaseResponse.model_validate(item) for item in service.list_payloads(principal)]
+    return [
+        KnowledgeBaseResponse.model_validate(item)
+        for item in service.list_payloads(principal, include_archived=include_archived)
+    ]
 
 
 @router.post(
@@ -59,9 +63,7 @@ def create_knowledge_base(
         description=payload.description,
         principal=principal,
     )
-    return KnowledgeBaseResponse.model_validate(
-        service.get_base_payload(str(base.knowledge_base_id), principal)
-    )
+    return KnowledgeBaseResponse.model_validate(service.build_base_payload(base, principal))
 
 
 @router.get("/bases/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -69,10 +71,15 @@ def get_knowledge_base(
     knowledge_base_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    include_archived: bool = Query(default=False),
     _guard: AuthPrincipal = UserDep,
 ):
     return KnowledgeBaseResponse.model_validate(
-        KnowledgeBaseService(session).get_base_payload(knowledge_base_id, principal)
+        KnowledgeBaseService(session).get_base_payload(
+            knowledge_base_id,
+            principal,
+            include_archived=include_archived,
+        )
     )
 
 
@@ -95,6 +102,38 @@ def update_knowledge_base(
     return KnowledgeBaseResponse.model_validate(service.build_base_payload(base, principal))
 
 
+@router.post("/bases/{knowledge_base_id}/archive", response_model=KnowledgeBaseResponse)
+def archive_knowledge_base(
+    knowledge_base_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+):
+    service = KnowledgeBaseService(session)
+    base = service.archive_user_base(knowledge_base_id, principal)
+    return KnowledgeBaseResponse.model_validate(
+        service.get_base_payload(
+            str(base.knowledge_base_id),
+            principal,
+            include_archived=True,
+        )
+    )
+
+
+@router.post("/bases/{knowledge_base_id}/restore", response_model=KnowledgeBaseResponse)
+def restore_knowledge_base(
+    knowledge_base_id: str,
+    session: SessionDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+):
+    service = KnowledgeBaseService(session)
+    base = service.restore_user_base(knowledge_base_id, principal)
+    return KnowledgeBaseResponse.model_validate(
+        service.get_base_payload(str(base.knowledge_base_id), principal)
+    )
+
+
 @router.get(
     "/bases/{knowledge_base_id}/documents",
     response_model=list[KnowledgeBaseDocumentResponse],
@@ -105,12 +144,14 @@ def list_base_documents(
     principal: PrincipalDep,
     knowledge_version_id: str | None = Query(default=None),
     include_deleted: bool = Query(default=True),
+    include_archived_base: bool = Query(default=False),
     _guard: AuthPrincipal = UserDep,
 ):
     payload = KnowledgeSourceService(session).list_base_document_payloads(
         knowledge_base_id,
         knowledge_version_id=knowledge_version_id,
         include_deleted=include_deleted,
+        include_archived_base=include_archived_base,
         principal=principal,
     )
     return [KnowledgeBaseDocumentResponse.model_validate(item) for item in payload]

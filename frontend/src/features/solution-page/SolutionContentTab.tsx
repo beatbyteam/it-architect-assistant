@@ -1,5 +1,5 @@
 import { Badge, Banner, Card, Panel, StateBox } from '../../shared/ui/components';
-import { architectureBoundaryLabel, solutionSectionLabel } from '../../shared/lib/format';
+import { architectureBoundaryLabel, cleanDisplayFileName, solutionSectionLabel } from '../../shared/lib/format';
 import { sanitizeHtml } from '../../shared/lib/html';
 import type { NormalizedSolution } from '../../shared/api/normalized';
 import type { SolutionSectionAssessment } from '../../types/api';
@@ -59,7 +59,7 @@ export function SolutionContentTab({ solution, renderedHtml, sectionAssessmentMa
                     <ul className="compact-list" style={{ marginTop: 8 }}>
                       {(section.source_refs ?? []).slice(0, 5).map((ref) => (
                         <li key={`${section.section_id ?? section.section_code}-${ref.sort_order ?? ref.fragment_id ?? ref.document_title ?? 'ref'}`}>
-                          {ref.document_title ?? ref.fragment_id ?? 'Источник'} · {ref.role_code ?? 'справочный материал'}
+                          {cleanDisplayFileName(ref.document_title) ?? ref.document_title ?? ref.fragment_id ?? 'Источник'} · {ref.role_code ?? 'справочный материал'}
                           {ref.source_location ? ` · ${ref.source_location}` : ''}
                         </li>
                       ))}

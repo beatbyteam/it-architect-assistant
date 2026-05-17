@@ -582,10 +582,15 @@ def get_document(
     document_id: str,
     session: SessionDep,
     principal: PrincipalDep,
+    include_archived: bool = Query(default=False),
     _guard: AuthPrincipal = UserDep,
 ):
     return SourceDocumentResponse.model_validate(
-        KnowledgeSourceService(session).get_document_payload(document_id, principal)
+        KnowledgeSourceService(session).get_document_payload(
+            document_id,
+            principal,
+            include_archived=include_archived,
+        )
     )
 
 
@@ -776,4 +781,33 @@ def remove_document(
         update_run=KnowledgeUpdateRunResponse.model_validate(
             updater.get_run_response(_resolve_update_run_id(run), principal)
         ),
+    )
+
+
+@router.post("/documents/{document_id}/restore", response_model=DocumentMutationResponse)
+def restore_document(
+    document_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    principal: PrincipalDep,
+    payload: KnowledgeReindexRequest | None = Body(default=None),
+    reason: str | None = Query(default=None),
+    _guard: AuthPrincipal = UserDep,
+):
+    resolved_payload = _resolve_reindex_request(payload, reason=reason)
+    service = KnowledgeSourceService(session, settings)
+    document = service.restore_document(
+        document_id,
+        principal,
+        reason=resolved_payload.reason,
+    )
+    return DocumentMutationResponse(
+        document=SourceDocumentResponse.model_validate(
+            service.get_document_payload(
+                str(document.document_id),
+                principal,
+                include_archived=True,
+            )
+        ),
+        update_run=None,
     )

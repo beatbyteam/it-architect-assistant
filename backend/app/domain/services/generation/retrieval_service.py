@@ -34,6 +34,15 @@ TERMINAL_GENERATION_STATUSES = {
     GenerationRunStatus.CANCELED,
 }
 
+SECTION_RETRIEVAL_FOCUS = {
+    "general_information": "corporate architecture document template TOGAF document structure",
+    "business_architecture": "business processes roles goals capabilities value streams",
+    "data_architecture": "data objects source consumer ownership data exchange",
+    "application_architecture": "application components services APIs integrations interfaces",
+    "technology_architecture": "infrastructure platform Docker PostgreSQL runtime technology standards",
+    "additional_information": "risks constraints assumptions open questions NFR security availability performance monitoring backup",
+}
+
 
 def _fragment_score_value(fragment: RetrievedFragment) -> float:
     score = fragment.score
@@ -45,6 +54,7 @@ class RetrievalService:
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self.session = session
+        self.settings = settings
         self.knowledge_query = KnowledgeQueryService(session, settings)
         self.versions = KnowledgeVersionRepository(session)
 
@@ -72,7 +82,9 @@ class RetrievalService:
                 error_code="KNOWLEDGE_SCOPE_EMPTY",
             )
         merged_fragments: dict[str, RetrievedFragment] = {}
+        section_fragment_ids: dict[str, list[str]] = {}
         diagnostics_list: list[dict[str, Any]] = []
+        section_diagnostics: list[dict[str, Any]] = []
         versions = [self.versions.get_with_documents(version_id) for version_id in requested_ids]
         for version_id in requested_ids:
             result = self.knowledge_query.search_text(
@@ -89,9 +101,51 @@ class RetrievalService:
                     existing
                 ):
                     merged_fragments[fragment.fragment_id] = fragment
-        fragments = sorted(merged_fragments.values(), key=_fragment_score_value, reverse=True)[
-            :limit
-        ]
+            section_limit = max(0, int(self.settings.generation_section_retrieval_limit or 0))
+            if section_limit:
+                for section_code, section_focus in SECTION_RETRIEVAL_FOCUS.items():
+                    section_result = self.knowledge_query.search_text(
+                        query_text=f"{query_text}\nSection focus: {section_focus}",
+                        knowledge_version_id=version_id,
+                        limit=section_limit,
+                        use_case="generation",
+                        section_code=section_code,
+                        principal=principal,
+                    )
+                    section_diagnostics.append(
+                        {
+                            "knowledge_version_id": version_id,
+                            "section_code": section_code,
+                            "selected_fragment_count": len(section_result.fragments),
+                            "top_fragment_ids": [
+                                fragment.fragment_id for fragment in section_result.fragments
+                            ],
+                            "timings_ms": dict(
+                                (section_result.diagnostics or {}).get("timings_ms") or {}
+                            ),
+                            "empty_result": bool(
+                                (section_result.diagnostics or {}).get("empty_result")
+                            ),
+                        }
+                    )
+                    for fragment in section_result.fragments:
+                        fragment.metadata = {
+                            **dict(fragment.metadata or {}),
+                            "generation_section_code": section_code,
+                        }
+                        section_fragment_ids.setdefault(section_code, []).append(
+                            fragment.fragment_id
+                        )
+                        existing = merged_fragments.get(fragment.fragment_id)
+                        if existing is None or _fragment_score_value(fragment) > _fragment_score_value(
+                            existing
+                        ):
+                            merged_fragments[fragment.fragment_id] = fragment
+        fragments = self._select_generation_fragments(
+            merged_fragments=merged_fragments,
+            section_fragment_ids=section_fragment_ids,
+            limit=limit,
+        )
         coverage = self._build_coverage_summary(
             versions=[item for item in versions if item is not None],
             fragments=fragments,
@@ -100,6 +154,16 @@ class RetrievalService:
         diagnostics = {
             "knowledge_version_ids": requested_ids,
             "version_diagnostics": diagnostics_list,
+            "section_retrieval": {
+                "enabled": bool(max(0, int(self.settings.generation_section_retrieval_limit or 0))),
+                "limit_per_section": max(
+                    0, int(self.settings.generation_section_retrieval_limit or 0)
+                ),
+                "sections_with_fragments": sorted(
+                    section for section, ids in section_fragment_ids.items() if ids
+                ),
+                "diagnostics": section_diagnostics,
+            },
             "coverage_summary": coverage,
         }
         diagnostics["coverage_ok"] = self.is_coverage_sufficient(coverage)
@@ -127,6 +191,33 @@ class RetrievalService:
             ],
         }
         return RetrievalResult(fragments=fragments, diagnostics=diagnostics)
+
+    @staticmethod
+    def _select_generation_fragments(
+        *,
+        merged_fragments: dict[str, RetrievedFragment],
+        section_fragment_ids: dict[str, list[str]],
+        limit: int,
+    ) -> list[RetrievedFragment]:
+        selected_ids: list[str] = []
+        seen: set[str] = set()
+        for section_code in SECTION_RETRIEVAL_FOCUS:
+            for fragment_id in section_fragment_ids.get(section_code) or []:
+                if fragment_id in seen or fragment_id not in merged_fragments:
+                    continue
+                selected_ids.append(fragment_id)
+                seen.add(fragment_id)
+                break
+        for fragment in sorted(
+            merged_fragments.values(), key=_fragment_score_value, reverse=True
+        ):
+            if fragment.fragment_id in seen:
+                continue
+            selected_ids.append(fragment.fragment_id)
+            seen.add(fragment.fragment_id)
+            if len(selected_ids) >= limit:
+                break
+        return [merged_fragments[fragment_id] for fragment_id in selected_ids[:limit]]
 
     def is_coverage_sufficient(self, coverage: dict[str, Any]) -> bool:
         if int(coverage.get("retrieved_fragment_count") or 0) < 2:

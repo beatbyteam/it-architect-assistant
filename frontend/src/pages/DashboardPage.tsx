@@ -128,7 +128,7 @@ export function DashboardPage() {
           {tasksQuery.isError ? (
             <ErrorNotice error={tasksQuery.error} fallback="Не удалось загрузить задачи." />
           ) : recentTasks.length === 0 ? (
-            <EmptyState title="Пока нет ни одной задачи" description="Создай первую задачу, чтобы подготовить проект решения." />
+            <EmptyState title="Пока нет ни одной задачи" description="Создайте первую задачу, чтобы подготовить проект решения." />
           ) : (
             <div className="timeline">
               {recentTasks.map((task: TaskListItem) => (

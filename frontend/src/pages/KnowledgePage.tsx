@@ -2,7 +2,7 @@ import { type ChangeEvent, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { createKnowledgeBase, executeScheduledKnowledgeSyncs, getKnowledgeBases, getKnowledgeNotifications, getSources } from '../shared/api/knowledge';
+import { archiveKnowledgeBase, createKnowledgeBase, executeScheduledKnowledgeSyncs, getKnowledgeBases, getKnowledgeNotifications, getSources } from '../shared/api/knowledge';
 import { getOperationMetrics } from '../shared/api/operations';
 import { formatDateTime, formatSeconds, knowledgeBaseKindLabel, sourceTypeLabel, titleStatus } from '../shared/lib/format';
 import { Badge, Banner, Button, Card, EmptyState, ErrorNotice, FormRow, Input, LoadingState, PageHeader, StatCard } from '../shared/ui/components';
@@ -22,6 +22,16 @@ function formatOptionalStatus(value?: string | null) {
 
 function queryValue(value: number | undefined, hasError: boolean) {
   return hasError ? '—' : String(value ?? 0);
+}
+
+const KNOWLEDGE_UPDATE_TERMINAL_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'canceled']);
+
+function isKnowledgeBaseDraft(base: KnowledgeBase) {
+  return !base.active_knowledge_version_id && !base.active_version_no;
+}
+
+function isKnowledgeBaseUpdating(base: KnowledgeBase) {
+  return Boolean(base.latest_sync_status && !KNOWLEDGE_UPDATE_TERMINAL_STATUSES.has(base.latest_sync_status));
 }
 
 export function KnowledgePage() {
@@ -54,6 +64,15 @@ export function KnowledgePage() {
     },
   });
 
+  const archiveBaseMutation = useMutation({
+    mutationFn: (knowledgeBaseId: string) => archiveKnowledgeBase(knowledgeBaseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['knowledge-bases'] });
+      queryClient.invalidateQueries({ queryKey: ['knowledge-bases-selector'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-knowledge-bases'] });
+    },
+  });
+
   const sourcesByBase = useMemo(() => {
     const map = new Map<string, Source[]>();
     for (const source of (sourcesQuery.data ?? [])) {
@@ -77,7 +96,12 @@ export function KnowledgePage() {
       <PageHeader
         title="Базы знаний"
         subtitle="Управление optional baseline, пользовательскими базами, источниками, версиями и ходом обновлений."
-        actions={<Link to="/operations" className="button">Открыть журнал</Link>}
+        actions={(
+          <>
+            <Link to="/knowledge/archive" className="button">Архив</Link>
+            <Link to="/operations" className="button">Открыть журнал</Link>
+          </>
+        )}
       />
 
       {basesQuery.isLoading ? <LoadingState message="Загружаю базы знаний…" /> : null}
@@ -150,6 +174,8 @@ export function KnowledgePage() {
                     <div className="actions between">
                       <strong>{base.name}</strong>
                       <div className="actions">
+                        {isKnowledgeBaseDraft(base) ? <Badge value="draft" /> : null}
+                        {isKnowledgeBaseUpdating(base) ? <Badge value="updating" /> : null}
                         {base.kind === 'system_mandatory' ? <Badge value="Системная" /> : null}
                         {base.kind === 'system_mandatory' ? <Badge value="Защищена" /> : null}
                         <Badge value={base.status} />
@@ -164,12 +190,25 @@ export function KnowledgePage() {
                     <div className="actions">
                       <Link className="button" to={`/knowledge/bases/${base.knowledge_base_id}`}>Открыть базу</Link>
                       {base.latest_sync_run_id ? <Link className="button" to={`/operations/${base.latest_sync_run_id}`}>Ход обновления</Link> : null}
+                      {base.kind === 'user_managed' ? (
+                        <Button
+                          onClick={() => {
+                            if (window.confirm(`Архивировать базу «${base.name}»? Она будет перенесена в архив и скрыта из рабочих списков.`)) {
+                              archiveBaseMutation.mutate(base.knowledge_base_id);
+                            }
+                          }}
+                          disabled={archiveBaseMutation.isPending || isKnowledgeBaseUpdating(base)}
+                        >
+                          Архивировать
+                        </Button>
+                      ) : null}
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
+          {archiveBaseMutation.isError ? <ErrorNotice error={archiveBaseMutation.error} fallback="Не удалось архивировать базу знаний." /> : null}
           {sourcesQuery.isError ? <ErrorNotice error={sourcesQuery.error} fallback="Не удалось загрузить источники баз знаний." /> : null}
         </Card>
 

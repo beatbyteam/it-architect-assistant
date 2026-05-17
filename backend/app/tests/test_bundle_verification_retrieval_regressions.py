@@ -442,7 +442,7 @@ def test_verification_start_run_idempotency_payload_tracks_rulebook_and_publicat
     service.settings = SimpleNamespace(reranker_provider="heuristic")
     service.idempotency = _CapturingIdempotency()
     service._get_solution = lambda solution_version_id: solution
-    service._select_rules = lambda validation_scope: [
+    service._select_rules = lambda validation_scope, **_kwargs: [
         SimpleNamespace(code="VR-1"),
         SimpleNamespace(code="VR-2"),
     ]

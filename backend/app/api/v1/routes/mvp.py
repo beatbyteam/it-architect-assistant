@@ -7,7 +7,9 @@ from app.core.exceptions import ValidationError
 from app.core.security import AuthPrincipal
 from app.db.enums import MVP_USER_ROLE_CODES
 from app.domain.services.external_architecture_check import ExternalArchitectureCheckService
+from app.domain.services.generation.run_service import GenerationRunService
 from app.domain.services.mvp_canonical import CanonicalReadService, CanonicalTaskService
+from app.domain.services.verification.run_service import VerificationRunService
 from app.schemas.mvp import (
     ClarificationAnswerRequest,
     ExternalArchitectureCheckRequest,
@@ -241,6 +243,23 @@ def get_generation_run(
     )
 
 
+@router.post("/generation-runs/{generation_run_id}/cancel", response_model=GenerationRunResponse)
+def cancel_generation_run(
+    generation_run_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+    _write_guard: AuthPrincipal = WriteGuardDep,
+):
+    GenerationRunService(session, settings).cancel_run(generation_run_id, principal)
+    return GenerationRunResponse(
+        **CanonicalReadService(session, settings).get_generation_run_payload(
+            generation_run_id, principal
+        )
+    )
+
+
 @router.get("/solutions/{solution_version_id}", response_model=SolutionResponse)
 def get_solution(
     solution_version_id: str,
@@ -380,6 +399,23 @@ def get_verification_run(
     principal: PrincipalDep,
     _guard: AuthPrincipal = UserDep,
 ):
+    return VerificationRunResponse(
+        **CanonicalReadService(session, settings).get_verification_run_payload(
+            verification_run_id, principal
+        )
+    )
+
+
+@router.post("/verification-runs/{verification_run_id}/cancel", response_model=VerificationRunResponse)
+def cancel_verification_run(
+    verification_run_id: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+    _write_guard: AuthPrincipal = WriteGuardDep,
+):
+    VerificationRunService(session, settings).cancel_run(verification_run_id, principal)
     return VerificationRunResponse(
         **CanonicalReadService(session, settings).get_verification_run_payload(
             verification_run_id, principal

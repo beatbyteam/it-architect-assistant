@@ -88,7 +88,8 @@ class GenerationRunService:
             TokenBudgetManager(
                 max_input_tokens=settings.generation_prompt_max_input_tokens,
                 reserved_output_tokens=settings.generation_prompt_reserved_output_tokens,
-            )
+            ),
+            fragment_char_limit=settings.generation_prompt_fragment_char_limit,
         )
         self.llm_gateway = LLMGateway(
             provider=settings.llm_provider,
@@ -96,6 +97,9 @@ class GenerationRunService:
             api_key=settings.llm_api_key,
             timeout_sec=settings.llm_timeout_sec,
             model_id=settings.llm_model_id,
+            temperature=settings.llm_temperature,
+            top_p=settings.llm_top_p,
+            max_tokens=settings.llm_max_tokens,
             fallback_provider=settings.llm_fallback_provider,
             fallback_base_url=settings.llm_fallback_base_url,
             fallback_api_key=settings.llm_fallback_api_key,
@@ -366,7 +370,11 @@ class GenerationRunService:
         def _queue_run() -> GenerationRun:
             from app.tasks.jobs.generation import run_generation_job
 
-            run_generation_job.delay(str(run.generation_run_id))
+            task_id = f"generation-run:{run.generation_run_id}"
+            run_generation_job.apply_async(args=[str(run.generation_run_id)], task_id=task_id)
+            run.diagnostics = _json_safe({**(run.diagnostics or {}), "celery_task_id": task_id})
+            self.session.add(run)
+            self.session.commit()
             return run
 
         def _handle_queue_failure(exc: Exception) -> GenerationRun:
@@ -450,6 +458,141 @@ class GenerationRunService:
             "solution_version_id": solution_version_id,
         }
 
+    def cancel_run(
+        self, generation_run_id: str, principal: AuthPrincipal | None = None
+    ) -> GenerationRun:
+        run = self.get_run(generation_run_id, principal)
+        if run.status in TERMINAL_GENERATION_STATUSES:
+            if run.status == GenerationRunStatus.CANCELED:
+                return run
+            raise ConflictError(
+                "Generation run is already finished",
+                error_code="GENERATION_RUN_ALREADY_FINISHED",
+            )
+
+        previous_stage = run.current_stage or "queued"
+        finished_at = datetime.now(UTC)
+        diagnostics = _json_safe(
+            {
+                **(run.diagnostics or {}),
+                "status": GenerationRunStatus.CANCELED.value,
+                "current_stage": "canceled",
+                "error_code": "CANCELED_BY_USER",
+                "canceled_at": finished_at.isoformat(),
+                "active_stage": {
+                    "stage": "canceled",
+                    "operation": "user_cancel",
+                    "message": "Подготовка решения остановлена пользователем.",
+                    "updated_at": finished_at.isoformat(),
+                },
+            }
+        )
+        if previous_stage != "canceled":
+            self._record_operation_step(
+                run,
+                stage=previous_stage,
+                status="canceled",
+                detail="Generation run canceled by user",
+                error_code="CANCELED_BY_USER",
+            )
+        run.status = GenerationRunStatus.CANCELED
+        run.current_stage = "canceled"
+        run.finished_at = finished_at
+        run.diagnostics = self._with_stage_history(
+            diagnostics,
+            "canceled",
+            detail="Generation run canceled by user",
+            status="canceled",
+        )
+        self._record_operation_step(
+            run,
+            stage="canceled",
+            status="canceled",
+            detail="Generation run canceled by user",
+            error_code="CANCELED_BY_USER",
+        )
+        self.session.add(run)
+        self.audit.record(
+            event_type="generation.run.canceled",
+            target_type="generation_run",
+            target_id=run.generation_run_id,
+            message="Generation run canceled by user",
+            actor_user_id=run.started_by_user_id,
+            correlation_id=run.correlation_id,
+            payload={
+                "previous_stage": previous_stage,
+                "error_code": "CANCELED_BY_USER",
+            },
+            severity=AuditSeverity.WARNING,
+        )
+        self.session.commit()
+        self._revoke_generation_task(run)
+        try:
+            self.session.refresh(run)
+        except Exception:
+            logger.warning(
+                "generation_run_refresh_after_cancel_failed",
+                extra={
+                    "stage": "canceled",
+                    "stage_status": "canceled",
+                    "run_id": str(run.generation_run_id),
+                    "entity_id": str(run.business_task_id),
+                },
+            )
+        return run
+
+    def _revoke_generation_task(self, run: GenerationRun) -> None:
+        task_ids = {
+            f"generation-run:{run.generation_run_id}",
+            str((run.diagnostics or {}).get("celery_task_id") or "").strip(),
+        }
+        self._revoke_celery_tasks(
+            {item for item in task_ids if item},
+            task_name="app.tasks.jobs.generation.run_generation_job",
+            run_id=str(run.generation_run_id),
+        )
+
+    def _revoke_celery_tasks(
+        self, task_ids: set[str], *, task_name: str, run_id: str
+    ) -> None:
+        try:
+            from app.tasks.workers.celery_app import celery_app
+
+            control = getattr(celery_app, "control", None)
+            revoke = getattr(control, "revoke", None)
+            if not callable(revoke):
+                return
+            for task_id in task_ids:
+                revoke(task_id, terminate=True, signal="SIGTERM")
+            inspector = getattr(control, "inspect", lambda **_kwargs: None)(timeout=1.0)
+            if inspector is None:
+                return
+            for method_name in ("active", "reserved", "scheduled"):
+                method = getattr(inspector, method_name, None)
+                if not callable(method):
+                    continue
+                for tasks in (method() or {}).values():
+                    for task in tasks or []:
+                        if task.get("name") != task_name:
+                            continue
+                        if run_id not in str(task.get("args", "")) and run_id not in str(
+                            task.get("kwargs", "")
+                        ):
+                            continue
+                        task_id = str(task.get("id") or "").strip()
+                        if task_id:
+                            revoke(task_id, terminate=True, signal="SIGTERM")
+        except Exception as exc:
+            logger.warning(
+                "generation_run_celery_revoke_failed",
+                extra={
+                    "stage": "canceled",
+                    "stage_status": "revoke_failed",
+                    "run_id": run_id,
+                    "error": str(exc),
+                },
+            )
+
     def execute_run(self, generation_run_id: str) -> GenerationRun:
         return execute_generation_run(self, generation_run_id)
 
@@ -465,6 +608,7 @@ class GenerationRunService:
             "publishing": "Публикация решения",
             "completed": "Решение опубликовано",
             "failed": "Генерация завершилась ошибкой",
+            "canceled": "Подготовка решения остановлена",
         }.get(stage, stage.replace("_", " ").strip().title())
 
     def _record_operation_step(

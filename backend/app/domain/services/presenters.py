@@ -1,8 +1,26 @@
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from app.db.models.publication import PublishedArtifact
+
+_UPLOAD_PREFIX_RE = re.compile(
+    r"^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})[_-]",
+    re.IGNORECASE,
+)
+
+
+def clean_display_file_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    decoded = unquote(str(value))
+    parsed = urlparse(decoded)
+    candidate = parsed.path if parsed.scheme else decoded
+    candidate = (candidate.split("?", 1)[0]).split("#", 1)[0]
+    basename = candidate.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or decoded
+    return _UPLOAD_PREFIX_RE.sub("", basename) or basename
 
 
 def build_next_action_hint(

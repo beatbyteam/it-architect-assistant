@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { cancelKnowledgeUpdateRun } from '../shared/api/knowledge';
 import { getOperationDetail } from '../shared/api/operations';
 import { queryKeys } from '../shared/api/queryKeys';
+import { cancelGenerationRun } from '../shared/api/tasks';
 import { auditEventTitle, auditMessageText, entityLabel, formatDateTime, formatSeconds, operationKindLabel, safeJson, titleStatus } from '../shared/lib/format';
 import {
   activeStageOf,
@@ -25,7 +27,7 @@ import {
   metricText as generationMetricText,
   numberMetric as generationNumberMetric,
 } from '../entities/knowledge/generationRunProgress';
-import { Badge, Banner, Button, Card, CollapsibleCodeBlock, EmptyState, ErrorState, KeyValueTable, LoadingState, MetricCard, PageHeader, StateBox, TabStrip, Timeline, TimelineItem } from '../shared/ui/components';
+import { Badge, Banner, Button, Card, CollapsibleCodeBlock, EmptyState, ErrorNotice, ErrorState, KeyValueTable, LoadingState, MetricCard, PageHeader, StateBox, TabStrip, Timeline, TimelineItem } from '../shared/ui/components';
 import type { NormalizedOperationDetail, NormalizedOperationStep } from '../shared/api/normalized';
 import type { AuditEvent } from '../types/api';
 
@@ -50,9 +52,15 @@ function problemBanner(operation: NormalizedOperationDetail) {
     return `Процесс завершился ошибкой${operation.last_problem_step ? ` на шаге «${titleStatus(operation.last_problem_step)}»` : ''}${operation.error_code ? `, код ${operation.error_code}` : ''}.`;
   }
   if (operation.status === 'completed_with_warnings') {
-    return 'Процесс завершился с замечаниями. Проверь шаги выполнения и системные события ниже.';
+    return 'Процесс завершился с замечаниями. Проверьте шаги выполнения и системные события ниже.';
   }
   return null;
+}
+
+function cancelOperationLabel(operationKind?: string | null) {
+  if (operationKind === 'knowledge_update_run') return 'Остановить обновление';
+  if (operationKind === 'generation_run') return 'Остановить подготовку';
+  return 'Остановить процесс';
 }
 
 function stepTime(step: NormalizedOperationStep) {
@@ -133,6 +141,7 @@ function operationStageHint(operation: NormalizedOperationDetail, step?: Normali
 
 export function OperationDetailsPage() {
   const { operationId = '' } = useParams();
+  const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<OperationViewMode>('read');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const operationQuery = useQuery({
@@ -142,6 +151,31 @@ export function OperationDetailsPage() {
     refetchInterval: (query: { state: { data: NormalizedOperationDetail | undefined } }) => {
       const data = query.state.data;
       return data && isOperationTerminal(data.status) ? false : 2_000;
+    },
+  });
+  const cancelOperationMutation = useMutation({
+    mutationFn: async (operation: NormalizedOperationDetail) => {
+      if (operation.operation_kind === 'knowledge_update_run') {
+        await cancelKnowledgeUpdateRun(operation.operation_id);
+        return;
+      }
+      if (operation.operation_kind === 'generation_run') {
+        await cancelGenerationRun(operation.operation_id);
+        return;
+      }
+      throw new Error('Этот тип процесса нельзя остановить из интерфейса.');
+    },
+    onSuccess: (_data, operation) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.operationDetail(operation.operation_id) });
+      if (operation.operation_kind === 'generation_run') {
+        queryClient.invalidateQueries({ queryKey: queryKeys.generationRun(operation.operation_id) });
+        const taskId = operation.entity_refs?.business_task_id;
+        if (taskId) queryClient.invalidateQueries({ queryKey: queryKeys.task(taskId) });
+      }
+      if (operation.operation_kind === 'knowledge_update_run') {
+        queryClient.invalidateQueries({ queryKey: ['knowledge-base-runs'] });
+        queryClient.invalidateQueries({ queryKey: ['knowledge-notifications'] });
+      }
     },
   });
 
@@ -154,6 +188,7 @@ export function OperationDetailsPage() {
   if (operationQuery.isError || !operationQuery.data) return <ErrorState message="Не удалось загрузить процесс." />;
 
   const operation: NormalizedOperationDetail = operationQuery.data;
+  const canCancelOperation = !isOperationTerminal(operation.status) && ['knowledge_update_run', 'generation_run'].includes(operation.operation_kind);
   const entityRows = Object.entries(operation.entity_refs ?? {}).map(([key, value]) => [entityLabel(key), renderEntityRef(key, typeof value === 'string' || value == null ? value : String(value))] as [string, ReactNode]);
   const showDebugBlocks = viewMode === 'debug';
   const showSystemEvents = viewMode === 'verify' || viewMode === 'debug';
@@ -196,7 +231,23 @@ export function OperationDetailsPage() {
       <PageHeader
         title={operationKindLabel(operation.operation_kind)}
         subtitle="Карточка процесса: статус, шаги выполнения, связанные объекты, системные события и техническая диагностика."
-        actions={<Link to="/operations" className="button">Назад к журналу</Link>}
+        actions={(
+          <>
+            {canCancelOperation ? (
+              <Button
+                onClick={() => {
+                  if (window.confirm('Остановить текущий процесс? Уже завершённые артефакты останутся в системе.')) {
+                    cancelOperationMutation.mutate(operation);
+                  }
+                }}
+                disabled={cancelOperationMutation.isPending}
+              >
+                {cancelOperationMutation.isPending ? 'Останавливаю…' : cancelOperationLabel(operation.operation_kind)}
+              </Button>
+            ) : null}
+            <Link to="/operations" className="button">Назад к журналу</Link>
+          </>
+        )}
       />
 
       <Card title="Режим просмотра" subtitle="Технические payload и diagnostics скрыты, пока не включён дебаг.">
@@ -212,6 +263,7 @@ export function OperationDetailsPage() {
         </div>
       </Card>
 
+      {cancelOperationMutation.isError ? <ErrorNotice error={cancelOperationMutation.error} fallback="Не удалось остановить процесс." /> : null}
       {alert ? <Banner tone={operation.status === 'failed' ? 'danger' : 'warning'}>{alert}</Banner> : null}
       {!isOperationTerminal(operation.status) ? (
         <Banner tone="info">

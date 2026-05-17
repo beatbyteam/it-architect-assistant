@@ -56,6 +56,40 @@ def _is_delete_run_type(value: Any) -> bool:
     return getattr(value, "value", value) == UpdateRunType.DELETE.value
 
 
+class KnowledgeUpdateCanceled(Exception):
+    """Internal signal used to stop a knowledge update worker after API cancellation."""
+
+
+LOCAL_DENSE_EMBEDDING_PROVIDERS = {"local_inference", "ollama", "local_openai_compatible"}
+
+
+def dense_embedding_skip_reason(
+    *,
+    embedding_descriptor: dict[str, object],
+    chunk_count: int,
+    index_metadata: dict[str, Any],
+    settings: Any,
+) -> str | None:
+    provider_name = str(embedding_descriptor.get("provider_name") or "").strip().lower()
+    if provider_name not in LOCAL_DENSE_EMBEDDING_PROVIDERS:
+        return None
+    max_chunks = int(getattr(settings, "knowledge_local_embedding_max_chunks", 96) or 0)
+    if max_chunks <= 0 or chunk_count <= max_chunks:
+        return None
+    is_large_document = (
+        index_metadata.get("adaptive_chunking_reason") == "large_document"
+        or bool(index_metadata.get("adaptive_chunking"))
+    )
+    if not is_large_document:
+        return None
+    return f"local_embedding_large_document_chunk_count:{chunk_count}>{max_chunks}"
+
+
+def is_embedding_timeout_error(exc: Exception) -> bool:
+    message = str(exc).casefold()
+    return isinstance(exc, TimeoutError) or "timed out" in message or "timeout" in message
+
+
 def execute_knowledge_update_run(service: Any, update_run_id: str):
     from app.domain.services import knowledge_core as knowledge_core_module
 
@@ -85,8 +119,15 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
     def _setting(name: str, default: Any) -> Any:
         return getattr(getattr(service, "settings", None), name, default)
 
+    def _raise_if_update_canceled() -> None:
+        with suppress(Exception):
+            service.session.refresh(run)
+        if run.status == KnowledgeUpdateStatus.CANCELED:
+            raise KnowledgeUpdateCanceled()
+
     def _publish_progress(stage_name: str, *, force: bool = False, **extra: Any) -> None:
         nonlocal last_progress_commit_at
+        _raise_if_update_canceled()
         now = datetime.now(UTC)
         if (
             not force
@@ -137,6 +178,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 flush()
 
     def _finish_stage(stage_name: str, stage_started_at: datetime, **extra: Any) -> None:
+        _raise_if_update_canceled()
         finished_at = datetime.now(UTC)
         duration_sec = max(0.0, (finished_at - stage_started_at).total_seconds())
         record_stage_metric(
@@ -199,6 +241,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
             flush()
 
     try:
+        _raise_if_update_canceled()
         current_embedding_profile = getattr(
             getattr(service, "settings", None), "embedding_profile", None
         )
@@ -284,6 +327,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
             loading_finished = True
 
         for source in selected_sources:
+            _raise_if_update_canceled()
             source_documents = service.documents.list_for_source(
                 source.source_id, include_archived=True
             )
@@ -308,6 +352,8 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 if source.status == SourceStatus.UNAVAILABLE:
                     source.status = SourceStatus.ACTIVE
                 service.session.add(source)
+            except KnowledgeUpdateCanceled:
+                raise
             except Exception as exc:
                 source.status = SourceStatus.UNAVAILABLE
                 source.source_metadata = {
@@ -327,7 +373,10 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 continue
 
             try:
+                _raise_if_update_canceled()
                 documents = service._resolve_documents_for_source(source, source_documents)
+            except KnowledgeUpdateCanceled:
+                raise
             except Exception as exc:
                 problem_sources.append(
                     service._mark_source_failure(
@@ -361,6 +410,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
             service.session.add(source)
 
             for document in documents:
+                _raise_if_update_canceled()
                 if document.document_id is None:
                     service.documents.add(document)
                     service.session.flush()
@@ -576,12 +626,14 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 )
 
                 _finish_loading_once()
+                _raise_if_update_canceled()
                 service._ensure_within_sla(started, stage="parsing")
                 parsing_started = datetime.now(UTC)
                 service._set_stage(
                     run, status=KnowledgeUpdateStatus.PARSING, current_stage="parsing"
                 )
                 try:
+                    _raise_if_update_canceled()
                     try:
                         normalized = knowledge_core_module.normalize_document_payload(
                             document.resolved_uri or document.uri,
@@ -595,6 +647,8 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                             document.resolved_uri or document.uri, blob
                         )
                     normalized_text = normalized.text
+                except KnowledgeUpdateCanceled:
+                    raise
                 except ContentLoadError as exc:
                     problem_sources.append(
                         service._mark_source_failure(
@@ -697,6 +751,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 chunk_entities: list[DocumentChunk] = []
                 chunk_vectors: list[list[float] | None] = []
                 try:
+                    _raise_if_update_canceled()
                     service._ensure_within_sla(started, stage="indexing")
                     indexing_started = datetime.now(UTC)
                     service._set_stage(
@@ -716,6 +771,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                     last_embedding_progress: dict[str, object] = {}
 
                     def _on_embedding_progress(progress: dict[str, object]) -> None:
+                        _raise_if_update_canceled()
                         service._ensure_within_sla(started, stage="indexing")
                         completed_texts = int(progress.get("completed_texts") or 0)
                         completed_batches = int(progress.get("completed_batches") or 0)
@@ -743,15 +799,52 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                             **last_embedding_progress,
                         )
 
-                    chunk_vectors = (
-                        service.embeddings.encode_documents(
-                            [chunk.content for chunk in chunks],
-                            titles=[chunk.title for chunk in chunks],
-                            progress_callback=_on_embedding_progress,
-                        ).vectors
-                        if chunks
-                        else []
+                    embedding_skip_reason = dense_embedding_skip_reason(
+                        embedding_descriptor=embedding_descriptor,
+                        chunk_count=len(chunks),
+                        index_metadata=index_payload.canonical_metadata,
+                        settings=getattr(service, "settings", None),
                     )
+                    if embedding_skip_reason:
+                        chunk_vectors = []
+                        _publish_progress(
+                            "indexing",
+                            force=True,
+                            operation="embedding_skipped",
+                            document_id=str(document.document_id),
+                            document_title=document.title,
+                            current_document_chunk_count=len(chunks),
+                            planned_chunk_count=chunk_count + len(chunks),
+                            embedding_skip_reason=embedding_skip_reason,
+                            embedding_mode="lexical_only",
+                        )
+                    else:
+                        try:
+                            chunk_vectors = (
+                                service.embeddings.encode_documents(
+                                    [chunk.content for chunk in chunks],
+                                    titles=[chunk.title for chunk in chunks],
+                                    progress_callback=_on_embedding_progress,
+                                ).vectors
+                                if chunks
+                                else []
+                            )
+                        except Exception as exc:
+                            if not is_embedding_timeout_error(exc):
+                                raise
+                            embedding_skip_reason = f"embedding_timeout:{exc}"
+                            chunk_vectors = []
+                            _publish_progress(
+                                "indexing",
+                                force=True,
+                                operation="embedding_skipped",
+                                document_id=str(document.document_id),
+                                document_title=document.title,
+                                current_document_chunk_count=len(chunks),
+                                planned_chunk_count=chunk_count + len(chunks),
+                                embedding_skip_reason=embedding_skip_reason,
+                                embedding_mode="lexical_only",
+                            )
                     embeddings_calculated += len(chunk_vectors)
                     cursor = 0
                     for index, chunk in enumerate(chunks, start=1):
@@ -810,6 +903,11 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                                 "embedding_provider": embedding_descriptor["provider_name"],
                                 "embedding_dimensions": embedding_descriptor["dimensions"],
                                 "embedding_profile": embedding_descriptor["profile_code"],
+                                "embedding_mode": "lexical_only"
+                                if embedding_skip_reason
+                                else "dense",
+                                "embedding_skipped": bool(embedding_skip_reason),
+                                "embedding_skip_reason": embedding_skip_reason,
                                 "role_code": role_code,
                                 "required_flag": required_flag,
                                 "document_title": document.title,
@@ -857,8 +955,13 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                         chunk_metrics=index_payload.metrics,
                         embedding_count=len(chunk_vectors),
                         embedding_profile=embedding_descriptor.get("profile_code"),
+                        embedding_mode="lexical_only" if embedding_skip_reason else "dense",
+                        embedding_skipped=bool(embedding_skip_reason),
+                        embedding_skip_reason=embedding_skip_reason,
                         **last_embedding_progress,
                     )
+                except KnowledgeUpdateCanceled:
+                    raise
                 except Exception as exc:
                     _discard_document_candidate_artifacts(
                         document_id=str(document.document_id),
@@ -884,6 +987,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
 
                 extracted_rules: list[NormativeRule] = []
                 try:
+                    _raise_if_update_canceled()
                     service._ensure_within_sla(started, stage="extracting")
                     extracting_started = datetime.now(UTC)
                     service._set_stage(
@@ -909,6 +1013,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                     candidate.normative_rules.extend(extracted_rules)
 
                     def _on_memory_progress(progress: dict[str, object]) -> None:
+                        _raise_if_update_canceled()
                         service._ensure_within_sla(started, stage="extracting")
                         completed_batches = int(progress.get("completed_batches") or 0)
                         total_batches = int(progress.get("total_batches") or 0)
@@ -987,6 +1092,8 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                         llm_skipped=bool(memory_stats.get("llm_skipped")),
                         fallback_applied=bool(memory_stats.get("fallback_applied")),
                     )
+                except KnowledgeUpdateCanceled:
+                    raise
                 except Exception as exc:
                     _discard_document_candidate_artifacts(
                         document_id=str(document.document_id),
@@ -1011,6 +1118,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                     continue
 
         _finish_loading_once()
+        _raise_if_update_canceled()
         if active_version is not None:
             recorded_deleted_document_ids: set[str] = set()
             if removed_document_ids:
@@ -1138,6 +1246,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 )
                 carried_forward_document_ids.add(previous_document_id)
 
+        _raise_if_update_canceled()
         service._ensure_within_sla(started, stage="validating")
         candidate.status = KnowledgeVersionStatus.DRAFT
         service.session.add(candidate)
@@ -1146,6 +1255,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
         validation = service._validate_candidate_version(
             candidate, selected_sources, problem_sources, rules_for_conflicts
         )
+        _raise_if_update_canceled()
         candidate.status = validation.version_status
         _finish_stage(
             "validating", validating_started, validation=validation.details.get("validation")
@@ -1197,7 +1307,9 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
             selected_sources, run, include_processing=True
         )
         quality_summary["comparison_to_active"] = service._build_active_diff_summary(candidate)
+        _raise_if_update_canceled()
         activated_version = service._auto_activate_candidate_version(candidate, run)
+        _raise_if_update_canceled()
         activated_version_id = (
             str(activated_version.knowledge_version_id) if activated_version is not None else None
         )
@@ -1290,6 +1402,27 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 "entity_id": str(run.knowledge_base_id),
                 "duration_ms": round(float(run.duration_sec or 0) * 1000.0, 3),
                 "outcome": "completed",
+                "event_type": "pipeline_finished",
+            },
+        )
+        return run
+    except KnowledgeUpdateCanceled:
+        rollback = getattr(service.session, "rollback", None)
+        if callable(rollback):
+            rollback()
+        run = service.get_run(update_run_id)
+        logger.info(
+            "knowledge_update_run_canceled",
+            extra={
+                "correlation_id": run.correlation_id,
+                "operation_kind": "knowledge_update_run",
+                "operation_id": str(run.update_run_id),
+                "knowledge_update_run_id": str(run.update_run_id),
+                "stage": run.current_stage,
+                "stage_status": "canceled",
+                "run_id": str(run.update_run_id),
+                "entity_id": str(run.knowledge_base_id),
+                "outcome": "canceled",
                 "event_type": "pipeline_finished",
             },
         )

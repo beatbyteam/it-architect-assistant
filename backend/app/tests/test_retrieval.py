@@ -98,6 +98,39 @@ def test_prompt_builder_emits_retrieval_contract_and_provenance() -> None:
     assert artifact.knowledge_manifest[0]["fragment_id"] == "frag-1"
 
 
+def test_prompt_builder_caps_large_fragment_content() -> None:
+    builder = GenerationPromptBuilder(
+        TokenBudgetManager(max_input_tokens=4096, reserved_output_tokens=512),
+        fragment_char_limit=240,
+    )
+    template = PromptTemplate(
+        version_id="test.v1",
+        template_name="test",
+        system_prompt="Return JSON only",
+        user_prompt_template="{task_text}\n{context_block}\n{knowledge_block}\n{section_plan_block}",
+        output_contract_name="generation",
+    )
+    fragment = RetrievedFragment(
+        fragment_id="frag-large",
+        document_id="doc-1",
+        title="Large evidence",
+        content=" ".join(["important architectural evidence"] * 200),
+        fragment_type="requirement",
+        metadata={"document_title": "Large Spec"},
+    )
+
+    artifact = builder.build(
+        template=template,
+        task_title="Task",
+        task_text="Need architecture.",
+        context_items=[],
+        retrieved_fragments=[fragment],
+    )
+
+    assert "content_truncated=yes" in artifact.knowledge_block
+    assert len(artifact.knowledge_block) < len(fragment.content)
+
+
 def test_sanitize_prompt_artifact_strips_unapproved_payload() -> None:
     payload = {
         "system_prompt": "sys",

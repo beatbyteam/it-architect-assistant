@@ -102,11 +102,17 @@ class KnowledgeBaseService:
         self.generation_runs = GenerationRunRepository(session)
         self.audit = AuditService(session)
 
-    def _is_base_accessible(self, base: KnowledgeBase, principal: AuthPrincipal | None) -> bool:
+    def _is_base_accessible(
+        self,
+        base: KnowledgeBase,
+        principal: AuthPrincipal | None,
+        *,
+        include_archived: bool = False,
+    ) -> bool:
         status_value = getattr(
             getattr(base, "status", None), "value", getattr(base, "status", None)
         )
-        if status_value == KnowledgeBaseStatus.ARCHIVED.value:
+        if status_value == KnowledgeBaseStatus.ARCHIVED.value and not include_archived:
             return False
         if base.kind == KnowledgeBaseKind.SYSTEM_MANDATORY:
             return True
@@ -116,8 +122,14 @@ class KnowledgeBaseService:
             return base_owner is None
         return base_owner in {None, owner_key}
 
-    def _assert_base_access(self, base: KnowledgeBase, principal: AuthPrincipal | None) -> None:
-        if not self._is_base_accessible(base, principal):
+    def _assert_base_access(
+        self,
+        base: KnowledgeBase,
+        principal: AuthPrincipal | None,
+        *,
+        include_archived: bool = False,
+    ) -> None:
+        if not self._is_base_accessible(base, principal, include_archived=include_archived):
             raise AuthorizationError("Access denied to the requested knowledge base")
 
     def _assert_generation_selection_unlocked(self, principal: AuthPrincipal | None) -> None:
@@ -212,7 +224,12 @@ class KnowledgeBaseService:
             return None
         return version
 
-    def list_payloads(self, principal: AuthPrincipal | None = None) -> list[dict[str, Any]]:
+    def list_payloads(
+        self,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
         selection = self.selections.get_for_scope(_selection_scope_for_principal(principal))
         effective_scope = self.get_existing_effective_scope(principal)
         selected_base_id = (
@@ -228,7 +245,10 @@ class KnowledgeBaseService:
         items: list[dict[str, Any]] = []
         try:
             visible_bases = list(
-                self.bases.list_visible(owner_user_id=_owner_key_for_principal(principal))
+                self.bases.list_visible(
+                    include_archived=include_archived,
+                    owner_user_id=_owner_key_for_principal(principal),
+                )
             )
         except TypeError:
             visible_bases = list(self.bases.list_visible())
@@ -346,22 +366,98 @@ class KnowledgeBaseService:
         return base
 
     def get_base(
-        self, knowledge_base_id: str, principal: AuthPrincipal | None = None
+        self,
+        knowledge_base_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
     ) -> KnowledgeBase:
         base = self.bases.get(knowledge_base_id)
         if base is None:
             raise NotFoundError("KnowledgeBase", knowledge_base_id)
-        self._assert_base_access(base, principal)
+        self._assert_base_access(base, principal, include_archived=include_archived)
         return base
 
     def get_base_payload(
-        self, knowledge_base_id: str, principal: AuthPrincipal | None = None
+        self,
+        knowledge_base_id: str,
+        principal: AuthPrincipal | None = None,
+        *,
+        include_archived: bool = False,
     ) -> dict[str, Any]:
         try:
-            base = self.get_base(knowledge_base_id, principal)
+            base = self.get_base(
+                knowledge_base_id,
+                principal,
+                include_archived=include_archived,
+            )
         except TypeError:
             base = self.get_base(knowledge_base_id)
         return self.build_base_payload(base, principal)
+
+    def archive_user_base(
+        self,
+        knowledge_base_id: str,
+        principal: AuthPrincipal,
+    ) -> KnowledgeBase:
+        base = self.get_base(knowledge_base_id, principal)
+        if base.kind != KnowledgeBaseKind.USER_MANAGED:
+            raise ValidationError(
+                "System mandatory knowledge base cannot be archived by a user",
+                error_code="KNOWLEDGE_BASE_IMMUTABLE",
+            )
+        if base.status == KnowledgeBaseStatus.ARCHIVED:
+            return base
+        base.status = KnowledgeBaseStatus.ARCHIVED
+        selection = self.selections.get_for_scope(_selection_scope_for_principal(principal))
+        if (
+            selection is not None
+            and str(selection.selected_knowledge_base_id) == str(base.knowledge_base_id)
+        ):
+            mandatory, _ = self.ensure_system_bases(principal)
+            selection.selected_knowledge_base_id = mandatory.knowledge_base_id
+            selection.selected_knowledge_version_id = None
+            selection.updated_by_user_id = principal_actor_id(principal)
+            self.selections.add(selection)
+        self.bases.add(base)
+        self.audit.record(
+            event_type="knowledge.base.archived",
+            target_type="knowledge_base",
+            target_id=base.knowledge_base_id,
+            message=f"Knowledge base '{base.name}' archived",
+            actor_user_id=principal_actor_id(principal),
+            severity=AuditSeverity.WARNING,
+        )
+        self.session.commit()
+        self.session.refresh(base)
+        return base
+
+    def restore_user_base(
+        self,
+        knowledge_base_id: str,
+        principal: AuthPrincipal,
+    ) -> KnowledgeBase:
+        base = self.get_base(knowledge_base_id, principal, include_archived=True)
+        if base.kind != KnowledgeBaseKind.USER_MANAGED:
+            raise ValidationError(
+                "System mandatory knowledge base cannot be restored by a user",
+                error_code="KNOWLEDGE_BASE_IMMUTABLE",
+            )
+        if base.status != KnowledgeBaseStatus.ARCHIVED:
+            return base
+        base.status = KnowledgeBaseStatus.ACTIVE
+        self.bases.add(base)
+        self.audit.record(
+            event_type="knowledge.base.restored",
+            target_type="knowledge_base",
+            target_id=base.knowledge_base_id,
+            message=f"Knowledge base '{base.name}' restored from archive",
+            actor_user_id=principal_actor_id(principal),
+            severity=AuditSeverity.INFO,
+        )
+        self.session.commit()
+        self.session.refresh(base)
+        return base
 
     def build_base_payload(
         self, base: KnowledgeBase, principal: AuthPrincipal | None = None

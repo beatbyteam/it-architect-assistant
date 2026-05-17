@@ -13,19 +13,19 @@
 
 ## Additional startup guards
 
-In `staging` and production-like environments the backend now refuses to start when any of the following is true:
+В `staging` и production-like окружениях backend теперь отказывается запускаться, если выполняется любое из следующих условий:
 
 - `DEBUG=true`
-- `ALLOWED_CORS_ORIGINS` contains `*`, `localhost`, or `127.0.0.1`
-- `LLM_API_KEY`, `EMBEDDING_API_KEY`, or `RERANKER_API_KEY` use placeholder/test values such as `test`, `dummy`, or `changeme`
+- `ALLOWED_CORS_ORIGINS` содержит `*`, `localhost`, или `127.0.0.1`
+- `LLM_API_KEY`, `EMBEDDING_API_KEY`, или `RERANKER_API_KEY` используют placeholder/test-значения, например `test`, `dummy`, или `changeme`
 
 ## Local developer identity
 
-The local Docker runtime uses the configured local principal:
+Локальный Docker runtime использует настроенный локальный principal:
 
 - `LOCAL_USER_LOGIN`
 - `LOCAL_USER_DISPLAY_NAME`
 - `LOCAL_USER_ROLES`
 - `LOCAL_USER_ACCOUNT_TYPE`
 
-Those values are ignored unless `AUTH_MODE=local_noauth`.
+Эти значения учитываются только при `AUTH_MODE=local_noauth`.

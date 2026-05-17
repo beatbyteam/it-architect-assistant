@@ -60,7 +60,49 @@ function buildUrl(path: string, query?: Record<string, string | number | undefin
 
 function formatValidationLocation(value: unknown) {
   if (!Array.isArray(value) || value.length === 0) return null;
-  return value.map((item) => String(item)).join('.');
+  const labels: Record<string, string> = {
+    body: 'запрос',
+    query: 'параметры',
+    path: 'адрес',
+    raw_text: 'описание задачи',
+    title: 'название',
+    name: 'название',
+    file: 'файл',
+    files: 'файлы',
+    knowledge_base_id: 'база знаний',
+    knowledge_version_id: 'версия базы знаний',
+    source_id: 'источник',
+    source_ids: 'источники',
+    status: 'статус',
+  };
+  const parts = value
+    .map((item) => labels[String(item)] ?? String(item))
+    .filter((item) => !['запрос', 'параметры', 'адрес'].includes(item));
+  return (parts.length ? parts : value.map((item) => labels[String(item)] ?? String(item))).join('.');
+}
+
+function translateValidationMessage(message?: string, type?: string) {
+  const value = (message ?? '').trim();
+  const normalized = value.toLowerCase();
+  const byType: Record<string, string> = {
+    missing: 'Поле обязательно.',
+    string_too_short: 'Слишком короткое значение.',
+    string_too_long: 'Слишком длинное значение.',
+    value_error: 'Некорректное значение.',
+    bool_parsing: 'Ожидалось значение да/нет.',
+    int_parsing: 'Ожидалось целое число.',
+    float_parsing: 'Ожидалось число.',
+  };
+
+  if (type && byType[type]) return byType[type];
+  if (normalized === 'field required') return 'Поле обязательно.';
+  if (normalized.includes('at least one file must be provided')) return 'Выберите хотя бы один файл.';
+  if (normalized.includes('input should be a valid')) return 'Некорректный формат значения.';
+  if (normalized.includes('string should have at least')) return 'Слишком короткое значение.';
+  if (normalized.includes('string should have at most')) return 'Слишком длинное значение.';
+  if (normalized.includes('ensure this value has at least')) return 'Слишком короткое значение.';
+  if (normalized.includes('ensure this value has at most')) return 'Слишком длинное значение.';
+  return value || null;
 }
 
 function formatValidationDetails(detail: unknown) {
@@ -69,9 +111,10 @@ function formatValidationDetails(detail: unknown) {
     .filter((item): item is ValidationDetailItem => Boolean(item) && typeof item === 'object')
     .map((item) => {
       const location = formatValidationLocation(item.loc);
-      if (location && item.msg) return `${location}: ${item.msg}`;
-      if (item.msg) return item.msg;
-      if (location && item.type) return `${location}: ${item.type}`;
+      const message = translateValidationMessage(item.msg, item.type);
+      if (location && message) return `${location}: ${message}`;
+      if (message) return message;
+      if (location && item.type) return `${location}: ${translateValidationMessage(undefined, item.type) ?? item.type}`;
       return item.type ?? null;
     })
     .filter((item): item is string => typeof item === 'string' && item.trim().length > 0);

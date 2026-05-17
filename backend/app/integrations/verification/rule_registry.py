@@ -15,7 +15,7 @@ class VerificationRuleDefinition:
 
 
 class VerificationRuleRegistry:
-    version = "mvp-v4-sectioned-togaf-archimate"
+    version = "mvp-v5-sectioned-togaf-archimate-nfr"
 
     def __init__(self) -> None:
         self._rules = [
@@ -35,7 +35,7 @@ class VerificationRuleRegistry:
             ),
             VerificationRuleDefinition(
                 "VR-TEC-03",
-                "В активной версии базы знаний есть обязательные нормативные материалы",
+                "В выбранной области знаний есть ожидаемые нормативные материалы",
                 "technical",
                 Severity.CRITICAL,
                 technical=True,
@@ -153,6 +153,36 @@ class VerificationRuleRegistry:
                 "VR-CNS-06",
                 "Бизнес-задача прослеживается до архитектурных решений",
                 "consistency",
+                Severity.MAJOR,
+            ),
+            VerificationRuleDefinition(
+                "VR-NFR-01",
+                "Требования безопасности отражены в решении",
+                "nfr",
+                Severity.MAJOR,
+            ),
+            VerificationRuleDefinition(
+                "VR-NFR-02",
+                "Доступность и отказоустойчивость отражены в решении",
+                "nfr",
+                Severity.MAJOR,
+            ),
+            VerificationRuleDefinition(
+                "VR-NFR-03",
+                "Производительность и масштабируемость отражены в решении",
+                "nfr",
+                Severity.MAJOR,
+            ),
+            VerificationRuleDefinition(
+                "VR-NFR-04",
+                "Мониторинг и наблюдаемость отражены в решении",
+                "nfr",
+                Severity.MAJOR,
+            ),
+            VerificationRuleDefinition(
+                "VR-NFR-05",
+                "Резервное копирование и восстановление отражены в решении",
+                "nfr",
                 Severity.MAJOR,
             ),
         ]

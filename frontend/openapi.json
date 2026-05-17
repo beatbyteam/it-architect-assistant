@@ -633,6 +633,48 @@
         }
       }
     },
+    "/api/v1/generation-runs/{generation_run_id}/cancel": {
+      "post": {
+        "tags": [
+          "mvp"
+        ],
+        "summary": "Cancel Generation Run",
+        "operationId": "cancel_generation_run_api_v1_generation_runs__generation_run_id__cancel_post",
+        "parameters": [
+          {
+            "name": "generation_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Generation Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerationRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/solutions/{solution_version_id}": {
       "get": {
         "tags": [
@@ -936,6 +978,48 @@
         }
       }
     },
+    "/api/v1/verification-runs/{verification_run_id}/cancel": {
+      "post": {
+        "tags": [
+          "mvp"
+        ],
+        "summary": "Cancel Verification Run",
+        "operationId": "cancel_verification_run_api_v1_verification_runs__verification_run_id__cancel_post",
+        "parameters": [
+          {
+            "name": "verification_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Verification Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/verification-protocols/{protocol_id}": {
       "get": {
         "tags": [
@@ -1090,17 +1174,39 @@
         ],
         "summary": "List Knowledge Bases",
         "operationId": "list_knowledge_bases_api_v1_knowledge_bases_get",
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/KnowledgeBaseResponse"
                   },
-                  "type": "array",
                   "title": "Response List Knowledge Bases Api V1 Knowledge Bases Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1114,14 +1220,14 @@
         "summary": "Create Knowledge Base",
         "operationId": "create_knowledge_base_api_v1_knowledge_bases_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/KnowledgeBaseCreateRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -1162,6 +1268,16 @@
             "schema": {
               "type": "string",
               "title": "Knowledge Base Id"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
             }
           }
         ],
@@ -1239,6 +1355,90 @@
         }
       }
     },
+    "/api/v1/knowledge/bases/{knowledge_base_id}/archive": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Archive Knowledge Base",
+        "operationId": "archive_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__archive_post",
+        "parameters": [
+          {
+            "name": "knowledge_base_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Knowledge Base Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/bases/{knowledge_base_id}/restore": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Restore Knowledge Base",
+        "operationId": "restore_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__restore_post",
+        "parameters": [
+          {
+            "name": "knowledge_base_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Knowledge Base Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/bases/{knowledge_base_id}/documents": {
       "get": {
         "tags": [
@@ -1280,6 +1480,16 @@
               "type": "boolean",
               "default": true,
               "title": "Include Deleted"
+            }
+          },
+          {
+            "name": "include_archived_base",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived Base"
             }
           }
         ],
@@ -1663,6 +1873,16 @@
               ],
               "title": "Knowledge Base Id"
             }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
           }
         ],
         "responses": {
@@ -1747,6 +1967,16 @@
             "schema": {
               "type": "string",
               "title": "Source Id"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
             }
           }
         ],
@@ -1866,6 +2096,48 @@
         }
       }
     },
+    "/api/v1/knowledge/sources/{source_id}/restore": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Restore Source",
+        "operationId": "restore_source_api_v1_knowledge_sources__source_id__restore_post",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Source Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/sources/{source_id}/disable": {
       "post": {
         "tags": [
@@ -1923,6 +2195,16 @@
             "schema": {
               "type": "string",
               "title": "Source Id"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
             }
           }
         ],
@@ -2142,6 +2424,16 @@
             "schema": {
               "type": "string",
               "title": "Document Id"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
             }
           }
         ],
@@ -2656,6 +2948,81 @@
         }
       }
     },
+    "/api/v1/knowledge/documents/{document_id}/restore": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Restore Document",
+        "operationId": "restore_document_api_v1_knowledge_documents__document_id__restore_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/KnowledgeReindexRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentMutationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/notifications": {
       "get": {
         "tags": [
@@ -2848,6 +3215,48 @@
         ],
         "summary": "Get Knowledge Update",
         "operationId": "get_knowledge_update_api_v1_knowledge_update_runs__update_run_id__get",
+        "parameters": [
+          {
+            "name": "update_run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Update Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeUpdateRunResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge/update-runs/{update_run_id}/cancel": {
+      "post": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Cancel Knowledge Update",
+        "operationId": "cancel_knowledge_update_api_v1_knowledge_update_runs__update_run_id__cancel_post",
         "parameters": [
           {
             "name": "update_run_id",
@@ -3637,6 +4046,28 @@
             ],
             "title": "Knowledge Base Id"
           },
+          "refresh_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Policy"
+          },
+          "source_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Status"
+          },
           "execute_update_inline": {
             "anyOf": [
               {
@@ -3698,6 +4129,28 @@
             ],
             "title": "Knowledge Base Id"
           },
+          "refresh_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Policy"
+          },
+          "source_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Status"
+          },
           "execute_update_inline": {
             "anyOf": [
               {
@@ -3755,6 +4208,28 @@
               }
             ],
             "title": "Knowledge Base Id"
+          },
+          "refresh_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Policy"
+          },
+          "source_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Status"
           }
         },
         "type": "object",
@@ -4507,6 +4982,24 @@
               }
             ],
             "title": "Source Ref"
+          },
+          "draft_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Task Id"
+          },
+          "knowledge_document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Knowledge Document Ids"
           },
           "sections": {
             "items": {
@@ -5363,6 +5856,20 @@
               }
             ],
             "title": "Source Type"
+          },
+          "source_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceStatus"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Status"
           },
           "title": {
             "type": "string",
@@ -9199,9 +9706,15 @@
             "$ref": "#/components/schemas/SourceType"
           },
           "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Name"
           },
           "base_uri": {
@@ -9268,8 +9781,7 @@
         },
         "type": "object",
         "required": [
-          "source_type",
-          "name"
+          "source_type"
         ],
         "title": "SourceCreateRequest"
       },
@@ -10166,6 +10678,18 @@
             "format": "date-time",
             "title": "Updated At"
           },
+          "metadata": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
           "latest_knowledge_version_id": {
             "anyOf": [
               {
@@ -10176,6 +10700,17 @@
               }
             ],
             "title": "Latest Knowledge Version Id"
+          },
+          "latest_generation_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Generation State"
           },
           "open_clarification_count": {
             "type": "integer",
@@ -11121,6 +11656,13 @@
               }
             ],
             "title": "Correlation Id"
+          },
+          "knowledge_document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Knowledge Document Ids"
           }
         },
         "type": "object",

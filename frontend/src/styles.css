@@ -814,6 +814,10 @@ h3 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.filter-summary {
+  padding-top: var(--space-3);
+}
+
 .tab-strip {
   display: inline-flex;
   gap: var(--space-1);

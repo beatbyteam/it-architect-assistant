@@ -1,5 +1,5 @@
 import { Card } from '../../shared/ui/components';
-import { formatDateTime, titleStatus } from '../../shared/lib/format';
+import { cleanDisplayFileName, formatDateTime, titleStatus } from '../../shared/lib/format';
 import type { KnowledgeScope, KnowledgeScopeVersionSnapshot } from '../../types/api';
 
 function renderVersionMeta(version?: KnowledgeScopeVersionSnapshot | null) {
@@ -70,7 +70,7 @@ export function KnowledgeScopeSummary(props: {
             <ul className="compact-list" style={{ marginTop: 8 }}>
               {(scope.document_scope.selected_documents ?? []).map((item, index) => (
                 <li key={String(item.document_id ?? index)}>
-                  {String(item.title ?? item.document_id ?? 'Документ')}
+                  {cleanDisplayFileName(String(item.title ?? '')) ?? String(item.title ?? item.document_id ?? 'Документ')}
                 </li>
               ))}
             </ul>

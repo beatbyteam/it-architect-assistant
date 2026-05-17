@@ -21,6 +21,10 @@ from docx.text.paragraph import Paragraph
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
+from app.integrations.knowledge.extraction_markers import (
+    DOMAIN_SIGNAL_MARKERS,
+    LEGAL_DISCLAIMER_MARKERS,
+)
 from app.integrations.knowledge.local_paths import is_local_path_reference, resolve_local_path
 from app.integrations.knowledge.source_security import (
     assert_safe_remote_url,
@@ -38,46 +42,6 @@ class ContentLoadError(RuntimeError):
 
 
 HEADING_RE = re.compile(r"^(#{1,6}\s+.+|\d+(?:\.\d+)*\s+.+)$")
-LEGAL_DISCLAIMER_MARKERS = {
-    "legal disclaimer",
-    "disclaimer",
-    "confidential",
-    "copyright",
-    "all rights reserved",
-    "no part of this document",
-    "without prior written permission",
-    "provided as is",
-    "trademark",
-    "liability",
-    "правовая информация",
-    "отказ от ответственности",
-    "конфиденциаль",
-    "авторск",
-    "все права защищены",
-    "без предварительного письменного",
-    "товарн",
-    "ответственност",
-}
-DOMAIN_SIGNAL_MARKERS = {
-    "architecture",
-    "component",
-    "service",
-    "api",
-    "requirement",
-    "integration",
-    "database",
-    "deployment",
-    "security requirement",
-    "business process",
-    "архитект",
-    "компонент",
-    "сервис",
-    "требован",
-    "интеграц",
-    "база данных",
-    "безопасн",
-    "процесс",
-}
 
 
 @dataclass(slots=True)
@@ -821,6 +785,8 @@ def _classify_skippable_pdf_page(
     if signature in seen_signatures:
         return "duplicate_page"
     seen_signatures.add(signature)
+    if _looks_like_table_of_contents_page(text):
+        return "table_of_contents"
     if _looks_like_legal_disclaimer(compact):
         return "legal_disclaimer"
     return None
@@ -836,12 +802,39 @@ def _canonical_page_signature(text: str) -> str:
 def _looks_like_legal_disclaimer(text: str) -> bool:
     lowered = text.lower()
     legal_hits = sum(1 for marker in LEGAL_DISCLAIMER_MARKERS if marker in lowered)
+    token_count = len(re.findall(r"\w+", lowered, flags=re.UNICODE))
+    evaluation_footer = all(
+        marker in lowered
+        for marker in ("all rights reserved", "evaluation copy", "not for redistribution")
+    )
+    if evaluation_footer and token_count <= 90:
+        return True
     if legal_hits < 2 and not any(
         marker in lowered for marker in {"legal disclaimer", "отказ от ответственности"}
     ):
         return False
     domain_hits = sum(1 for marker in DOMAIN_SIGNAL_MARKERS if marker in lowered)
-    return domain_hits == 0 or legal_hits >= 4
+    legal_density = legal_hits / max(token_count, 1)
+    return domain_hits == 0 or legal_hits >= 5 or legal_density >= 0.08
+
+
+def _looks_like_table_of_contents_page(text: str) -> bool:
+    lowered = text.lower()
+    has_toc_title = "table of contents" in lowered or "содержание" in lowered
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) < 6:
+        return False
+    toc_like_lines = 0
+    for line in lines:
+        normalized = re.sub(r"\s+", " ", line)
+        if re.search(r"\.{3,}", normalized):
+            toc_like_lines += 1
+        elif re.search(r"\s(?:[ivxlcdm]+|\d{1,4})$", normalized, flags=re.IGNORECASE):
+            toc_like_lines += 1
+    toc_ratio = toc_like_lines / max(len(lines), 1)
+    if has_toc_title:
+        return toc_like_lines >= 5 or toc_ratio >= 0.45
+    return toc_like_lines >= 8 and toc_ratio >= 0.55
 
 
 def _build_pdf_page_map(sections: list[StructuredSection]) -> list[dict[str, Any]]:

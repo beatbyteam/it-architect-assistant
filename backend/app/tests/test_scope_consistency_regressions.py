@@ -22,6 +22,7 @@ from app.domain.services.generation.persistence_service import SolutionPersisten
 from app.domain.services.knowledge_bases import KnowledgeBaseService
 from app.domain.services.mvp_task_write_service import start_generation
 from app.domain.services.verification.common import VerificationExecutionContext
+from app.domain.services.verification.document_scope import filter_version_documents_for_scope
 from app.domain.services.verification.rule_executors import (
     TechnicalRulesExecutor,
     VerificationSupportContext,
@@ -204,6 +205,102 @@ def test_verification_support_context_builds_basis_inventory_from_full_scope() -
 
     assert result.status == CheckResultStatus.PASSED
     assert support.basis_inventory.missing_required_packages == []
+
+
+def test_full_document_scope_preserves_effective_document_ids_across_versions() -> None:
+    def _version_doc(document_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            document_id=document_id,
+            document=SimpleNamespace(title=f"Document {document_id}"),
+        )
+
+    version_documents = [
+        _version_doc("doc-b"),
+        _version_doc("doc-a"),
+        _version_doc("doc-c"),
+        _version_doc("doc-a"),
+    ]
+    scope_snapshot = {
+        "document_scope": {
+            "mode": "full",
+            "effective_document_ids": ["doc-c", "doc-a"],
+        }
+    }
+
+    scoped_documents = filter_version_documents_for_scope(version_documents, scope_snapshot)
+
+    assert [item.document_id for item in scoped_documents] == ["doc-c", "doc-a"]
+
+
+def test_technical_basis_gap_is_warning_when_verification_materials_exist() -> None:
+    rule = VerificationRuleDefinition(
+        code="VR-TEC-03",
+        name="Expected basis packages are available",
+        group="technical",
+        default_severity=Severity.CRITICAL,
+        technical=True,
+    )
+    support = VerificationSupportContext(
+        section_by_code={},
+        section_codes=set(),
+        combined_section_text="",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(
+            basis_documents=[SimpleNamespace(document_id="doc-1")],
+            required_packages=[{"role_code": "oda"}],
+            missing_required_packages=["oda"],
+        ),
+        required_fragments_by_role={},
+        support_summary={},
+    )
+
+    result = TechnicalRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(solution=SimpleNamespace(), run=SimpleNamespace()),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.WARNING
+    assert result.diagnostics["missing_required_packages"] == ["oda"]
+
+
+def test_technical_basis_gap_stays_failed_without_verification_materials() -> None:
+    rule = VerificationRuleDefinition(
+        code="VR-TEC-03",
+        name="Expected basis packages are available",
+        group="technical",
+        default_severity=Severity.CRITICAL,
+        technical=True,
+    )
+    support = VerificationSupportContext(
+        section_by_code={},
+        section_codes=set(),
+        combined_section_text="",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(
+            basis_documents=[],
+            required_packages=[{"role_code": "oda"}],
+            missing_required_packages=["oda"],
+        ),
+        required_fragments_by_role={},
+        support_summary={},
+    )
+
+    result = TechnicalRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(solution=SimpleNamespace(), run=SimpleNamespace()),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.FAILED
 
 
 def test_knowledge_base_payloads_mark_effective_default_base_when_selection_is_stale() -> None:

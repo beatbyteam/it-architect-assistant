@@ -384,6 +384,50 @@ def test_db_vector_search_is_disabled_for_mismatched_versioned_embedding_space()
     assert supported is False
 
 
+def test_build_candidate_can_skip_python_vector_score_when_db_vector_search_is_used() -> None:
+    service = KnowledgeQueryService.__new__(KnowledgeQueryService)
+    fragment = SimpleNamespace(
+        fragment_id="frag-1",
+        document_id="doc-1",
+        title="Gateway",
+        content="Gateway exposes REST API.",
+        fragment_type=None,
+        source_location="section:1",
+        fragment_metadata={},
+        document=None,
+        fragment_embeddings=[
+            SimpleNamespace(
+                embedding_space_id="space-1",
+                embedding=[1.0, 0.0],
+                embedding_key="embedding:frag-1",
+            )
+        ],
+    )
+
+    candidate = KnowledgeQueryService._build_candidate(
+        service,
+        fragment,
+        [1.0, 0.0],
+        query_text="REST API",
+        version_document_map={},
+        embedding_space_id="space-1",
+        compute_python_vector_score=False,
+    )
+    override_candidate = KnowledgeQueryService._build_candidate(
+        service,
+        fragment,
+        [0.0, 1.0],
+        query_text="REST API",
+        version_document_map={},
+        embedding_space_id="space-1",
+        vector_score_override=0.87,
+        compute_python_vector_score=False,
+    )
+
+    assert candidate.initial_vector_score == 0.0
+    assert override_candidate.initial_vector_score == 0.87
+
+
 def test_execute_run_cleans_failed_document_artifacts_on_indexing_error(monkeypatch) -> None:
     source = KnowledgeSource(
         source_id="src-1",
@@ -455,7 +499,7 @@ def test_execute_run_cleans_failed_document_artifacts_on_indexing_error(monkeypa
             "dimensions": 3,
             "profile_code": "stub-profile",
         },
-        encode_documents=lambda texts, titles=None: (_ for _ in ()).throw(
+        encode_documents=lambda texts, titles=None, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("embed failure")
         ),
     )
@@ -537,14 +581,16 @@ def test_execute_run_cleans_failed_document_artifacts_on_indexing_error(monkeypa
         "app.domain.services.knowledge_core.resolve_basis_assignment",
         lambda document_obj: ("reference_only", False),
     )
-    monkeypatch.setattr(
-        "app.domain.services.knowledge.update_runtime.prepare_document_index",
-        lambda normalized,
+    def _prepare_document_index_stub(
+        normalized,
         document_type=None,
         document_title=None,
         chunk_target_tokens=800,
         chunk_overlap_pct=15,
-        chunk_max_chars=6000: SimpleNamespace(
+        chunk_max_chars=6000,
+        **_kwargs,
+    ):
+        return SimpleNamespace(
             chunks=[
                 SimpleNamespace(
                     content="Body",
@@ -556,7 +602,11 @@ def test_execute_run_cleans_failed_document_artifacts_on_indexing_error(monkeypa
             ],
             canonical_metadata={},
             metrics={},
-        ),
+        )
+
+    monkeypatch.setattr(
+        "app.domain.services.knowledge.update_runtime.prepare_document_index",
+        _prepare_document_index_stub,
     )
 
     result = execute_knowledge_update_run(service, str(run.update_run_id))

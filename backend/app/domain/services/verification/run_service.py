@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.security import AuthPrincipal
 from app.db.enums import (
+    AccountType,
     AuditSeverity,
     SolutionVersionStatus,
     VerificationRunStatus,
@@ -100,6 +101,18 @@ DOCUMENT_TITLE_RULE_CODES = (
     ("integration", {"VR-STR-04", "VR-CNS-01", "VR-CNS-05"}),
     ("интеграц", {"VR-STR-04", "VR-CNS-01", "VR-CNS-05"}),
     ("traceability", {"VR-CNS-02", "VR-CNS-06"}),
+    (
+        "technology",
+        {"VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"},
+    ),
+    (
+        "well-architected",
+        {"VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"},
+    ),
+    (
+        "безопас",
+        {"VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"},
+    ),
     ("principle", {"VR-NRM-04"}),
     ("template", {"VR-NRM-04"}),
 )
@@ -196,7 +209,9 @@ class VerificationRunService:
         scope_snapshot = freeze_snapshot(
             {
                 "solution_version_id": str(solution.solution_version_id),
-                "generation_run_id": str(solution.generation_run_id),
+                "generation_run_id": str(solution.generation_run_id)
+                if solution.generation_run_id
+                else None,
                 "knowledge_version_id": str(knowledge_version_id),
                 "knowledge_version_ids": list(
                     knowledge_snapshot.get("effective_version_ids") or []
@@ -351,7 +366,11 @@ class VerificationRunService:
         def _queue_run() -> VerificationRun:
             from app.tasks.jobs.verification import run_verification_job
 
-            run_verification_job.delay(str(run.verification_run_id))
+            task_id = f"verification-run:{run.verification_run_id}"
+            run_verification_job.apply_async(args=[str(run.verification_run_id)], task_id=task_id)
+            run.diagnostics = {**(run.diagnostics or {}), "celery_task_id": task_id}
+            self.session.add(run)
+            self.session.commit()
             return run
 
         def _handle_queue_failure(exc: Exception) -> VerificationRun:
@@ -443,6 +462,139 @@ class VerificationRunService:
     def execute_run(self, verification_run_id: str) -> VerificationRun:
         return execute_verification_run(self, verification_run_id)
 
+    def cancel_run(
+        self, verification_run_id: str, principal: AuthPrincipal | None = None
+    ) -> VerificationRun:
+        run = self.get_run(verification_run_id, principal)
+        if run.status in TERMINAL_VERIFICATION_STATUSES:
+            if run.status == VerificationRunStatus.CANCELED:
+                return run
+            raise ConflictError(
+                "Verification run is already finished",
+                error_code="VERIFICATION_RUN_ALREADY_FINISHED",
+            )
+
+        previous_stage = run.current_stage or "queued"
+        finished_at = datetime.now(UTC)
+        diagnostics = {
+            **(run.diagnostics or {}),
+            "status": VerificationRunStatus.CANCELED.value,
+            "current_stage": "canceled",
+            "error_code": "CANCELED_BY_USER",
+            "canceled_at": finished_at.isoformat(),
+            "active_stage": {
+                "stage": "canceled",
+                "operation": "user_cancel",
+                "message": "Проверка архитектурного решения остановлена пользователем.",
+                "updated_at": finished_at.isoformat(),
+            },
+        }
+        if previous_stage != "canceled":
+            self._record_operation_step(
+                run,
+                stage=previous_stage,
+                status="canceled",
+                detail="Verification run canceled by user",
+                error_code="CANCELED_BY_USER",
+            )
+        run.status = VerificationRunStatus.CANCELED
+        run.current_stage = "canceled"
+        run.finished_at = finished_at
+        run.diagnostics = self._with_stage_history(
+            diagnostics,
+            "canceled",
+            detail="Verification run canceled by user",
+            status="canceled",
+        )
+        self._record_operation_step(
+            run,
+            stage="canceled",
+            status="canceled",
+            detail="Verification run canceled by user",
+            error_code="CANCELED_BY_USER",
+        )
+        self.session.add(run)
+        self.audit.record(
+            event_type="verification.run.canceled",
+            target_type="verification_run",
+            target_id=run.verification_run_id,
+            message="Verification run canceled by user",
+            actor_user_id=run.started_by_user_id,
+            correlation_id=run.correlation_id,
+            payload={
+                "previous_stage": previous_stage,
+                "error_code": "CANCELED_BY_USER",
+            },
+            severity=AuditSeverity.WARNING,
+        )
+        self.session.commit()
+        self._revoke_verification_task(run)
+        try:
+            self.session.refresh(run)
+        except Exception:
+            logger.warning(
+                "verification_run_refresh_after_cancel_failed",
+                extra={
+                    "stage": "canceled",
+                    "stage_status": "canceled",
+                    "run_id": str(run.verification_run_id),
+                    "entity_id": str(run.solution_version_id),
+                },
+            )
+        return run
+
+    def _revoke_verification_task(self, run: VerificationRun) -> None:
+        task_ids = {
+            f"verification-run:{run.verification_run_id}",
+            str((run.diagnostics or {}).get("celery_task_id") or "").strip(),
+        }
+        self._revoke_celery_tasks(
+            {item for item in task_ids if item},
+            task_name="app.tasks.jobs.verification.run_verification_job",
+            run_id=str(run.verification_run_id),
+        )
+
+    def _revoke_celery_tasks(
+        self, task_ids: set[str], *, task_name: str, run_id: str
+    ) -> None:
+        try:
+            from app.tasks.workers.celery_app import celery_app
+
+            control = getattr(celery_app, "control", None)
+            revoke = getattr(control, "revoke", None)
+            if not callable(revoke):
+                return
+            for task_id in task_ids:
+                revoke(task_id, terminate=True, signal="SIGTERM")
+            inspector = getattr(control, "inspect", lambda **_kwargs: None)(timeout=1.0)
+            if inspector is None:
+                return
+            for method_name in ("active", "reserved", "scheduled"):
+                method = getattr(inspector, method_name, None)
+                if not callable(method):
+                    continue
+                for tasks in (method() or {}).values():
+                    for task in tasks or []:
+                        if task.get("name") != task_name:
+                            continue
+                        if run_id not in str(task.get("args", "")) and run_id not in str(
+                            task.get("kwargs", "")
+                        ):
+                            continue
+                        task_id = str(task.get("id") or "").strip()
+                        if task_id:
+                            revoke(task_id, terminate=True, signal="SIGTERM")
+        except Exception as exc:
+            logger.warning(
+                "verification_run_celery_revoke_failed",
+                extra={
+                    "stage": "canceled",
+                    "stage_status": "revoke_failed",
+                    "run_id": run_id,
+                    "error": str(exc),
+                },
+            )
+
     @staticmethod
     def _stage_title(stage: str) -> str:
         return {
@@ -452,6 +604,7 @@ class VerificationRunService:
             "publishing": "Сборка протокола",
             "completed": "Проверка завершена",
             "failed": "Проверка завершилась ошибкой",
+            "canceled": "Проверка остановлена",
         }.get(stage, stage.replace("_", " ").strip().title())
 
     def _record_operation_step(
@@ -549,11 +702,6 @@ class VerificationRunService:
             solution = self.session.get(SolutionVersion, solution_version_id)
         if solution is None:
             raise NotFoundError("SolutionVersion", solution_version_id)
-        if solution.generation_run is None:
-            raise ValidationError(
-                "Версия решения не связана с запуском подготовки",
-                error_code="SOLUTION_GENERATION_LINK_MISSING",
-            )
         return solution
 
     def _get_rule_lookup(self, knowledge_version_ids: list[str] | str) -> dict[str, NormativeRule]:
@@ -586,7 +734,9 @@ class VerificationRunService:
         *,
         solution: SolutionVersion,
         knowledge_versions: list[KnowledgeVersion],
+        rules: list[VerificationRuleDefinition],
         selected_document_ids: list[str] | None = None,
+        principal: AuthPrincipal | None = None,
     ) -> dict[str, Any]:
         version_documents = [
             doc
@@ -621,13 +771,132 @@ class VerificationRunService:
             if role_code is None:
                 continue
             required_fragments_by_role.setdefault(role_code, []).append(fragment)
+        rule_evidence_by_code, rule_rag_summary = self._build_rule_rag_evidence(
+            rules=rules,
+            knowledge_versions=knowledge_versions,
+            selected_document_ids=selected_document_ids,
+            principal=principal,
+        )
         return {
             "required_fragments_by_role": required_fragments_by_role,
+            "rule_evidence_by_code": rule_evidence_by_code,
             "support_summary": {
                 "required_document_count": len(required_documents),
                 "required_fragment_count": len(required_fragments),
                 "required_roles_with_fragments": sorted(required_fragments_by_role),
                 "document_scope": "selected" if selected_document_ids else "full",
                 "selected_document_count": len(normalize_document_ids(selected_document_ids)),
+                "scoped_document_count": len(version_documents),
+                "rule_rag": rule_rag_summary,
             },
         }
+
+    def _build_rule_rag_evidence(
+        self,
+        *,
+        rules: list[VerificationRuleDefinition],
+        knowledge_versions: list[KnowledgeVersion],
+        selected_document_ids: list[str] | None,
+        principal: AuthPrincipal | None = None,
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+        limit = max(0, int(self.settings.verification_rule_rag_limit or 0))
+        if limit <= 0 or not rules:
+            return {}, {"enabled": False, "limit_per_rule": limit}
+
+        selected_ids = set(normalize_document_ids(selected_document_ids))
+        version_ids = [
+            str(version.knowledge_version_id)
+            for version in knowledge_versions
+            if getattr(version, "knowledge_version_id", None)
+        ]
+        evidence_by_code: dict[str, list[dict[str, Any]]] = {}
+        failures: list[dict[str, str]] = []
+        for rule in rules:
+            query_text = self._verification_rule_query(rule)
+            collected: list[dict[str, Any]] = []
+            seen_fragment_ids: set[str] = set()
+            for version_id in version_ids:
+                try:
+                    result = self.knowledge_query.search_text(
+                        query_text=query_text,
+                        knowledge_version_id=version_id,
+                        limit=limit,
+                        use_case="verification",
+                        principal=principal,
+                    )
+                except Exception as exc:
+                    failures.append(
+                        {
+                            "rule_code": rule.code,
+                            "knowledge_version_id": version_id,
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+                for fragment in result.fragments:
+                    document_id = str(fragment.document_id or "")
+                    if selected_ids and document_id not in selected_ids:
+                        continue
+                    fragment_id = str(fragment.fragment_id or "")
+                    if fragment_id and fragment_id in seen_fragment_ids:
+                        continue
+                    if fragment_id:
+                        seen_fragment_ids.add(fragment_id)
+                    content_preview = " ".join((fragment.content or "").split())[:260]
+                    collected.append(
+                        {
+                            "fragment_id": fragment_id or None,
+                            "document_id": document_id or None,
+                            "document_title": fragment.metadata.get("document_title")
+                            or fragment.title,
+                            "source_location": fragment.source_location,
+                            "score": fragment.score,
+                            "content_preview": content_preview,
+                        }
+                    )
+                    if len(collected) >= limit:
+                        break
+                if len(collected) >= limit:
+                    break
+            evidence_by_code[rule.code] = collected
+
+        return evidence_by_code, {
+            "enabled": True,
+            "limit_per_rule": limit,
+            "rule_count": len(rules),
+            "rules_with_evidence": sum(1 for items in evidence_by_code.values() if items),
+            "failure_count": len(failures),
+            "failures": failures[:8],
+        }
+
+    @staticmethod
+    def _principal_for_run(run: VerificationRun) -> AuthPrincipal | None:
+        actor = str(getattr(run, "started_by_user_id", "") or "").strip()
+        if not actor:
+            return None
+        return AuthPrincipal(
+            user_id=actor,
+            login=actor,
+            display_name=actor,
+            account_type=AccountType.HUMAN,
+            role_codes=[],
+        )
+
+    @staticmethod
+    def _verification_rule_query(rule: VerificationRuleDefinition) -> str:
+        group_terms = {
+            "technical": "technical readiness knowledge version basis documents",
+            "structure": "TOGAF sections architecture structure integrations risks constraints",
+            "normative": "normative basis ArchiMate TOGAF ODA technology standard",
+            "consistency": "architecture consistency traceability components integrations data objects",
+            "nfr": "non-functional requirements security availability performance monitoring backup",
+        }
+        return " ".join(
+            item
+            for item in [
+                rule.code,
+                rule.name,
+                group_terms.get(rule.group, rule.group),
+            ]
+            if item
+        )

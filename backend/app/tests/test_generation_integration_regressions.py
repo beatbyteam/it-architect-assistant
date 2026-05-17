@@ -96,6 +96,49 @@ def test_openai_compatible_urls_are_resolved_to_v1_endpoints() -> None:
     )
 
 
+def test_openai_compatible_generation_request_includes_sampling_options(monkeypatch) -> None:
+    captured_body: dict[str, object] = {}
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "model": "demo",
+                "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+            }
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, exc, _tb) -> None:
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            captured_body.update(json)
+            return _Response()
+
+    monkeypatch.setattr("app.integrations.generation.llm_gateway.httpx.Client", _Client)
+    provider = OpenAICompatibleSolutionProvider(
+        base_url="http://localhost:11434",
+        model_id="demo",
+        temperature=0.1,
+        top_p=0.9,
+        max_tokens=2048,
+    )
+
+    provider._post_chat_completion(messages=[{"role": "user", "content": "Return JSON"}])
+
+    assert captured_body["temperature"] == 0.1
+    assert captured_body["top_p"] == 0.9
+    assert captured_body["max_tokens"] == 2048
+
+
 def test_llm_healthcheck_treats_missing_route_as_unhealthy(monkeypatch) -> None:
     class _Response:
         status_code = 404
@@ -371,13 +414,182 @@ def test_document_memory_llm_batches_all_chunks(monkeypatch) -> None:
 
     assert captured_chunk_locations == [f"page:{index}" for index in range(1, 11)]
     assert progress_events[0]["completed_batches"] == 0
-    assert progress_events[0]["total_batches"] == 3
-    assert progress_events[-1]["completed_batches"] == 3
+    assert progress_events[0]["total_batches"] == 2
+    assert progress_events[-1]["completed_batches"] == 2
     assert progress_events[-1]["total_chunks"] == 10
     assert memory.extraction_method == "llm"
     assert memory.fallback_applied is False
-    assert memory.items[0].structured_payload["extraction_batches"] == 3
+    assert memory.items[0].structured_payload["extraction_batches"] == 2
     assert memory.items[0].structured_payload["covered_chunk_count"] == 10
+
+
+def test_document_memory_llm_compacts_large_chunks_before_request(monkeypatch) -> None:
+    captured_contents: list[str] = []
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Compacted extraction",
+                                    "items": [
+                                        {
+                                            "item_type": "mandatory_requirement",
+                                            "title": "Compacted",
+                                            "content": "Compacted chunks were processed.",
+                                            "source_location": "page:1",
+                                        }
+                                    ],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, exc, _tb) -> None:
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            request_payload = __import__("json").loads(
+                str(json["messages"][1]["content"])  # type: ignore[index]
+            )
+            captured_contents.extend(chunk["content"] for chunk in request_payload["chunks"])
+            return _Response()
+
+    monkeypatch.setattr("app.integrations.knowledge.knowledge_extraction.httpx.Client", _Client)
+
+    neutral_rows = [
+        f"Neutral row {index} describes background context for migration planning."
+        for index in range(60)
+    ]
+    important_row = "Critical Service must validate access tokens before processing requests."
+    large_content = "\n".join([*neutral_rows, important_row])
+    memory = extract_document_memory(
+        document_title="Large Standard",
+        document_type=DocumentType.NORMATIVE,
+        normalized_text=large_content,
+        chunks=[
+            {
+                "document_chunk_id": "chunk-1",
+                "title": "Large Standard",
+                "content": large_content,
+                "source_location": "page:1",
+            }
+        ],
+        llm_config=DocumentMemoryLlmConfig(
+            provider="openai_compatible",
+            base_url="http://localhost:11434",
+            api_key=None,
+            model_id="demo",
+            timeout_sec=1.0,
+        ),
+    )
+
+    assert captured_contents
+    assert len(captured_contents[0]) < len(large_content)
+    assert important_row in captured_contents[0]
+    assert "Neutral row 40" not in captured_contents[0]
+    assert memory.extraction_method == "llm"
+
+
+def test_document_memory_llm_uses_ranked_chunk_subset_when_limited(monkeypatch) -> None:
+    captured_chunk_locations: list[str] = []
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "summary": "Selected extraction",
+                                    "items": [
+                                        {
+                                            "item_type": "mandatory_requirement",
+                                            "title": "Selected",
+                                            "content": "Selected chunks were processed.",
+                                            "source_location": captured_chunk_locations[-1],
+                                        }
+                                    ],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class _Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, exc, _tb) -> None:
+            return None
+
+        def post(self, url: str, json: dict[str, object], headers: dict[str, str]):
+            request_payload = __import__("json").loads(
+                str(json["messages"][1]["content"])  # type: ignore[index]
+            )
+            captured_chunk_locations.extend(
+                chunk["source_location"] for chunk in request_payload["chunks"]
+            )
+            return _Response()
+
+    monkeypatch.setattr("app.integrations.knowledge.knowledge_extraction.httpx.Client", _Client)
+
+    chunks = [
+        {
+            "document_chunk_id": f"chunk-{index}",
+            "title": f"Page {index}",
+            "content": "Neutral background text for the source document.",
+            "source_location": f"page:{index}",
+        }
+        for index in range(1, 7)
+    ]
+    chunks[2]["content"] = (
+        "Payment API must validate access tokens, expose REST endpoints, "
+        "and record risk of gateway timeout."
+    )
+    memory = extract_document_memory(
+        document_title="Large Component Spec",
+        document_type=DocumentType.ARCHITECTURE,
+        normalized_text="\n".join(str(chunk["content"]) for chunk in chunks),
+        chunks=chunks,
+        llm_config=DocumentMemoryLlmConfig(
+            provider="openai_compatible",
+            base_url="http://localhost:11434",
+            api_key=None,
+            model_id="demo",
+            timeout_sec=1.0,
+        ),
+        llm_max_chunks=3,
+    )
+
+    assert captured_chunk_locations == ["page:1", "page:3", "page:6"]
+    assert memory.extraction_method == "hybrid"
+    assert memory.llm_selection_applied is True
+    assert memory.items[0].structured_payload["covered_chunk_count"] == 3
+    assert memory.items[0].structured_payload["source_chunk_count"] == 6
 
 
 def test_document_memory_invalid_llm_json_falls_back_to_heuristic(monkeypatch) -> None:

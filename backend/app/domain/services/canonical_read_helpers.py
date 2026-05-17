@@ -332,6 +332,7 @@ def build_protocol_explainability(
             "validation_scope": scope_snapshot.get("validation_scope"),
             "executed_rule_groups": diagnostics.get("executed_rule_groups") or [],
             "current_rule_group": diagnostics.get("current_rule_group"),
+            "score": diagnostics.get("verification_score"),
         },
     }
 

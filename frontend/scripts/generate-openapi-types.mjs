@@ -328,12 +328,21 @@ export interface KnowledgeScopeVersionSnapshot {
   basis_documents?: Array<Record<string, unknown>>;
 }
 
+export interface KnowledgeScopeDocumentSnapshot {
+  mode?: string | null;
+  document_count?: number | null;
+  selected_document_ids?: string[];
+  effective_document_ids?: string[];
+  selected_documents?: Array<Record<string, unknown>>;
+}
+
 export interface KnowledgeScope {
   mandatory_version?: KnowledgeScopeVersionSnapshot | null;
   selected_user_version?: KnowledgeScopeVersionSnapshot | null;
   effective_version_ids: string[];
   selected_generation_version_id?: string | null;
   basis_documents?: Array<Record<string, unknown>>;
+  document_scope?: KnowledgeScopeDocumentSnapshot | null;
   snapshot_hash?: string | null;
 }
 

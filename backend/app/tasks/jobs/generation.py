@@ -12,12 +12,15 @@ except Exception:  # pragma: no cover - optional dependency fallback
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.domain.services.generation_core import GenerationRunService
-from app.tasks.workers.celery_app import celery_app
+from app.tasks.workers.celery_app import ARCHITECTURE_GENERATION_QUEUE, celery_app
 
 logger = get_task_logger(__name__)
 
 
-@celery_app.task(name="app.tasks.jobs.generation.run_generation_job")
+@celery_app.task(
+    name="app.tasks.jobs.generation.run_generation_job",
+    queue=ARCHITECTURE_GENERATION_QUEUE,
+)
 def run_generation_job(generation_run_id: str) -> dict[str, str]:
     session = SessionLocal()
     try:

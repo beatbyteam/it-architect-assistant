@@ -20,22 +20,22 @@ Accepted
 
 В P1 приняты такие решения:
 
-1. `verification/rule_engine.py` оставляет только orchestration, а rule executors вынесены в `verification/rule_executors.py`.
-2. generation payload normalization вынесен в `integrations/generation/payload_normalization.py`.
-3. knowledge serialization вынесена в `knowledge/serializers.py`.
-4. diff/error-classification helpers knowledge update вынесены в `knowledge/update_diffing.py`.
-5. read-model helpers canonical read service вынесены в `canonical_read_helpers.py`.
-6. engine получает явный `VerificationRuleExecutor` protocol для подмены executors в тестах.
+1. Логика оркестрации проверки осталась в сервисе оркестрации, а исполнители правил вынесены в `verification/rule_executors.py`.
+2. Нормализация payload генерации вынесена в `integrations/generation/payload_normalization.py`.
+3. Сериализация данных базы знаний вынесена в `knowledge/serializers.py`.
+4. Helpers для diff и классификации ошибок при обновлении базы знаний вынесены в `knowledge/update_diffing.py`.
+5. Helpers для read-model в canonical read service вынесены в `canonical_read_helpers.py`.
+6. Engine получил явный protocol `VerificationRuleExecutor`, чтобы подменять executors в тестах.
 
 ## Consequences
 
 Плюсы:
 
-- orchestration-файлы стали короче и понятнее;
+- файлы оркестрации стали короче и понятнее;
 - чистые helper-модули проще тестировать отдельно;
 - CI теперь может контролировать module guardrails.
 
 Минусы:
 
 - часть бизнес-логики всё ещё остаётся крупной, особенно в `mvp_canonical.py`, `update_service.py` и `payload_normalization.py`;
-- для следующего этапа нужен ещё один проход decomposition по use-case слоям.
+- на следующем этапе нужен ещё один проход декомпозиции по use-case слоям.

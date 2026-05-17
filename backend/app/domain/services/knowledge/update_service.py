@@ -853,7 +853,14 @@ class KnowledgeUpdateService:
         def _queue_run() -> KnowledgeUpdateRun:
             from app.tasks.jobs.knowledge import run_knowledge_update
 
-            run_knowledge_update.delay(str(run.update_run_id))
+            task_id = f"knowledge-update:{run.update_run_id}"
+            run_knowledge_update.apply_async(args=[str(run.update_run_id)], task_id=task_id)
+            run.summary = {
+                **(run.summary or {}),
+                "celery_task_id": task_id,
+            }
+            self.session.add(run)
+            self.session.commit()
             return run
 
         def _handle_queue_failure(exc: Exception) -> KnowledgeUpdateRun:
@@ -1044,6 +1051,169 @@ class KnowledgeUpdateService:
         )
         return payload
 
+    def cancel_run(
+        self, update_run_id: str, principal: AuthPrincipal | None = None
+    ) -> dict[str, Any]:
+        run = self.get_run(update_run_id, principal)
+        if run.status in TERMINAL_UPDATE_STATUSES:
+            if run.status == KnowledgeUpdateStatus.CANCELED:
+                return self._serialize_run(run)
+            raise ConflictError(
+                "Knowledge update run is already finished",
+                error_code="KNOWLEDGE_UPDATE_RUN_ALREADY_FINISHED",
+            )
+
+        previous_stage = run.current_stage or "queued"
+        finished_at = datetime.now(UTC)
+        run.status = KnowledgeUpdateStatus.CANCELED
+        run.current_stage = "canceled"
+        run.finished_at = finished_at
+        if run.started_at is not None:
+            run.duration_sec = int(max(0.0, (finished_at - run.started_at).total_seconds()))
+
+        summary = dict(run.summary or {})
+        quality_summary = dict(summary.get("quality_summary") or {})
+        quality_summary.update(
+            {
+                "status": KnowledgeUpdateStatus.CANCELED.value,
+                "current_stage": "canceled",
+                "error_code": "CANCELED_BY_USER",
+                "canceled_at": finished_at.isoformat(),
+                "active_stage": {
+                    "stage": "canceled",
+                    "operation": "user_cancel",
+                    "message": "Обновление базы знаний остановлено пользователем.",
+                    "updated_at": finished_at.isoformat(),
+                },
+            }
+        )
+        stage_history = list(summary.get("stage_history") or [])
+        if previous_stage != "canceled":
+            stage_history = self._append_stage_history(
+                stage_history,
+                previous_stage,
+                detail="Knowledge update run canceled by user",
+                stage_status="canceled",
+            )
+            self._record_operation_step(
+                run,
+                stage=previous_stage,
+                status="canceled",
+                detail="Knowledge update run canceled by user",
+                error_code="CANCELED_BY_USER",
+            )
+        stage_history = self._append_stage_history(
+            stage_history,
+            "canceled",
+            detail="Knowledge update run canceled by user",
+            stage_status="canceled",
+        )
+        summary.update(
+            {
+                "quality_summary": quality_summary,
+                "stage_history": stage_history,
+                "error_code": "CANCELED_BY_USER",
+                "canceled_at": finished_at.isoformat(),
+            }
+        )
+
+        candidate = self.versions.get_by_update_run_id(run.update_run_id)
+        if candidate is not None:
+            summary["candidate_knowledge_version_id"] = str(candidate.knowledge_version_id)
+            if candidate.status not in {
+                KnowledgeVersionStatus.ACTIVE,
+                KnowledgeVersionStatus.ARCHIVED,
+            }:
+                candidate.status = KnowledgeVersionStatus.REJECTED
+                candidate.summary = {
+                    **(candidate.summary or {}),
+                    "status": KnowledgeUpdateStatus.CANCELED.value,
+                    "error_code": "CANCELED_BY_USER",
+                    "canceled_at": finished_at.isoformat(),
+                }
+                self.session.add(candidate)
+
+        run.summary = summary
+        self._record_operation_step(
+            run,
+            stage="canceled",
+            status="canceled",
+            detail="Knowledge update run canceled by user",
+            error_code="CANCELED_BY_USER",
+            payload={
+                "previous_stage": previous_stage,
+                "candidate_knowledge_version_id": summary.get("candidate_knowledge_version_id"),
+            },
+        )
+        self.session.add(run)
+        self.audit.record(
+            event_type="knowledge.refresh.canceled",
+            target_type="knowledge_update_run",
+            target_id=run.update_run_id,
+            message="Knowledge update run canceled by user",
+            actor_user_id=run.initiator_user_id,
+            correlation_id=run.correlation_id,
+            payload=summary,
+            severity=AuditSeverity.WARNING,
+        )
+        self.session.commit()
+        self._revoke_update_task(run)
+        with suppress(Exception):
+            self.session.refresh(run)
+        return self._serialize_run(run)
+
+    def _revoke_update_task(self, run: KnowledgeUpdateRun) -> None:
+        task_ids = {
+            f"knowledge-update:{run.update_run_id}",
+            str((run.summary or {}).get("celery_task_id") or "").strip(),
+        }
+        self._revoke_celery_tasks(
+            {item for item in task_ids if item},
+            task_name="app.tasks.jobs.knowledge.run_knowledge_update",
+            run_id=str(run.update_run_id),
+        )
+
+    def _revoke_celery_tasks(
+        self, task_ids: set[str], *, task_name: str, run_id: str
+    ) -> None:
+        try:
+            from app.tasks.workers.celery_app import celery_app
+
+            control = getattr(celery_app, "control", None)
+            revoke = getattr(control, "revoke", None)
+            if not callable(revoke):
+                return
+            for task_id in task_ids:
+                revoke(task_id, terminate=True, signal="SIGTERM")
+            inspector = getattr(control, "inspect", lambda **_kwargs: None)(timeout=1.0)
+            if inspector is None:
+                return
+            for method_name in ("active", "reserved", "scheduled"):
+                method = getattr(inspector, method_name, None)
+                if not callable(method):
+                    continue
+                for tasks in (method() or {}).values():
+                    for task in tasks or []:
+                        if task.get("name") != task_name:
+                            continue
+                        if run_id not in str(task.get("args", "")) and run_id not in str(
+                            task.get("kwargs", "")
+                        ):
+                            continue
+                        task_id = str(task.get("id") or "").strip()
+                        if task_id:
+                            revoke(task_id, terminate=True, signal="SIGTERM")
+        except Exception as exc:
+            logger.warning(
+                "knowledge_update_celery_revoke_failed",
+                extra={
+                    "stage": "canceled",
+                    "stage_status": "revoke_failed",
+                    "run_id": run_id,
+                    "error": str(exc),
+                },
+            )
+
     def list_notifications(
         self,
         *,
@@ -1132,6 +1302,7 @@ class KnowledgeUpdateService:
             "active": "Версия знаний active",
             "failed": "Обновление завершилось ошибкой",
             "completed": "Версия знаний подготовлена",
+            "canceled": "Обновление базы знаний остановлено",
         }
         record_operation_step(
             self.operations,
@@ -1406,6 +1577,7 @@ class KnowledgeUpdateService:
         )
         if llm_skipped_reason:
             llm_config = None
+        llm_max_chunks = self._document_memory_llm_chunk_limit()
         memory = extract_document_memory(
             document_title=document.title,
             document_type=document.document_type,
@@ -1420,6 +1592,7 @@ class KnowledgeUpdateService:
                 for chunk in chunk_entities
             ],
             llm_config=llm_config,
+            llm_max_chunks=llm_max_chunks,
             progress_callback=progress_callback,
         )
         by_source_location = {
@@ -1433,6 +1606,14 @@ class KnowledgeUpdateService:
                 structured_payload.setdefault("fallback_reason", memory.fallback_reason)
             if llm_skipped_reason:
                 structured_payload.setdefault("llm_skipped_reason", llm_skipped_reason)
+            if memory.llm_selection_applied:
+                structured_payload.setdefault("llm_selection_applied", True)
+                structured_payload.setdefault(
+                    "llm_selected_chunk_count", memory.llm_selected_chunk_count
+                )
+                structured_payload.setdefault(
+                    "llm_source_chunk_count", memory.llm_source_chunk_count
+                )
             raw_source_location = memory_item.source_location
             source_location = _fit_source_location(raw_source_location)
             if raw_source_location and source_location != raw_source_location:
@@ -1467,7 +1648,19 @@ class KnowledgeUpdateService:
             "llm_skipped": bool(llm_skipped_reason),
             "fallback_applied": memory.fallback_applied,
             "fallback_reason": memory.fallback_reason or llm_skipped_reason,
+            "llm_source_chunk_count": memory.llm_source_chunk_count,
+            "llm_selected_chunk_count": memory.llm_selected_chunk_count,
+            "llm_selection_applied": memory.llm_selection_applied,
         }
+
+    def _document_memory_llm_chunk_limit(self) -> int | None:
+        settings = getattr(self, "settings", None)
+        if settings is None:
+            return None
+        max_chunks_raw = getattr(settings, "knowledge_llm_extraction_max_chunks", None)
+        if max_chunks_raw is None:
+            return None
+        return int(max_chunks_raw or 0)
 
     def _document_memory_llm_skip_reason(
         self,
@@ -1480,29 +1673,7 @@ class KnowledgeUpdateService:
         if llm_config is None or not llm_config.is_available():
             return None
         settings = getattr(self, "settings", None)
-        threshold_raw = (
-            getattr(settings, "knowledge_large_document_threshold_bytes", 1_048_576)
-            if settings is not None
-            else 1_048_576
-        )
-        max_chunks_raw = (
-            getattr(settings, "knowledge_llm_extraction_max_chunks", 48)
-            if settings is not None
-            else 48
-        )
-        threshold_bytes = int(threshold_raw or 0)
-        max_chunks = int(max_chunks_raw or 0)
-        document_size_bytes = int(getattr(document, "size_bytes", 0) or 0)
-        text_size_bytes = len((normalized_text or "").encode("utf-8"))
-        if threshold_bytes > 0 and document_size_bytes >= threshold_bytes:
-            return (
-                "large_document_file_size:"
-                f"{document_size_bytes}>={threshold_bytes}"
-            )
-        if threshold_bytes > 0 and text_size_bytes >= threshold_bytes:
-            return f"large_document_text_size:{text_size_bytes}>={threshold_bytes}"
-        if max_chunks > 0 and chunk_count > max_chunks:
-            return f"chunk_count:{chunk_count}>{max_chunks}"
+        del document, normalized_text, chunk_count, settings
         return None
 
     @staticmethod

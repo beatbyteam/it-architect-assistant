@@ -11,6 +11,7 @@ QUESTION_TEMPLATES: dict[str, str] = {
     "constraints": "Какие есть ограничения: сроки, безопасность, производительность, бюджет, нормативные требования?",
     "integrations": "С какими системами, API, сервисами или данными требуется интеграция? Если интеграций нет, это нужно явно зафиксировать.",
     "expected_output": "Какой ожидается объём и фокус решения: концепт, high-level design, интеграционная схема, компонентная модель?",
+    "nfr": "Какие нефункциональные требования важны: безопасность, доступность, производительность, мониторинг, резервное копирование?",
 }
 
 
@@ -80,6 +81,7 @@ class TaskReadinessPolicy:
         "constraints": 8,
         "integrations": 8,
         "expected_output": 8,
+        "nfr": 8,
     }
 
     QUESTION_ASPECT_LABELS: dict[str, dict[str, str]] = {
@@ -105,6 +107,12 @@ class TaskReadinessPolicy:
             "artifact_type": "какой именно артефакт нужен на выходе",
             "detail_level": "какая нужна глубина или фокус результата",
         },
+        "nfr": {
+            "security": "требования безопасности и доступа",
+            "availability": "доступность или отказоустойчивость",
+            "performance": "производительность, нагрузка или SLA",
+            "operations": "мониторинг, резервное копирование или восстановление",
+        },
     }
 
     def assess(self, task: BusinessTask) -> ReadinessAssessment:
@@ -112,7 +120,7 @@ class TaskReadinessPolicy:
         metadata = dict(getattr(task, "task_metadata", None) or {})
         context_notes = self._extract_context_notes(metadata)
         text_parts = [raw_text, *context_notes]
-        text_lower = "\n".join(text_parts).lower()
+        combined_text = "\n".join(text_parts)
         answers = {
             str(key): str(value).strip()
             for key, value in (metadata.get("clarification_answers") or {}).items()
@@ -123,72 +131,29 @@ class TaskReadinessPolicy:
             code: self.evaluate_answer(answers.get(code), code=code)
             for code in QUESTION_TEMPLATES
         }
+        task_text_evaluations = {
+            code: self.evaluate_answer(combined_text, code=code)
+            for code in QUESTION_TEMPLATES
+        }
 
-        def present(code: str, *, tokens: list[str], fallback: bool = False) -> bool:
-            return (
-                answer_evaluations[code].status in {"partial", "ready"}
-                or fallback
-                or any(token in text_lower for token in tokens)
-            )
+        def present(code: str, *, metadata_key: str | None = None) -> bool:
+            if answer_evaluations[code].status == "ready":
+                return True
+            if task_text_evaluations[code].status == "ready":
+                return True
+            if metadata_key is None:
+                return False
+            metadata_value = metadata.get(metadata_key)
+            if not metadata_value:
+                return False
+            return self.evaluate_answer(str(metadata_value), code=code).status == "ready"
 
-        goal_present = present(
-            "goal",
-            tokens=["цель", "результат", "эффект", "outcome", "целевой", "business outcome"],
-            fallback=len(raw_text) >= 80,
-        )
-        context_present = present(
-            "context",
-            tokens=["контекст", "текущ", "существующ", "as is", "сейчас", "процесс", "система"],
-            fallback=bool(context_notes),
-        )
-        constraints_present = present(
-            "constraints",
-            tokens=[
-                "огранич",
-                "срок",
-                "sla",
-                "бюдж",
-                "безопас",
-                "нагруз",
-                "регламент",
-                "требован",
-                "latency",
-                "availability",
-            ],
-        )
-        integrations_present = present(
-            "integrations",
-            tokens=[
-                "api",
-                "интегр",
-                "сервис",
-                "бд",
-                "очеред",
-                "mq",
-                "rest",
-                "soap",
-                "gql",
-                "bus",
-                "event",
-                "webhook",
-            ],
-        )
-        expected_output_present = present(
-            "expected_output",
-            tokens=[
-                "решени",
-                "схем",
-                "архитектур",
-                "компонент",
-                "дизайн",
-                "high-level",
-                "hld",
-                "lld",
-                "артефакт",
-                "документ",
-            ],
-            fallback=bool(metadata.get("expected_output")),
-        )
+        goal_present = present("goal")
+        context_present = present("context", metadata_key="context")
+        constraints_present = present("constraints")
+        integrations_present = present("integrations")
+        expected_output_present = present("expected_output", metadata_key="expected_output")
+        nfr_present = present("nfr")
 
         missing: list[str] = []
         if not goal_present:
@@ -201,6 +166,8 @@ class TaskReadinessPolicy:
             missing.append("integrations")
         if not expected_output_present:
             missing.append("expected_output")
+        if not nfr_present:
+            missing.append("nfr")
 
         signals = {
             "raw_text_length": len(raw_text),
@@ -210,13 +177,39 @@ class TaskReadinessPolicy:
             "constraints_present": constraints_present,
             "integrations_present": integrations_present,
             "expected_output_present": expected_output_present,
+            "nfr_present": nfr_present,
             "clarification_answer_count": len(answers),
+            "task_text_evaluations": {
+                code: evaluation.as_dict()
+                for code, evaluation in task_text_evaluations.items()
+            },
+            "input_presence": {
+                code: {
+                    "answer_status": answer_evaluations[code].status,
+                    "task_text_status": task_text_evaluations[code].status,
+                    "present": present_value,
+                }
+                for code, present_value in {
+                    "goal": goal_present,
+                    "context": context_present,
+                    "constraints": constraints_present,
+                    "integrations": integrations_present,
+                    "expected_output": expected_output_present,
+                    "nfr": nfr_present,
+                }.items()
+            },
         }
+
+        def question_evaluation(code: str) -> AnswerEvaluation:
+            answer_evaluation = answer_evaluations[code]
+            if answer_evaluation.normalized_answer:
+                return answer_evaluation
+            return task_text_evaluations[code]
 
         question_items = [
             {
                 "question_code": code,
-                "question_text": self.build_question_text(code, answer_evaluations.get(code)),
+                "question_text": self.build_question_text(code, question_evaluation(code)),
                 "required": True,
             }
             for code in missing
@@ -258,6 +251,7 @@ class TaskReadinessPolicy:
             "constraints": "Ограничения и обязательные условия.",
             "integrations": "Интеграции с системами, API, сервисами или данными.",
             "expected_output": "Ожидаемый результат и формат архитектурного артефакта.",
+            "nfr": "Нефункциональные требования: безопасность, доступность, производительность, мониторинг и резервное копирование.",
         }.get(code, QUESTION_TEMPLATES[code])
 
         if evaluation is None or evaluation.status == "ready":
@@ -292,6 +286,7 @@ class TaskReadinessPolicy:
             "constraints": self._evaluate_constraints_answer,
             "integrations": self._evaluate_integrations_answer,
             "expected_output": self._evaluate_expected_output_answer,
+            "nfr": self._evaluate_nfr_answer,
         }.get(code or "")
 
         if evaluator is None:
@@ -676,6 +671,8 @@ class TaskReadinessPolicy:
             lowered,
             [
                 "верхнеуров",
+                "high-level",
+                "hld",
                 "деталь",
                 "на уровне",
                 "для согласования",
@@ -689,7 +686,7 @@ class TaskReadinessPolicy:
         ):
             found.append("detail_level")
 
-        if "artifact_type" in found:
+        if {"artifact_type", "detail_level"}.issubset(found):
             status = "ready"
         elif found:
             status = "partial"
@@ -703,4 +700,98 @@ class TaskReadinessPolicy:
             missing_aspects=[
                 item for item in ("artifact_type", "detail_level") if item not in found
             ],
+        )
+
+    def _evaluate_nfr_answer(self, normalized: str) -> AnswerEvaluation:
+        lowered = normalized.lower()
+        if self._contains_any(
+            lowered,
+            [
+                "нет специальных nfr",
+                "нет специальных нефункциональных",
+                "нефункциональных требований нет",
+                "без специальных нефункциональных",
+            ],
+        ):
+            return AnswerEvaluation(
+                status="ready",
+                normalized_answer=normalized,
+                found_aspects=["security", "availability", "performance", "operations"],
+                missing_aspects=[],
+                explicit_negative=True,
+            )
+
+        groups = {
+            "security": [
+                "безопас",
+                "доступ",
+                "аутенти",
+                "авториз",
+                "шифр",
+                "tls",
+                "sso",
+                "mfa",
+                "rbac",
+                "персональн",
+                "security",
+                "authentication",
+                "authorization",
+                "encryption",
+            ],
+            "availability": [
+                "доступност",
+                "отказоуст",
+                "резервирован",
+                "реплика",
+                "кластер",
+                "failover",
+                "availability",
+                "ha",
+                "resilience",
+                "redundancy",
+            ],
+            "performance": [
+                "производ",
+                "нагруз",
+                "задерж",
+                "масштаб",
+                "sla",
+                "rps",
+                "latency",
+                "throughput",
+                "performance",
+                "scalability",
+            ],
+            "operations": [
+                "монитор",
+                "лог",
+                "метрик",
+                "трасс",
+                "alert",
+                "backup",
+                "бэкап",
+                "резервн",
+                "восстанов",
+                "rpo",
+                "rto",
+                "observability",
+                "monitoring",
+            ],
+        }
+        found = [
+            name
+            for name, patterns in groups.items()
+            if self._contains_any(lowered, patterns)
+        ]
+        if len(found) >= 3:
+            status = "ready"
+        elif found:
+            status = "partial"
+        else:
+            status = "insufficient"
+        return AnswerEvaluation(
+            status=status,
+            normalized_answer=normalized,
+            found_aspects=found,
+            missing_aspects=[item for item in groups if item not in found],
         )

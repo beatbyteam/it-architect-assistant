@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile, status
 
-from app.api.deps import PrincipalDep, SessionDep, SettingsDep, require_roles
+from app.api.deps import PrincipalDep, SessionDep, SettingsDep, WriteGuardDep, require_roles
 from app.bootstrap.bundles import import_knowledge_bundle
 from app.core.exceptions import ValidationError
 from app.core.security import AuthPrincipal
@@ -121,6 +121,7 @@ __all__ = [
     "UploadFile",
     "UserDep",
     "ValidationError",
+    "WriteGuardDep",
     "aggregate_retrieval_eval",
     "enforce_document_size_limit",
     "evaluate_retrieval_case",

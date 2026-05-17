@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { getAuditEvents, getOperationMetrics, getOperations } from '../shared/api/operations';
 import { auditEventTitle, auditMessageText, formatDateTime, operationKindLabel, titleStatus } from '../shared/lib/format';
+import { matchesSearch } from '../shared/lib/search';
 import { Badge, Banner, Button, Card, EmptyState, ErrorNotice, Input, LoadingState, PageHeader, Select, StatCard } from '../shared/ui/components';
 import type { AuditEvent, OperationItem } from '../types/api';
 
@@ -24,25 +25,39 @@ function actorLabel(item: OperationItem) {
   return item.actor_label ?? item.initiator_user_id ?? 'Система';
 }
 
-function operationSearchText(item: OperationItem) {
+function operationSearchParts(item: OperationItem) {
   return [
     item.operation_id,
     item.operation_kind,
+    operationKindLabel(item.operation_kind),
     item.status,
+    titleStatus(item.status),
     item.actor_label,
     item.initiator_user_id,
     item.error_code,
     item.last_problem_step,
+    titleStatus(item.last_problem_step),
     item.current_stage,
+    titleStatus(item.current_stage),
     item.correlation_id,
-  ].filter(Boolean).join(' ').toLowerCase();
+    item.entity_refs,
+    item.diagnostics,
+  ];
 }
 
-function auditSearchText(item: AuditEvent) {
-  return [item.event_type, item.message, item.severity, item.target_type, item.target_id, item.correlation_id]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+function auditSearchParts(item: AuditEvent) {
+  return [
+    item.event_type,
+    auditEventTitle(item.event_type),
+    item.message,
+    auditMessageText(item.message),
+    item.severity,
+    titleStatus(item.severity),
+    item.target_type,
+    item.target_id,
+    item.payload,
+    item.correlation_id,
+  ];
 }
 
 export function OperationsPage() {
@@ -51,6 +66,12 @@ export function OperationsPage() {
   const [search, setSearch] = useState('');
   const [operationsLimit, setOperationsLimit] = useState(OPERATIONS_LIMIT_STEP);
   const [auditLimit, setAuditLimit] = useState(AUDIT_LIMIT_STEP);
+  const filtersAreActive = Boolean(operationKind || statusFilter || search);
+  const resetFilters = () => {
+    setOperationKind('');
+    setStatusFilter('');
+    setSearch('');
+  };
 
   const metricsQuery = useQuery({ queryKey: ['operation-metrics-page'], queryFn: ({ signal }) => getOperationMetrics({ signal }), staleTime: 10_000 });
   const operationsQuery = useQuery({
@@ -61,8 +82,8 @@ export function OperationsPage() {
   const auditQuery = useQuery({ queryKey: ['audit-events', auditLimit], queryFn: ({ signal }) => getAuditEvents(auditLimit, { signal }), staleTime: 5_000 });
 
   const searchValue = search.trim().toLowerCase();
-  const operations = useMemo(() => (operationsQuery.data ?? []).filter((item: OperationItem) => !searchValue || operationSearchText(item).includes(searchValue)), [operationsQuery.data, searchValue]);
-  const auditEvents = useMemo(() => (auditQuery.data ?? []).filter((item: AuditEvent) => !searchValue || auditSearchText(item).includes(searchValue)), [auditQuery.data, searchValue]);
+  const operations = useMemo(() => (operationsQuery.data ?? []).filter((item: OperationItem) => matchesSearch(operationSearchParts(item), searchValue)), [operationsQuery.data, searchValue]);
+  const auditEvents = useMemo(() => (auditQuery.data ?? []).filter((item: AuditEvent) => matchesSearch(auditSearchParts(item), searchValue)), [auditQuery.data, searchValue]);
 
   const canLoadMoreOperations = operationsLimit < OPERATIONS_LIMIT_MAX && (operationsQuery.data?.length ?? 0) >= operationsLimit;
   const canLoadMoreAudit = auditLimit < AUDIT_LIMIT_MAX && (auditQuery.data?.length ?? 0) >= auditLimit;
@@ -94,7 +115,11 @@ export function OperationsPage() {
       </div>
       {metricsQuery.isError ? <ErrorNotice error={metricsQuery.error} fallback="Не удалось загрузить сводку журнала." /> : null}
 
-      <Card title="Фильтры" subtitle="Тип и статус применяются к процессам. Поиск работает и по процессам, и по системным событиям.">
+      <Card
+        title="Фильтры"
+        subtitle="Тип и статус применяются к процессам. Поиск работает и по процессам, и по системным событиям."
+        actions={filtersAreActive ? <Button onClick={resetFilters}>Сбросить фильтры</Button> : null}
+      >
         <div className="toolbar-grid toolbar-grid-4">
           <Select value={operationKind} onChange={(event: ChangeEvent<HTMLSelectElement>) => setOperationKind(event.target.value)}>
             <option value="">Все процессы</option>
@@ -113,11 +138,6 @@ export function OperationsPage() {
             <option value="canceled">Остановлено</option>
           </Select>
           <Input value={search} onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)} placeholder="Шаг, ошибка, исполнитель, id или код связи" />
-          <div className="actions end-span">
-            {(operationKind || statusFilter || search) ? (
-              <Button onClick={() => { setOperationKind(''); setStatusFilter(''); setSearch(''); }}>Сбросить фильтры</Button>
-            ) : null}
-          </div>
         </div>
       </Card>
 
@@ -128,7 +148,7 @@ export function OperationsPage() {
           ) : operationsQuery.isError ? (
             <ErrorNotice error={operationsQuery.error} fallback="Не удалось загрузить процессы." />
           ) : operations.length === 0 ? (
-            <EmptyState title="Процессов не найдено" description="Проверь фильтры или увеличь лимит загрузки." />
+            <EmptyState title="Процессов не найдено" description="Проверьте фильтры или увеличьте лимит загрузки." />
           ) : (
             <div className="timeline">
               {operations.map((item: OperationItem) => (
@@ -157,7 +177,7 @@ export function OperationsPage() {
           ) : auditQuery.isError ? (
             <ErrorNotice error={auditQuery.error} fallback="Не удалось загрузить системные события." />
           ) : auditEvents.length === 0 ? (
-            <EmptyState title="Событий не найдено" description="Проверь поиск или увеличь лимит загрузки." />
+            <EmptyState title="Событий не найдено" description="Проверьте поиск или увеличьте лимит загрузки." />
           ) : (
             <div className="timeline">
               {auditEvents.map((item: AuditEvent) => {

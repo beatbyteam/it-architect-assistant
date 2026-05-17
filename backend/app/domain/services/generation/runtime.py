@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -17,6 +18,10 @@ from app.domain.services.observability import (
 )
 
 from .common import TERMINAL_GENERATION_STATUSES, _json_safe, _prompt_context_items, logger
+
+
+class GenerationRunCanceled(Exception):
+    """Internal signal used to stop a generation worker after an API cancellation."""
 
 
 def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRun:
@@ -54,10 +59,11 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                 "event_type": "pipeline_started",
             },
         )
-        _mark_run_started(service, run, stage_metrics=stage_metrics)
-
         try:
+            _raise_if_generation_canceled(service, run)
+            _mark_run_started(service, run, stage_metrics=stage_metrics)
             stage_obs: StageObservation
+            _raise_if_generation_canceled(service, run)
             with observe_stage(
                 stage_metrics, "retrieving", logger=logger, log_message="generation_stage"
             ) as stage_obs:
@@ -81,6 +87,7 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                         "required_role_coverage": coverage_summary.get("required_role_coverage"),
                     }
                 )
+            _raise_if_generation_canceled(service, run)
             with observe_stage(
                 stage_metrics, "prompting", logger=logger, log_message="generation_stage"
             ) as stage_obs:
@@ -98,6 +105,7 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                         "dropped_fragment_count": len(prompt_artifact.dropped_fragment_ids),
                     }
                 )
+            _raise_if_generation_canceled(service, run)
             with observe_stage(
                 stage_metrics, "model_generation", logger=logger, log_message="generation_stage"
             ) as stage_obs:
@@ -117,6 +125,7 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                         "model_id": service.llm_gateway.last_call_diagnostics.get("model_id"),
                     }
                 )
+            _raise_if_generation_canceled(service, run)
             with observe_stage(
                 stage_metrics, "validating", logger=logger, log_message="generation_stage"
             ) as stage_obs:
@@ -134,6 +143,7 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                         "citation_coverage": validation_summary.get("citation_coverage"),
                     }
                 )
+            _raise_if_generation_canceled(service, run)
             with observe_stage(
                 stage_metrics, "persisting", logger=logger, log_message="generation_stage"
             ) as stage_obs:
@@ -150,6 +160,7 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                     stage_metrics=stage_metrics,
                 )
                 stage_obs.update({"solution_version_id": str(solution.solution_version_id)})
+            _raise_if_generation_canceled(service, run)
             with observe_stage(
                 stage_metrics, "publishing", logger=logger, log_message="generation_stage"
             ) as stage_obs:
@@ -190,6 +201,21 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                 },
             )
             return completed_run
+        except GenerationRunCanceled:
+            service.session.rollback()
+            canceled_run = service.get_run(generation_run_id)
+            logger.info(
+                "generation_run_canceled",
+                extra={
+                    "stage": canceled_run.current_stage,
+                    "stage_status": "canceled",
+                    "run_id": str(canceled_run.generation_run_id),
+                    "entity_id": str(canceled_run.business_task_id),
+                    "outcome": "canceled",
+                    "event_type": "pipeline_finished",
+                },
+            )
+            return canceled_run
         except Exception as exc:
             _fail_generation_run(
                 service,
@@ -221,6 +247,13 @@ def _attach_pipeline_observability(
         else None,
     }
     return payload
+
+
+def _raise_if_generation_canceled(service: Any, run: GenerationRun) -> None:
+    with suppress(Exception):
+        service.session.refresh(run)
+    if run.status == GenerationRunStatus.CANCELED:
+        raise GenerationRunCanceled()
 
 
 def _active_stage(stage: str, message: str, **values: Any) -> dict[str, Any]:
@@ -291,6 +324,7 @@ def _run_retrieval_stage(
             scope_snapshot.get("effective_version_ids") or [str(run.knowledge_version_id)]
         ),
         principal=principal,
+        limit=service.settings.generation_retrieval_limit,
     )
     coverage_summary = dict(retrieval.diagnostics.get("coverage_summary") or {})
     if not service.retrieval.is_coverage_sufficient(coverage_summary):
@@ -464,6 +498,7 @@ def _run_model_generation_stage(
         retrieved_fragments=retrieval.fragments,
         prompt_artifact=prompt_artifact.as_payload(),
     )
+    _raise_if_generation_canceled(service, run)
     service._record_operation_step(
         run,
         stage="model_generation",
@@ -722,6 +757,7 @@ def _run_publication_stage(
         payload=payload,
         created_by_user_id=run.started_by_user_id,
     )
+    _raise_if_generation_canceled(service, run)
     task.status = BusinessTaskStatus.COMPLETED
     task.updated_at = datetime.now(UTC)
     service.session.add(task)

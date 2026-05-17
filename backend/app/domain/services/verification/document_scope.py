@@ -28,6 +28,17 @@ def selected_document_ids_from_scope(scope_snapshot: Any) -> list[str]:
     return normalize_document_ids(document_scope.get("selected_document_ids") or [])
 
 
+def effective_document_ids_from_scope(scope_snapshot: Any) -> list[str]:
+    if not isinstance(scope_snapshot, dict):
+        return []
+    document_scope = scope_snapshot.get("document_scope")
+    if not isinstance(document_scope, dict):
+        return []
+    if document_scope.get("mode") == "selected":
+        return normalize_document_ids(document_scope.get("selected_document_ids") or [])
+    return normalize_document_ids(document_scope.get("effective_document_ids") or [])
+
+
 def filter_version_documents(
     version_documents: list[Any] | tuple[Any, ...] | Any,
     selected_document_ids: list[str] | None,
@@ -40,6 +51,35 @@ def filter_version_documents(
         item
         for item in rows
         if str(getattr(item, "document_id", "") or "") in selected
+    ]
+
+
+def filter_version_documents_for_scope(
+    version_documents: list[Any] | tuple[Any, ...] | Any,
+    scope_snapshot: Any,
+) -> list[Any]:
+    rows = list(version_documents or [])
+    scoped_ids = effective_document_ids_from_scope(scope_snapshot)
+    if not scoped_ids:
+        seen: set[str] = set()
+        deduped: list[Any] = []
+        for item in rows:
+            document_id = str(getattr(item, "document_id", "") or "")
+            if document_id and document_id in seen:
+                continue
+            if document_id:
+                seen.add(document_id)
+            deduped.append(item)
+        return deduped
+    document_by_id: dict[str, Any] = {}
+    for item in rows:
+        document_id = str(getattr(item, "document_id", "") or "")
+        if document_id:
+            document_by_id[document_id] = item
+    return [
+        document_by_id[document_id]
+        for document_id in scoped_ids
+        if document_id in document_by_id
     ]
 
 
