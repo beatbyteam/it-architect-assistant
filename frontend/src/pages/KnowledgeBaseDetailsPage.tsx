@@ -718,7 +718,7 @@ export function KnowledgeBaseDetailsPage() {
                               });
                             }
                           }}
-                          disabled={sourceSettingsMutation.isPending}
+                          disabled={sourceSettingsMutation.isPending || uploadLearningInProgress}
                         >
                           Архивировать
                         </Button>
@@ -730,7 +730,7 @@ export function KnowledgeBaseDetailsPage() {
                             refresh_policy: draft.refresh_policy,
                             status: 'active_from_archive',
                           })}
-                          disabled={sourceSettingsMutation.isPending}
+                          disabled={sourceSettingsMutation.isPending || uploadLearningInProgress}
                         >
                           Разархивировать источник
                         </Button>
@@ -742,7 +742,7 @@ export function KnowledgeBaseDetailsPage() {
                     {!isSystemBase && !isArchivedBase ? (
                       <div className="grid grid-2" style={{ marginTop: 12 }}>
                         <FormRow label="Политика обновления">
-                          <Select value={draft.refresh_policy} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                          <Select value={draft.refresh_policy} disabled={uploadLearningInProgress} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
                             const next = event.target.value;
                             setSourceDrafts((current) => ({ ...current, [source.source_id]: { ...draft, refresh_policy: next } }));
                             setDirtySourceIds((current) => ({ ...current, [source.source_id]: true }));
@@ -753,7 +753,7 @@ export function KnowledgeBaseDetailsPage() {
                           </Select>
                         </FormRow>
                         <FormRow label="Статус источника">
-                          <Select value={draft.status} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                          <Select value={draft.status} disabled={uploadLearningInProgress} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
                             const next = event.target.value;
                             setSourceDrafts((current) => ({ ...current, [source.source_id]: { ...draft, status: next } }));
                             setDirtySourceIds((current) => ({ ...current, [source.source_id]: true }));
@@ -772,7 +772,7 @@ export function KnowledgeBaseDetailsPage() {
                               refresh_policy: draft.refresh_policy,
                               status: draft.status === source.status || draft.status === 'unavailable' ? undefined : draft.status,
                             })}
-                            disabled={sourceSettingsMutation.isPending || !dirtySourceIds[source.source_id]}
+                            disabled={sourceSettingsMutation.isPending || !dirtySourceIds[source.source_id] || uploadLearningInProgress }
                           >
                             {sourceSettingsMutation.isPending ? 'Сохраняю…' : 'Сохранить настройки'}
                           </Button>
@@ -789,7 +789,7 @@ export function KnowledgeBaseDetailsPage() {
           {!isSystemBase && !isArchivedBase ? (
             <div className="stack compact" style={{ marginTop: 16 }}>
               <FormRow label="Новый источник">
-                <Input value={newSourceName} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceName(event.target.value)} placeholder="Можно оставить пустым" />
+                <Input value={newSourceName} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceName(event.target.value)} placeholder="Можно оставить пустым"  disabled={uploadLearningInProgress} />
               </FormRow>
               <FormRow label="URL-страница">
                 <Input value={newSourceUri} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceUri(event.target.value)} placeholder="https://docs.example.com/architecture/" />
@@ -812,24 +812,18 @@ export function KnowledgeBaseDetailsPage() {
                 <Input value={uploadTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadTitle(event.target.value)} placeholder="Можно оставить пустым" />
               </FormRow>
               <FormRow label="Файл">
-                <Input type="file" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles(Array.from(event.target.files ?? []))} />
+                <Input type="file" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles(Array.from(event.target.files ?? []))} disabled={uploadLearningInProgress} />
               </FormRow>
               <div className="grid grid-2">
                 <FormRow label="Политика обновления">
-                  <Select value={uploadSourceDraft.refresh_policy} onChange={(event: ChangeEvent<HTMLSelectElement>) => updateUploadSourceDraft({ refresh_policy: event.target.value })}>
+                  <Select value={uploadSourceDraft.refresh_policy} onChange={(event: ChangeEvent<HTMLSelectElement>) => updateUploadSourceDraft({ refresh_policy: event.target.value })} disabled={uploadLearningInProgress}>
                     {KNOWLEDGE_REFRESH_POLICY_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </Select>
                 </FormRow>
                 <FormRow label="Статус источника">
-                  <Select value={uploadSourceDraft.status} onChange={(event: ChangeEvent<HTMLSelectElement>) => updateUploadSourceDraft({ status: event.target.value })}>
-                    {uploadSourceStatusOptions.map((statusValue) => (
-                      <option key={statusValue} value={statusValue} disabled={statusValue === 'unavailable' && uploadSource?.status !== 'unavailable'}>
-                        {titleStatus(statusValue)}
-                      </option>
-                    ))}
-                  </Select>
+                  <div className="readonly-field">Активен</div>
                 </FormRow>
                 {uploadSource ? (
                   <div className="actions">
@@ -839,7 +833,7 @@ export function KnowledgeBaseDetailsPage() {
                         refresh_policy: uploadSourceDraft.refresh_policy,
                         status: uploadSourceDraft.status === uploadSource.status || uploadSourceDraft.status === 'unavailable' ? undefined : uploadSourceDraft.status,
                       })}
-                      disabled={sourceSettingsMutation.isPending || !uploadSourceDirty}
+                      disabled={sourceSettingsMutation.isPending || !uploadSourceDirty || uploadLearningInProgress}
                     >
                       {sourceSettingsMutation.isPending ? 'Сохраняю…' : 'Сохранить настройки'}
                     </Button>
