@@ -55,3 +55,4 @@ if (-not $SkipModelPull) {
 
 docker compose --env-file $targetEnv -f $composeFile ps
 Write-Host "Local release is available at http://localhost:8080"
+

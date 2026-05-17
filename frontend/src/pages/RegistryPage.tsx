@@ -12,6 +12,7 @@ import type { SolutionRegistryItem, TaskListItem, VerificationProtocolRegistryIt
 type RegistryTab = 'tasks' | 'solutions' | 'protocols';
 type RegistryTask = TaskListItem & {
   latest_generation_state?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 type StatusOption = {
@@ -75,11 +76,25 @@ function matchesDate(value: string | null | undefined, from?: string, to?: strin
 }
 
 function taskActionLabel(item: TaskListItem) {
+  if (isExternalArchitectureTask(item) && item.state === 'draft') {
+    return 'Продолжить черновик проверки';
+  }
   if (item.state === 'needs_clarification') return 'Ответить на уточнения';
   if (item.state === 'ready_for_generation') return 'Подготовить решение';
   if (item.state === 'failed') return 'Повторить подготовку';
   if (item.state === 'draft') return 'Продолжить черновик';
   return 'Открыть задачу';
+}
+
+function isExternalArchitectureTask(item: RegistryTask) {
+  return item.metadata?.source === 'external_architecture'
+    && item.metadata?.verification_only === true;
+}
+
+function taskLink(item: RegistryTask) {
+  return isExternalArchitectureTask(item) && item.state === 'draft'
+    ? `/external-check?draft_task_id=${encodeURIComponent(item.task_id)}`
+    : `/tasks/${item.task_id}`;
 }
 
 function taskBadgeValue(item: RegistryTask) {
@@ -300,7 +315,7 @@ export function RegistryPage() {
                         {item.overdue_clarification_flag ? <div className="muted small">Есть просрочка</div> : null}
                       </td>
                       <td>{formatDateTime(item.updated_at)}</td>
-                      <td><Link className="button" to={`/tasks/${item.task_id}`}>{taskActionLabel(item)}</Link></td>
+                      <td><Link className="button" to={taskLink(item)}>{taskActionLabel(item)}</Link></td>
                     </tr>
                   ))}
                 </tbody>

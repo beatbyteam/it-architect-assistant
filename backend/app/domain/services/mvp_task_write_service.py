@@ -279,6 +279,12 @@ def start_generation(
     read_service_factory,
 ) -> dict[str, Any]:
     task = service._get_task(task_id, principal)
+    metadata = dict(task.task_metadata or {})
+    if metadata.get("source") == "external_architecture" and metadata.get("verification_only") is True:
+        raise ConflictError(
+            "Черновик проверки архитектуры нельзя запускать как генерацию решения",
+            error_code="VERIFICATION_ONLY_TASK_GENERATION_FORBIDDEN",
+        )
     effective_correlation = correlation_id or idempotency_key
     owner_key = principal_owner_key(principal)
     request_payload = {"task_id": str(task.business_task_id)}

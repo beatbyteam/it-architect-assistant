@@ -153,6 +153,7 @@ const READINESS_LABELS: Record<string, string> = {
   constraints: 'ограничения',
   integrations: 'интеграции',
   expected_output: 'ожидаемый результат',
+  nfr: 'нефункциональные требования',
   raw_text: 'описание задачи',
 };
 
