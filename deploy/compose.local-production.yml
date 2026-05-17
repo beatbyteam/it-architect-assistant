@@ -89,6 +89,8 @@ x-backend-env: &backend-env
 services:
   postgres:
     image: pgvector/pgvector:pg17
+    ports:
+      - "5433:5432
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-it_arch_assistant}
