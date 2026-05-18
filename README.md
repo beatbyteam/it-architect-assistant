@@ -50,6 +50,8 @@ cd C:\путь\к\проекту\it-architect-assistant
 ```
 Запуск проекта
 ```
+Запустить Docker
+
 # Первый запуск
 .\deploy\scripts\local_release_up.ps1
 
