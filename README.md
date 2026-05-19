@@ -5,8 +5,6 @@
 
 [![MVP](https://img.shields.io/badge/status-MVP-yellow)](LICENSE) [![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/) [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)](https://fastapi.tiangolo.com/) [![React](https://img.shields.io/badge/React-18.3-cyan)](https://react.dev/) [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue)](https://www.postgresql.org/) [![Ollama](https://img.shields.io/badge/Ollama-LLM-orange)](https://ollama.com/)
 
-![Сайт](IT_ARCH.png)
-
 ## 📋 Оглавление
 - [✨ Основные возможности](#-основные-возможности)
 - [📋 Способы запуска](#-способы-запуска)
