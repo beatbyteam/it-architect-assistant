@@ -7,9 +7,7 @@ from app.core.exceptions import ValidationError
 from app.core.security import AuthPrincipal
 from app.db.enums import MVP_USER_ROLE_CODES
 from app.domain.services.external_architecture_check import ExternalArchitectureCheckService
-from app.domain.services.generation.run_service import GenerationRunService
 from app.domain.services.mvp_canonical import CanonicalReadService, CanonicalTaskService
-from app.domain.services.verification.run_service import VerificationRunService
 from app.schemas.mvp import (
     ClarificationAnswerRequest,
     ExternalArchitectureCheckRequest,
@@ -36,11 +34,11 @@ from app.schemas.mvp import (
     VerificationRunResponse,
 )
 
-router = APIRouter(tags=["mvp"])
+router = APIRouter()
 UserDep = Depends(require_roles(*MVP_USER_ROLE_CODES))
 
 
-@router.get("/tasks", response_model=list[TaskListItemResponse])
+@router.get("/tasks", response_model=list[TaskListItemResponse], tags=["Генерация задачи"])
 def list_tasks(
     session: SessionDep,
     settings: SettingsDep,
@@ -68,7 +66,7 @@ def list_tasks(
     ]
 
 
-@router.post("/tasks", response_model=TaskSnapshotResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/tasks", response_model=TaskSnapshotResponse, status_code=status.HTTP_201_CREATED, tags=["Генерация задачи"])
 def create_task(
     payload: TaskCreateRequest,
     session: SessionDep,
@@ -90,7 +88,7 @@ def create_task(
     return TaskSnapshotResponse(**read_service.build_task_snapshot(task))
 
 
-@router.patch("/tasks/{task_id}", response_model=TaskSnapshotResponse)
+@router.patch("/tasks/{task_id}", response_model=TaskSnapshotResponse, tags=["Генерация задачи"])
 def update_task(
     task_id: str,
     payload: TaskUpdateRequest,
@@ -113,7 +111,7 @@ def update_task(
     return TaskSnapshotResponse(**read_service.build_task_snapshot(task))
 
 
-@router.get("/tasks/{task_id}", response_model=TaskSnapshotResponse)
+@router.get("/tasks/{task_id}", response_model=TaskSnapshotResponse, tags=["Генерация задачи"])
 def get_task(
     task_id: str,
     session: SessionDep,
@@ -127,7 +125,7 @@ def get_task(
     return TaskSnapshotResponse(**read_service.build_task_snapshot(task))
 
 
-@router.get("/solutions", response_model=list[SolutionRegistryItemResponse])
+@router.get("/solutions", response_model=list[SolutionRegistryItemResponse], tags=["Генерация задачи"])
 def list_solutions(
     session: SessionDep,
     settings: SettingsDep,
@@ -149,7 +147,9 @@ def list_solutions(
 
 
 @router.get(
-    "/verification-protocols", response_model=list[VerificationProtocolRegistryItemResponse]
+    "/verification-protocols",
+    response_model=list[VerificationProtocolRegistryItemResponse],
+    tags=["Протокол проверки"],
 )
 def list_verification_protocols(
     session: SessionDep,
@@ -174,6 +174,7 @@ def list_verification_protocols(
 @router.post(
     "/tasks/{task_id}/clarifications/{clarification_id}/answers",
     response_model=TaskSnapshotResponse,
+    tags=["Генерация задачи"],
 )
 def answer_clarification(
     task_id: str,
@@ -203,6 +204,7 @@ def answer_clarification(
     "/tasks/{task_id}/generation-runs",
     response_model=GenerationRunAcceptedResponse | GenerationClarificationRequiredResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    tags=["Генерация задачи"],
 )
 def start_generation_run(
     task_id: str,
@@ -228,7 +230,7 @@ def start_generation_run(
     return GenerationRunAcceptedResponse(**result)
 
 
-@router.get("/generation-runs/{generation_run_id}", response_model=GenerationRunResponse)
+@router.get("/generation-runs/{generation_run_id}", response_model=GenerationRunResponse, tags=["Генерация задачи"])
 def get_generation_run(
     generation_run_id: str,
     session: SessionDep,
@@ -243,24 +245,7 @@ def get_generation_run(
     )
 
 
-@router.post("/generation-runs/{generation_run_id}/cancel", response_model=GenerationRunResponse)
-def cancel_generation_run(
-    generation_run_id: str,
-    session: SessionDep,
-    settings: SettingsDep,
-    principal: PrincipalDep,
-    _guard: AuthPrincipal = UserDep,
-    _write_guard: AuthPrincipal = WriteGuardDep,
-):
-    GenerationRunService(session, settings).cancel_run(generation_run_id, principal)
-    return GenerationRunResponse(
-        **CanonicalReadService(session, settings).get_generation_run_payload(
-            generation_run_id, principal
-        )
-    )
-
-
-@router.get("/solutions/{solution_version_id}", response_model=SolutionResponse)
+@router.get("/solutions/{solution_version_id}", response_model=SolutionResponse, tags=["Генерация задачи"])
 def get_solution(
     solution_version_id: str,
     session: SessionDep,
@@ -276,7 +261,9 @@ def get_solution(
 
 
 @router.get(
-    "/solutions/{solution_version_id}/model", response_model=SolutionArchitectureModelEnvelope
+    "/solutions/{solution_version_id}/model",
+    response_model=SolutionArchitectureModelEnvelope,
+    tags=["Генерация задачи"],
 )
 def get_solution_model(
     solution_version_id: str,
@@ -295,6 +282,7 @@ def get_solution_model(
 @router.get(
     "/solutions/{solution_version_id}/section-assessments",
     response_model=SolutionSectionAssessmentsEnvelope,
+    tags=["Генерация задачи"],
 )
 def get_solution_section_assessments(
     solution_version_id: str,
@@ -310,7 +298,7 @@ def get_solution_section_assessments(
     )
 
 
-@router.get("/solutions/{solution_version_id}/rendered", response_model=SolutionRenderedResponse)
+@router.get("/solutions/{solution_version_id}/rendered", response_model=SolutionRenderedResponse, tags=["Генерация задачи"])
 def get_solution_rendered(
     solution_version_id: str,
     session: SessionDep,
@@ -329,7 +317,7 @@ def get_solution_rendered(
 def delete_solution_not_supported(solution_version_id: str, _guard: AuthPrincipal = UserDep):
     _ = solution_version_id
     raise ValidationError(
-        "Физическое удаление опубликованных решений в MVP не поддерживается; создайте новую ревизию или отправьте решение в архив",
+        "Physical deletion of published solutions is not supported in MVP; supersede or archive through a new revision instead",
         error_code="SOLUTION_DELETE_UNSUPPORTED",
     )
 
@@ -338,7 +326,7 @@ def delete_solution_not_supported(solution_version_id: str, _guard: AuthPrincipa
 def delete_verification_protocol_not_supported(protocol_id: str, _guard: AuthPrincipal = UserDep):
     _ = protocol_id
     raise ValidationError(
-        "Физическое удаление протоколов проверки в MVP не поддерживается; ревизии сохраняются для прослеживаемости",
+        "Physical deletion of verification protocols is not supported in MVP; keep revisions for traceability",
         error_code="VERIFICATION_PROTOCOL_DELETE_UNSUPPORTED",
     )
 
@@ -347,6 +335,7 @@ def delete_verification_protocol_not_supported(protocol_id: str, _guard: AuthPri
     "/solutions/{solution_version_id}/verification-runs",
     response_model=VerificationRunResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    tags=["Протокол проверки"],
 )
 def start_verification_run(
     solution_version_id: str,
@@ -375,6 +364,7 @@ def start_verification_run(
     "/external-architectures/check",
     response_model=ExternalArchitectureCheckResponse,
     status_code=status.HTTP_202_ACCEPTED,
+    tags=["Протокол проверки"],
 )
 def check_external_architecture(
     payload: ExternalArchitectureCheckRequest,
@@ -391,7 +381,7 @@ def check_external_architecture(
     )
 
 
-@router.get("/verification-runs/{verification_run_id}", response_model=VerificationRunResponse)
+@router.get("/verification-runs/{verification_run_id}", response_model=VerificationRunResponse, tags=["Протокол проверки"])
 def get_verification_run(
     verification_run_id: str,
     session: SessionDep,
@@ -406,24 +396,7 @@ def get_verification_run(
     )
 
 
-@router.post("/verification-runs/{verification_run_id}/cancel", response_model=VerificationRunResponse)
-def cancel_verification_run(
-    verification_run_id: str,
-    session: SessionDep,
-    settings: SettingsDep,
-    principal: PrincipalDep,
-    _guard: AuthPrincipal = UserDep,
-    _write_guard: AuthPrincipal = WriteGuardDep,
-):
-    VerificationRunService(session, settings).cancel_run(verification_run_id, principal)
-    return VerificationRunResponse(
-        **CanonicalReadService(session, settings).get_verification_run_payload(
-            verification_run_id, principal
-        )
-    )
-
-
-@router.get("/verification-protocols/{protocol_id}", response_model=VerificationProtocolResponse)
+@router.get("/verification-protocols/{protocol_id}", response_model=VerificationProtocolResponse, tags=["Протокол проверки"])
 def get_verification_protocol(
     protocol_id: str,
     session: SessionDep,
@@ -441,6 +414,7 @@ def get_verification_protocol(
 @router.get(
     "/verification-protocols/{protocol_id}/violations",
     response_model=VerificationProtocolViolationsEnvelope,
+    tags=["Протокол проверки"],
 )
 def get_verification_protocol_violations(
     protocol_id: str,
@@ -459,6 +433,7 @@ def get_verification_protocol_violations(
 @router.get(
     "/verification-protocols/{protocol_id}/rendered",
     response_model=VerificationProtocolRenderedResponse,
+    tags=["Протокол проверки"],
 )
 def get_verification_protocol_rendered(
     protocol_id: str,
@@ -474,7 +449,7 @@ def get_verification_protocol_rendered(
     )
 
 
-@router.get("/knowledge/versions/active", response_model=KnowledgeVersionResponse)
+@router.get("/knowledge/versions/active", response_model=KnowledgeVersionResponse, tags=["Базы знаний"])
 def get_active_knowledge_version(
     session: SessionDep,
     settings: SettingsDep,

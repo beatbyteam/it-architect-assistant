@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react';
+
 import { Badge, Banner, Card, Panel, StateBox } from '../../shared/ui/components';
-import { architectureBoundaryLabel, cleanDisplayFileName, solutionSectionLabel } from '../../shared/lib/format';
+import { architectureBoundaryLabel, solutionSectionLabel } from '../../shared/lib/format';
 import { sanitizeHtml } from '../../shared/lib/html';
 import type { NormalizedSolution } from '../../shared/api/normalized';
 import type { SolutionSectionAssessment } from '../../types/api';
@@ -9,6 +11,68 @@ interface SolutionContentTabProps {
   solution: NormalizedSolution;
   renderedHtml?: string | null;
   sectionAssessmentMap: Map<string, SolutionSectionAssessment>;
+}
+
+function isMarkdownTableDivider(line: string) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function splitMarkdownRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+function renderTextWithTables(text: string) {
+  const lines = text.split(/\r?\n/);
+  const blocks: ReactNode[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const current = lines[index] ?? '';
+    const next = lines[index + 1] ?? '';
+    if (current.includes('|') && isMarkdownTableDivider(next)) {
+      const headers = splitMarkdownRow(current);
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length && (lines[index] ?? '').includes('|') && (lines[index] ?? '').trim()) {
+        rows.push(splitMarkdownRow(lines[index] ?? ''));
+        index += 1;
+      }
+      blocks.push(
+        <div className="table-wrap compact-table-wrap" key={`table-${blocks.length}`}>
+          <table className="table">
+            <thead>
+              <tr>{headers.map((header, headerIndex) => <th key={`${header}-${headerIndex}`}>{header}</th>)}</tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={`row-${rowIndex}`}>
+                  {headers.map((_, cellIndex) => <td key={`cell-${cellIndex}`}>{row[cellIndex] ?? ''}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (index < lines.length) {
+      const line = lines[index] ?? '';
+      if (line.includes('|') && isMarkdownTableDivider(lines[index + 1] ?? '')) break;
+      paragraph.push(line);
+      index += 1;
+    }
+    const content = paragraph.join('\n').trim();
+    if (content) {
+      blocks.push(<div className="pre-wrap" key={`text-${blocks.length}`}>{content}</div>);
+    }
+  }
+  return <div className="stack compact">{blocks}</div>;
 }
 
 export function SolutionContentTab({ solution, renderedHtml, sectionAssessmentMap }: SolutionContentTabProps) {
@@ -44,7 +108,7 @@ export function SolutionContentTab({ solution, renderedHtml, sectionAssessmentMa
                     {assessment ? ` · сигнал: ${sectionScorePercent(assessment.score)}` : ''}
                     {assessment?.fallback_applied ? ' · применён fallback' : ''}
                   </div>
-                  <div className="pre-wrap" style={{ marginTop: 8 }}>{section.body_markdown}</div>
+                  <div style={{ marginTop: 8 }}>{renderTextWithTables(section.body_markdown)}</div>
                   {assessment?.allowed_archimate_elements?.length ? (
                     <div className="muted small" style={{ marginTop: 8 }}>
                       Допустимые объекты слоя: {assessment.allowed_archimate_elements.join(', ')}
@@ -59,7 +123,7 @@ export function SolutionContentTab({ solution, renderedHtml, sectionAssessmentMa
                     <ul className="compact-list" style={{ marginTop: 8 }}>
                       {(section.source_refs ?? []).slice(0, 5).map((ref) => (
                         <li key={`${section.section_id ?? section.section_code}-${ref.sort_order ?? ref.fragment_id ?? ref.document_title ?? 'ref'}`}>
-                          {cleanDisplayFileName(ref.document_title) ?? ref.document_title ?? ref.fragment_id ?? 'Источник'} · {ref.role_code ?? 'справочный материал'}
+                          {ref.document_title ?? ref.fragment_id ?? 'Источник'} · {ref.role_code ?? 'справочный материал'}
                           {ref.source_location ? ` · ${ref.source_location}` : ''}
                         </li>
                       ))}

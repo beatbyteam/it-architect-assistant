@@ -58,7 +58,12 @@ class SolutionRenderer:
         return (
             '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"/>'
             f"<title>{escape(payload.solution_title)}</title>"
-            "</head><body>"
+            "<style>"
+            "body{font-family:Arial,sans-serif;color:#111827;}"
+            "table{width:100%;border-collapse:collapse;margin:12px 0;}"
+            "th,td{border:1px solid #d1d5db;padding:8px;text-align:left;vertical-align:top;}"
+            "th{background:#f3f4f6;font-weight:700;}"
+            "</style></head><body>"
             f"<h1>{escape(payload.solution_title)}</h1>"
             f"<p>{escape(payload.executive_summary)}</p>"
             f"{sections_html}"

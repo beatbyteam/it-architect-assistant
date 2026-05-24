@@ -29,17 +29,28 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        openapi_tags=[
+            {
+                "name": "Генерация задачи",
+                "description": "Создание задачи, уточнения, запуск генерации и просмотр сгенерированного решения.",
+            },
+            {
+                "name": "Базы знаний",
+                "description": "Базы знаний, источники, документы, версии и обновления материалов.",
+            },
+            {
+                "name": "Протокол проверки",
+                "description": "Запуск проверки архитектурного решения, протоколы, нарушения и внешний архитектурный документ.",
+            },
+            {
+                "name": "Операции",
+                "description": "Журнал процессов, аудит и технические статусы выполнения.",
+            },
+            {"name": "health", "description": "Проверка доступности сервиса."},
+        ],
     )
     app.state.settings = settings
     app.middleware("http")(request_context_middleware)
-
-    @app.middleware("http")
-    async def json_utf8_charset_middleware(request: Request, call_next):
-        response = await call_next(request)
-        content_type = response.headers.get("content-type", "")
-        if content_type.startswith("application/json") and "charset=" not in content_type:
-            response.headers["content-type"] = "application/json; charset=utf-8"
-        return response
 
     if settings.allowed_cors_origins:
         app.add_middleware(

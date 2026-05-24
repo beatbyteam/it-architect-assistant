@@ -15,20 +15,11 @@ export function cleanDisplayFileName(value?: string | null) {
   }
   const withoutQuery = decoded.split(/[?#]/)[0] ?? decoded;
   const basename = withoutQuery.split(/[\\/]/).filter(Boolean).pop() ?? withoutQuery;
-  return basename.replace(/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})[_-]/i, '') || basename;
-}
-
-export function userErrorText(value?: string | null) {
-  if (!value) return '—';
-  const normalized = value.trim().toLowerCase();
-  if (normalized.includes('file too large')) return 'Файл слишком большой для загрузки.';
-  if (normalized.includes('at least one file must be provided')) return 'Выберите хотя бы один файл.';
-  if (normalized.includes('no such file') || normalized.includes('not found')) return 'Файл или источник не найден.';
-  if (normalized.includes('permission denied')) return 'Нет доступа к файлу или источнику.';
-  if (normalized.includes('timed out') || normalized.includes('timeout')) return 'Истекло время ожидания ответа источника.';
-  if (normalized.includes('connection refused')) return 'Источник отклонил подключение.';
-  if (normalized.includes('canceled by user')) return 'Операция остановлена пользователем.';
-  return value;
+  return basename
+    .replace(/^[a-f0-9]{32}_/i, '')
+    .replace(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}[_-]/i, '')
+    .replace(/^[a-f0-9]{12,}[_-]/i, '')
+    || basename;
 }
 
 const TOGAF_SECTION_TITLES: Record<string, string> = {
@@ -83,7 +74,6 @@ const STATUS_TITLES: Record<string, string> = {
   active: 'Активна',
   selected_for_generation: 'Выбрана',
   archived: 'В архиве',
-  pending_update: 'Ожидает обновления',
   rejected: 'Отклонено',
   unavailable: 'Недоступно',
   disabled: 'Отключено',
@@ -123,14 +113,14 @@ const STATUS_TITLES: Record<string, string> = {
   review_required: 'Нужна проверка',
   new: 'Новый',
   changed: 'Изменён',
-  deleted: 'В архиве',
+  deleted: 'Удалён',
   unchanged: 'Без изменений',
   manual: 'Ручной',
   monthly: 'Ежемесячно',
   weekly: 'Еженедельно',
   import: 'Импорт',
   upload: 'Дозагрузка',
-  delete: 'Архивация',
+  delete: 'Удаление',
   rebuild: 'Пересборка',
   scheduled_sync: 'Плановая синхронизация',
   system_mandatory: 'Системная baseline',
@@ -153,7 +143,6 @@ const READINESS_LABELS: Record<string, string> = {
   constraints: 'ограничения',
   integrations: 'интеграции',
   expected_output: 'ожидаемый результат',
-  nfr: 'нефункциональные требования',
   raw_text: 'описание задачи',
 };
 
@@ -164,7 +153,6 @@ const AUDIT_EVENT_TITLES: Record<string, string> = {
   'generation.run.created': 'Запущена подготовка решения',
   'generation.run.completed': 'Решение подготовлено',
   'generation.run.failed': 'Подготовка решения завершилась ошибкой',
-  'generation.run.canceled': 'Подготовка решения остановлена',
   'verification.run.created': 'Запущена проверка решения',
   'verification.run.completed': 'Проверка завершена',
   'verification.run.failed': 'Проверка завершилась ошибкой',
@@ -179,7 +167,6 @@ const AUDIT_EVENT_TITLES: Record<string, string> = {
   'knowledge.refresh.started': 'Начато обновление базы знаний',
   'knowledge.refresh.completed': 'База знаний обновлена',
   'knowledge.refresh.failed': 'Обновление базы знаний завершилось ошибкой',
-  'knowledge.refresh.canceled': 'Обновление базы знаний остановлено',
 };
 
 export function titleStatus(status?: string | null) {
@@ -190,7 +177,7 @@ export function tone(status?: string | null) {
   if (!status) return 'neutral';
   if (['published', 'completed', 'passed', 'active', 'selected_for_generation', 'validated', 'ready_for_generation', 'closed', 'loaded', 'indexed', 'parsed', 'fetched', 'registered', 'available', 'success'].includes(status)) return 'success';
   if (['needs_clarification', 'warning', 'passed_with_comments', 'incomplete', 'answered', 'completed_with_warnings', 'not_determined', 'requires_operator_decision', 'pending', 'unavailable', 'draft', 'updating'].includes(status)) return 'warning';
-  if (['failed', 'critical', 'rejected', 'archived', 'canceled', 'disabled', 'excluded', 'deleted', 'error', 'danger'].includes(status)) return 'danger';
+  if (['failed', 'critical', 'rejected', 'archived', 'canceled', 'disabled', 'excluded', 'error', 'danger'].includes(status)) return 'danger';
   return 'neutral';
 }
 
@@ -338,7 +325,6 @@ export function auditMessageText(value?: string | null) {
     'Risk mitigations must be specific': 'Для рисков нужны конкретные меры: ответственный, действие, контрольная точка и условие отката или запасной вариант.',
     'Generation run completed and solution published': 'Решение подготовлено и сохранено',
     'Generation run failed': 'Во время подготовки решения произошла ошибка',
-    'Generation run canceled by user': 'Подготовка решения остановлена пользователем',
     'Verification run created': 'Проверка решения запущена',
     'Verification run completed and protocol issued': 'Проверка завершена, итог сохранён',
     'Verification run failed': 'Во время проверки произошла ошибка',
@@ -346,7 +332,6 @@ export function auditMessageText(value?: string | null) {
     'Knowledge update run created': 'Создано обновление базы знаний',
     'Knowledge update run finished': 'Обновление базы знаний завершено',
     'Knowledge update run failed': 'Обновление базы знаний завершилось ошибкой',
-    'Knowledge update run canceled by user': 'Обновление базы знаний остановлено пользователем',
   };
 
   if (simpleMap[value]) return simpleMap[value];
@@ -433,8 +418,7 @@ export function verificationRuleGroupLabel(value?: string | null) {
     normative: 'Соответствие метамодели ArchiMate',
     consistency: 'Семантическая согласованность',
     technical: 'Техническая готовность',
-    nfr: 'Нефункциональные требования',
     other: 'Прочие проверки',
   };
-  return value ? map[value] ?? `Группа ${value.replace(/_/g, ' ')}` : 'Прочие проверки';
+  return value ? map[value] ?? value : 'Прочие проверки';
 }

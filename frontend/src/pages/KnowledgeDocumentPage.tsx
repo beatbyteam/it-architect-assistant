@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getKnowledgeDocument, getKnowledgeDocumentMemory, getKnowledgeDocumentSnapshot } from '../shared/api/knowledge';
 import { queryKeys } from '../shared/api/queryKeys';
 import { getApiErrorStatus } from '../shared/api/client';
-import { documentTypeLabel, extractedItemTypeLabel, formatDateTime, safeJson, sourceTypeLabel, titleStatus } from '../shared/lib/format';
+import { cleanDisplayFileName, documentTypeLabel, extractedItemTypeLabel, formatDateTime, safeJson, sourceTypeLabel, titleStatus } from '../shared/lib/format';
 import { Badge, Banner, Button, Card, CollapsibleCodeBlock, EmptyState, ErrorNotice, ErrorState, LoadingState, PageHeader, Select, StateBox, TabStrip } from '../shared/ui/components';
 import type { NormalizedDocumentMemory, NormalizedDocumentSnapshot } from '../shared/api/normalized';
 import type { DocumentChunk, ExtractedKnowledgeItem, SourceDocument } from '../types/api';
@@ -56,10 +56,68 @@ const UNIFIED_MEMORY_TYPE_ORDER = [
 
 type DocumentViewMode = 'read' | 'verify' | 'debug';
 
-const FINAL_SOURCE_DOCUMENT_PROCESSING_STATUSES = new Set(['extracted', 'reused', 'skipped']);
-
 function cleanKnowledgeText(value?: string | null) {
   return (value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+const READABLE_TEXT_HEADINGS = [
+  'Основные требования',
+  'Нефункциональные требования',
+  'Функциональные требования',
+  'Критичность системы',
+  'Текущий контекст',
+  'Основная проблема',
+  'Предполагается',
+  'Сотрудник может',
+  'Руководитель может',
+  'HR может',
+  'Система должна',
+  'Необходимо',
+];
+
+function documentDisplayTitle(document: SourceDocument) {
+  return cleanDisplayFileName(document.title) ?? cleanDisplayFileName(document.uri) ?? 'Документ';
+}
+
+function documentDisplayUri(document: SourceDocument) {
+  if (!document.uri) return '—';
+  if (/^file:\/\//i.test(document.uri)) return cleanDisplayFileName(document.uri) ?? document.uri;
+  return document.uri;
+}
+
+function splitReadableText(value?: string | null) {
+  const compact = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (!compact) return [];
+  let prepared = compact;
+  READABLE_TEXT_HEADINGS.forEach((heading) => {
+    prepared = prepared.replace(new RegExp(`\\s*(${heading}:)\\s*`, 'gi'), '\n$1\n');
+  });
+  prepared = prepared
+    .replace(/\s+(?=\d+\.\s)/g, '\n')
+    .replace(/\s+(?=-\s+)/g, '\n');
+
+  return prepared
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function StructuredText({ text }: { text?: string | null }) {
+  const lines = splitReadableText(text);
+  if (lines.length === 0) return <span>—</span>;
+  return (
+    <div className="readable-text">
+      {lines.map((line, index) => {
+        const isHeading = /:$/.test(line) && !/^\d+\./.test(line);
+        const isPoint = /^(\d+\.|-)\s+/.test(line);
+        return (
+          <div className={isHeading ? 'readable-heading' : isPoint ? 'readable-point' : 'readable-paragraph'} key={`${index}-${line.slice(0, 24)}`}>
+            {line}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function isLikelyTruncatedKnowledgeText(value?: string | null) {
@@ -79,29 +137,10 @@ function unifiedTypeOrder(itemType: string) {
   return index === -1 ? UNIFIED_MEMORY_TYPE_ORDER.length : index;
 }
 
-function sourceDocumentLifecycleStatus(document: SourceDocument) {
-  const processingStatus = document.last_processing_status ?? null;
-  if (document.last_error_code === 'CANCELED_BY_USER') return 'canceled';
-  if (processingStatus === 'failed') return 'failed';
-  if (processingStatus && !FINAL_SOURCE_DOCUMENT_PROCESSING_STATUSES.has(processingStatus)) return 'running';
-  if (processingStatus === 'extracted' || processingStatus === 'reused') return 'parsed';
-  return document.status;
-}
-
-function isSourceDocumentProcessing(document: SourceDocument) {
-  const processingStatus = document.last_processing_status ?? null;
-  return Boolean(processingStatus && !FINAL_SOURCE_DOCUMENT_PROCESSING_STATUSES.has(processingStatus) && processingStatus !== 'failed');
-}
-
-function buildUnifiedMemoryBlocks(
-  memory: NormalizedDocumentMemory,
-  items: ExtractedKnowledgeItem[],
-  options?: { includeSummary?: boolean },
-) {
+function buildUnifiedMemoryBlocks(memory: NormalizedDocumentMemory) {
   const blocks: Array<{ key: string; title: string; content: string; meta?: string; item?: ExtractedKnowledgeItem }> = [];
   const summary = cleanKnowledgeText(memory.summary);
-  const includeSummary = options?.includeSummary ?? true;
-  if (includeSummary && summary && !isLikelyTruncatedKnowledgeText(summary)) {
+  if (summary && !isLikelyTruncatedKnowledgeText(summary)) {
     blocks.push({
       key: 'summary',
       title: 'Краткая выжимка',
@@ -110,7 +149,7 @@ function buildUnifiedMemoryBlocks(
     });
   }
 
-  const knowledgeItems = items
+  const knowledgeItems = memory.items
     .filter((item) => item.item_type !== 'summary' && cleanKnowledgeText(item.content))
     .sort((left, right) => {
       const byType = unifiedTypeOrder(left.item_type) - unifiedTypeOrder(right.item_type);
@@ -145,7 +184,7 @@ export function KnowledgeDocumentPage() {
   const [viewMode, setViewMode] = useState<DocumentViewMode>('read');
   const [expandedEvidenceId, setExpandedEvidenceId] = useState('');
 
-  const documentQuery = useQuery({ queryKey: queryKeys.knowledgeDocument(documentId), queryFn: ({ signal }) => getKnowledgeDocument(documentId, { signal, include_archived: true }), enabled: Boolean(documentId) });
+  const documentQuery = useQuery({ queryKey: queryKeys.knowledgeDocument(documentId), queryFn: ({ signal }) => getKnowledgeDocument(documentId, { signal }), enabled: Boolean(documentId) });
   const snapshotQuery = useQuery({ queryKey: queryKeys.knowledgeDocumentSnapshot(documentId, knowledgeVersionId), queryFn: ({ signal }) => getKnowledgeDocumentSnapshot(documentId, knowledgeVersionId, { signal }), enabled: Boolean(documentId) });
   const memoryQuery = useQuery({ queryKey: queryKeys.knowledgeDocumentMemory(documentId, knowledgeVersionId), queryFn: ({ signal }) => getKnowledgeDocumentMemory(documentId, knowledgeVersionId, { signal }), enabled: Boolean(documentId) });
 
@@ -158,25 +197,11 @@ export function KnowledgeDocumentPage() {
     () => (memory?.items ?? []).filter((item) => (!filterType || item.item_type === filterType) && (!filterQuality || item.quality_status === filterQuality)),
     [filterQuality, filterType, memory?.items],
   );
-  const filtersActive = Boolean(filterType || filterQuality);
   const unifiedMemoryBlocks = useMemo(
-    () => {
-      if (!memory) return [];
-      const items = viewMode === 'debug' ? filteredItems : memory.items;
-      return buildUnifiedMemoryBlocks(memory, items, {
-        includeSummary: !(viewMode === 'debug' && filtersActive),
-      });
-    },
-    [filteredItems, filtersActive, memory, viewMode],
+    () => (memory ? buildUnifiedMemoryBlocks(memory) : []),
+    [memory],
   );
-  const availableTypeCounts = useMemo(
-    () => (memory?.items ?? []).reduce<Record<string, number>>((acc, item) => {
-      acc[item.item_type] = (acc[item.item_type] ?? 0) + 1;
-      return acc;
-    }, {}),
-    [memory?.items],
-  );
-  const availableTypes = useMemo(() => Object.keys(availableTypeCounts).sort(), [availableTypeCounts]);
+  const availableTypes = useMemo(() => Object.keys(memory?.counters ?? {}).sort(), [memory?.counters]);
   const qualityOptions = useMemo(() => Array.from(new Set((memory?.items ?? []).map((item) => item.quality_status))).sort(), [memory?.items]);
   const grouped = useMemo(() => {
     const map = new Map<string, typeof filteredItems>();
@@ -203,15 +228,13 @@ export function KnowledgeDocumentPage() {
   const resolvedUri = document.resolved_uri ?? document.uri;
   const canOpenResolved = isOpenableUri(resolvedUri);
   const canOpenSource = isOpenableUri(document.uri);
-  const documentLifecycle = sourceDocumentLifecycleStatus(document);
-  const documentProcessing = isSourceDocumentProcessing(document);
   const showVerificationEvidence = viewMode === 'verify' || viewMode === 'debug';
   const showDebugBlocks = viewMode === 'debug';
 
   return (
     <div className="stack">
       <PageHeader
-        title={document.title}
+        title={documentDisplayTitle(document)}
         subtitle="Просмотр документа, извлечённых знаний и исходных фрагментов, на которые ссылается память документа."
         actions={document.knowledge_base_id ? <Link to={`/knowledge/bases/${document.knowledge_base_id}`} className="button">Назад к базе</Link> : undefined}
       />
@@ -234,13 +257,11 @@ export function KnowledgeDocumentPage() {
           <div className="stack compact">
             <div><strong>Тип документа:</strong> {documentTypeLabel(document.document_type)}</div>
             <div><strong>Источник:</strong> {sourceTypeLabel(String(document.source_type ?? document.document_metadata?.source_type ?? '')) || '—'}</div>
-            <div><strong>Путь или URL:</strong> <span className="mono">{document.uri}</span></div>
-            {document.resolved_uri && document.resolved_uri !== document.uri ? <div><strong>Итоговый путь или URL:</strong> <span className="mono">{document.resolved_uri}</span></div> : null}
-            <div><strong>Статус обработки:</strong> <Badge value={documentLifecycle} /></div>
-            {documentLifecycle !== document.status ? <div><strong>Статус документа:</strong> <Badge value={document.status} /></div> : null}
+            <div><strong>Путь или URL:</strong> <span className="mono">{documentDisplayUri(document)}</span></div>
+            {document.resolved_uri && document.resolved_uri !== document.uri ? <div><strong>Итоговый путь или URL:</strong> <span className="mono">{cleanDisplayFileName(document.resolved_uri) ?? document.resolved_uri}</span></div> : null}
+            <div><strong>Статус:</strong> <Badge value={document.status} /></div>
             <div><strong>Получен:</strong> {formatDateTime(document.fetched_at ?? document.registered_at)}</div>
             <div><strong>Последняя обработка:</strong> {formatDateTime(document.last_processed_at)}</div>
-            {document.last_error_message ? <div><strong>Последняя ошибка:</strong> {document.last_error_message}</div> : null}
             <div><strong>Checksum:</strong> <span className="mono">{document.checksum ?? '—'}</span></div>
             <div className="actions">
               {canOpenSource ? <a className="button" href={document.uri} target="_blank" rel="noreferrer">Открыть исходный URL</a> : null}
@@ -257,7 +278,7 @@ export function KnowledgeDocumentPage() {
             {memory.fallback_reason ? <div className="muted small">Причина резервного режима: {memory.fallback_reason}</div> : null}
             <div className="actions">
               {availableTypes.map((key) => (
-                <span key={key} className="muted small">{extractedItemTypeLabel(key)}: {availableTypeCounts[key]}</span>
+                <span key={key} className="muted small">{extractedItemTypeLabel(key)}: {memory.counters[key]}</span>
               ))}
             </div>
             {showDebugBlocks ? (
@@ -266,7 +287,7 @@ export function KnowledgeDocumentPage() {
                   <Select value={filterType} onChange={(event: ChangeEvent<HTMLSelectElement>) => setFilterType(event.target.value)}>
                     <option value="">Все извлечённые элементы</option>
                     {availableTypes.map((key) => (
-                      <option key={key} value={key}>{extractedItemTypeLabel(key)} ({availableTypeCounts[key]})</option>
+                      <option key={key} value={key}>{extractedItemTypeLabel(key)} ({memory.counters[key]})</option>
                     ))}
                   </Select>
                   <Select value={filterQuality} onChange={(event: ChangeEvent<HTMLSelectElement>) => setFilterQuality(event.target.value)}>
@@ -299,12 +320,6 @@ export function KnowledgeDocumentPage() {
         </Banner>
       ) : null}
 
-      {documentProcessing && memory.items.length > 0 ? (
-        <Banner tone="warning">
-          Документ ещё обрабатывается. Показанная память может относиться к предыдущей успешной версии, а итоговые сведения обновятся после завершения обработки.
-        </Banner>
-      ) : null}
-
       {selectedChunk ? (
         <Banner tone="info">
           Сейчас выделен фрагмент <strong>{selectedChunk.title ?? `Фрагмент ${selectedChunk.chunk_index}`}</strong> — {selectedChunk.source_location ?? 'позиция не указана'}.
@@ -325,7 +340,7 @@ export function KnowledgeDocumentPage() {
                     <strong>{block.title}</strong>
                     {block.meta ? <span className="muted small">{block.meta}</span> : null}
                   </div>
-                  <div className="pre-wrap" style={{ marginTop: 8 }}>{block.content}</div>
+                  <StructuredText text={block.content} />
                   {block.item && !showVerificationEvidence ? (
                     <div className="actions" style={{ marginTop: 8 }}>
                       <Button type="button" onClick={() => setExpandedEvidenceId(evidenceExpanded ? '' : block.key)}>
@@ -377,7 +392,7 @@ export function KnowledgeDocumentPage() {
                       <span className="muted small">{titleStatus(item.quality_status)}</span>
                     </div>
                     <div className="muted small">Тип: {extractedItemTypeLabel(item.item_type)} · уверенность: {item.confidence_score != null ? item.confidence_score.toFixed(2) : '—'}</div>
-                    <div className="pre-wrap" style={{ marginTop: 8 }}>{item.content}</div>
+                    <StructuredText text={item.content} />
                     {item.evidence_quote ? <div className="muted small" style={{ marginTop: 8 }}>Цитата-основание: {item.evidence_quote}</div> : null}
                     {item.structured_payload ? <CollapsibleCodeBlock style={{ marginTop: 8 }}>{safeJson(item.structured_payload)}</CollapsibleCodeBlock> : null}
                     {chunk ? <Button type="button" onClick={() => jumpToChunk(chunk, setSelectedChunkId)}>Перейти к фрагменту</Button> : null}

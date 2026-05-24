@@ -13,7 +13,7 @@ from app.schemas.operations import (
     OperationMetricsResponse,
 )
 
-router = APIRouter(tags=["operations"])
+router = APIRouter(tags=["Операции"])
 UserDep = Depends(require_roles(ROLE_USER))
 
 

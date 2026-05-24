@@ -33,7 +33,7 @@ export function KnowledgeScopeSummary(props: {
   }
 
   return (
-    <Card title={props.title ?? 'Область знаний'} subtitle={props.subtitle ?? 'Какие версии знаний реально участвовали в подготовке и проверке решения.'}>
+    <Card title={props.title ?? 'Область знаний'} subtitle={props.subtitle ?? 'Какие версии знаний участвовали в подготовке и проверке решения.'}>
       <div className="grid grid-2">
         <div className="section-box">
           <h3>Обязательная baseline-база</h3>

@@ -543,6 +543,10 @@ h3 {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
+.compact-table-wrap {
+  margin: var(--space-2) 0;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -554,8 +558,14 @@ h3 {
 .table td {
   padding: var(--space-4);
   border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
+}
+
+.table th:last-child,
+.table td:last-child {
+  border-right: 0;
 }
 
 .table th {
@@ -571,6 +581,48 @@ h3 {
 
 .table tr:last-child td {
   border-bottom: 0;
+}
+
+.html-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  margin: var(--space-4) 0;
+  font-size: 14px;
+}
+
+.html-preview th,
+.html-preview td {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.html-preview th {
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.readable-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.readable-heading {
+  margin-top: var(--space-2);
+  font-weight: 700;
+}
+
+.readable-point {
+  padding-left: var(--space-4);
+}
+
+.readable-paragraph {
+  line-height: 1.55;
 }
 
 .timeline {
@@ -812,10 +864,6 @@ h3 {
 
 .toolbar-grid-4 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.filter-summary {
-  padding-top: var(--space-3);
 }
 
 .tab-strip {

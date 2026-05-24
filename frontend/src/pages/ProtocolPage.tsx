@@ -9,10 +9,9 @@ import {
 } from '../shared/api/verification';
 import { queryKeys } from '../shared/api/queryKeys';
 import { sanitizeHtml } from '../shared/lib/html';
-import { matchesSearch } from '../shared/lib/search';
-import { Badge, Banner, Card, CollapsibleCodeBlock, EmptyState, ErrorState, Input, LoadingState, PageHeader, Select, StateBox } from '../shared/ui/components';
+import { Badge, Banner, Button, Card, CollapsibleCodeBlock, EmptyState, ErrorState, Input, LoadingState, PageHeader, Select, StateBox } from '../shared/ui/components';
 import { KnowledgeScopeSummary } from '../entities/knowledge/KnowledgeScopeSummary';
-import { cleanDisplayFileName, formatDateTime, solutionSectionLabel, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
+import { cleanDisplayFileName, formatDateTime, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
 import {
   normalizeVerificationProtocol,
 } from '../shared/api/normalized';
@@ -32,28 +31,27 @@ function normalizeFindings(value: VerificationFinding[] | VerificationProtocolVi
   return Array.isArray(value) ? (value as VerificationFinding[]) : [];
 }
 
+function compactEvidenceLabel(value?: string | null) {
+  if (!value) return null;
+  const sourceMatch = value.match(/([A-Za-z0-9А-Яа-яЁё_. -]+\.(?:pdf|docx?|xlsx?|md|txt|csv))/i);
+  const sourceLocationMatch = value.match(/(?:fragment|chunk|compact|section|раздел|фрагмент)\s*[:#]?\s*([A-Za-zА-Яа-яЁё0-9_.-]+)/i);
+  const source = cleanDisplayFileName(sourceMatch?.[1]) ?? null;
+  const location = sourceLocationMatch?.[1] ? `фрагмент ${sourceLocationMatch[1]}` : null;
+  if (source && location) return `${source} · ${location}`;
+  if (source) return source;
+  const sectionMatch = value.match(/section[_ -]?([A-Za-zА-Яа-яЁё0-9_.-]+)/i);
+  if (sectionMatch?.[1]) return `Раздел ${sectionMatch[1]}`;
+  return value
+    .replace(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi, '')
+    .replace(/\b[a-f0-9]{24,}\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s|:;,-]+|[\s|:;,-]+$/g, '')
+    .slice(0, 160) || 'Документ-основание';
+}
+
 function ImpactBadge(props: { finding: VerificationFinding }) {
   const impact = verificationFindingImpact(props.finding.status, props.finding.severity);
   return <span className={`badge badge-${impact.tone}`}>{impact.label}</span>;
-}
-
-function findingSearchParts(finding: VerificationFinding) {
-  const impact = verificationFindingImpact(finding.status, finding.severity);
-  const group = finding.rule_group ?? 'other';
-  return [
-    finding,
-    finding.rule_id,
-    finding.rule_name,
-    finding.finding_text,
-    finding.evidence,
-    finding.related_section_ref,
-    titleStatus(finding.status),
-    titleStatus(finding.severity),
-    verificationRuleGroupLabel(group),
-    finding.related_section_ref ? solutionSectionLabel(finding.related_section_ref) : null,
-    impact.label,
-    impact.description,
-  ];
 }
 
 export function ProtocolPage() {
@@ -62,6 +60,7 @@ export function ProtocolPage() {
   const [severityFilter, setSeverityFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
+  const [exportNotice, setExportNotice] = useState('');
 
   const protocolQuery = useQuery({
     queryKey: queryKeys.protocol(protocolId),
@@ -80,34 +79,32 @@ export function ProtocolPage() {
     enabled: shouldFetchViolations,
   });
 
-  const protocol: NormalizedVerificationProtocol = normalizeVerificationProtocol(protocolQuery.data);
+    const protocol: NormalizedVerificationProtocol = normalizeVerificationProtocol(protocolQuery.data);
   const effectiveFindings = protocol.findings.length > 0
     ? protocol.findings
     : normalizeFindings(violationsQuery.data?.violations);
-  const filteredFindings = useMemo(
-    () => effectiveFindings.filter((finding: VerificationFinding) => (
-      matchesSearch(findingSearchParts(finding), search)
-      && (!severityFilter || finding.severity === severityFilter)
-      && (!statusFilter || finding.status === statusFilter)
-      && (!groupFilter || (finding.rule_group ?? 'other') === groupFilter)
-    )),
-    [effectiveFindings, groupFilter, search, severityFilter, statusFilter],
-  );
-  const impactTotals = useMemo(() => filteredFindings.reduce<Record<string, number>>((acc, finding) => {
+  const impactTotals = useMemo(() => effectiveFindings.reduce<Record<string, number>>((acc, finding) => {
     const label = verificationFindingImpact(finding.status, finding.severity).label;
     acc[label] = (acc[label] ?? 0) + 1;
     return acc;
-  }, {}), [filteredFindings]);
+  }, {}), [effectiveFindings]);
 
   const groupedFindings = useMemo(() => {
+    const filtered = effectiveFindings.filter((finding: VerificationFinding) => {
+      const haystack = `${finding.rule_id ?? ''} ${finding.rule_name ?? ''} ${finding.finding_text ?? ''} ${finding.status} ${finding.severity} ${finding.related_section_ref ?? ''} ${finding.rule_group ?? ''}`.toLowerCase();
+      return haystack.includes(search.toLowerCase())
+        && (!severityFilter || finding.severity === severityFilter)
+        && (!statusFilter || finding.status === statusFilter)
+        && (!groupFilter || finding.rule_group === groupFilter);
+    });
     const groups: Record<string, VerificationFinding[]> = {};
-    filteredFindings.forEach((finding: VerificationFinding) => {
+    filtered.forEach((finding: VerificationFinding) => {
       const key = finding.rule_group ?? 'other';
       groups[key] = groups[key] ?? [];
       groups[key].push(finding);
     });
     return groups;
-  }, [filteredFindings]);
+  }, [effectiveFindings, groupFilter, search, severityFilter, statusFilter]);
 
   if (protocolQuery.isLoading) return <LoadingState message="Открываю протокол проверки…" />;
   if (protocolQuery.isError || !protocolQuery.data) return <ErrorState message="Не удалось загрузить протокол проверки." />;
@@ -131,8 +128,16 @@ export function ProtocolPage() {
       <PageHeader
         title="Протокол проверки"
         subtitle="Здесь собран итог проверки, список нарушений, группировка по правилам и адресные замечания по TOGAF и ArchiMate."
-        actions={<Link to={`/solutions/${protocol.solution_version_id}`} className="button">Вернуться к решению</Link>}
+        actions={(
+          <>
+            <Button type="button" onClick={() => setExportNotice('Экспорт PDF появится после подключения backend-выгрузки.')}>Экспорт PDF</Button>
+            <Button type="button" onClick={() => setExportNotice('Экспорт DOCX появится после подключения backend-выгрузки.')}>Экспорт DOCX</Button>
+            <Link to={`/solutions/${protocol.solution_version_id}`} className="button">Вернуться к решению</Link>
+          </>
+        )}
       />
+
+      {exportNotice ? <Banner tone="info">{exportNotice}</Banner> : null}
 
       {(protocol.summary_status === 'incomplete' || protocol.state === 'incomplete') ? (
         <Banner tone="warning">Проверка завершилась не полностью. Итог лучше просмотреть вручную.</Banner>
@@ -144,18 +149,18 @@ export function ProtocolPage() {
       <div className="grid grid-4">
         <Card title="Итог"><Badge value={protocol.summary_status} /></Card>
         <Card title="Статус протокола"><Badge value={protocol.state} /></Card>
-        <Card title="Оценка"><strong>{String(complianceSummary.score ?? '—')}/100</strong></Card>
         <Card title="Критичных нарушений"><strong>{String(complianceSummary.critical_violation_count ?? 0)}</strong></Card>
+        <Card title="Замечаний по TOGAF/ArchiMate"><strong>{String(complianceSummary.relevant_violation_count ?? 0)}</strong></Card>
       </div>
 
       <KnowledgeScopeSummary
         scope={protocol.knowledge_scope}
         title="Область знаний проверки"
-        subtitle="Протокол фиксирует ту же область знаний, которая использовалась при подготовке и проверке решения."
+        subtitle="Протокол фиксирует тот же knowledge scope, который использовался в generation и verification."
       />
 
       {safeRenderedHtml ? (
-        <Card title="Веб-артефакт протокола" subtitle="Самостоятельное представление протокола проверки.">
+        <Card title="Веб-артефакт протокола" subtitle="Самостоятельное rendered-представление verification protocol.">
           <div className="html-preview" dangerouslySetInnerHTML={{ __html: safeRenderedHtml }} />
         </Card>
       ) : null}
@@ -165,7 +170,7 @@ export function ProtocolPage() {
           <div className="stack compact">
             <div><strong>Дата выпуска:</strong> {formatDateTime(protocol.created_at)}</div>
             <div><strong>Версия знаний:</strong> <span className="mono">{protocol.knowledge_version_id}</span></div>
-            <div><strong>Версия решения:</strong> <span className="mono">{protocol.solution_version_id}</span></div>
+            <div><strong>Solution version:</strong> <span className="mono">{protocol.solution_version_id}</span></div>
             <div className="actions">
               {operationId ? <Link className="button" to={`/operations/${operationId}`}>Операция проверки</Link> : null}
               <Link className="button" to={`/solutions/${protocol.solution_version_id}`}>К решению</Link>
@@ -187,7 +192,7 @@ export function ProtocolPage() {
             <Select value={statusFilter} onChange={(event: ChangeEvent<HTMLSelectElement>) => setStatusFilter(event.target.value)}>
               <option value="">Все статусы</option>
               <option value="passed">Без замечаний</option>
-              <option value="warning">Предупреждение</option>
+              <option value="warning">Warning</option>
               <option value="failed">Ошибка</option>
               <option value="not_determined">Требует проверки вручную</option>
             </Select>
@@ -226,8 +231,6 @@ export function ProtocolPage() {
       >
         {effectiveFindings.length === 0 ? (
           <EmptyState title="Проверки пока не найдены" />
-        ) : filteredFindings.length === 0 ? (
-          <EmptyState title="По текущему фильтру ничего не найдено" />
         ) : (
           <div className="table-wrap">
             <table className="table">
@@ -241,7 +244,7 @@ export function ProtocolPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredFindings.map((finding: VerificationFinding) => {
+                {effectiveFindings.map((finding: VerificationFinding) => {
                   const impact = verificationFindingImpact(finding.status, finding.severity);
                   return (
                     <tr key={finding.check_result_id ?? finding.rule_id ?? `${finding.rule_group}-${finding.sort_order}`}>
@@ -264,16 +267,16 @@ export function ProtocolPage() {
         )}
       </Card>
 
-      <Card title="Сводка соответствия" subtitle="Отдельная сводка по структуре TOGAF, метамодели ArchiMate и семантической согласованности.">
+      <Card title="Compliance summary" subtitle="Отдельная сводка по структуре TOGAF, метамодели ArchiMate и семантической согласованности.">
         {Object.keys(complianceGroups).length === 0 ? <EmptyState title="Сводка по группам пока недоступна" /> : (
           <div className="grid grid-4">
             {Object.entries(complianceGroups).map(([group, values]) => (
               <Card key={group} title={verificationRuleGroupLabel(group)}>
                 <div className="stack compact">
                   <div><strong>Всего:</strong> {String(values.count ?? 0)}</div>
-                  <div><strong>Ошибок:</strong> {String(values.failed ?? 0)}</div>
-                  <div><strong>Предупреждений:</strong> {String(values.warnings ?? 0)}</div>
-                  <div><strong>Неполных проверок:</strong> {String(values.incomplete ?? 0)}</div>
+                  <div><strong>Failed:</strong> {String(values.failed ?? 0)}</div>
+                  <div><strong>Warnings:</strong> {String(values.warnings ?? 0)}</div>
+                  <div><strong>Incomplete:</strong> {String(values.incomplete ?? 0)}</div>
                 </div>
               </Card>
             ))}
@@ -285,7 +288,7 @@ export function ProtocolPage() {
         <Card title="Пояснение к проверке" subtitle="Показывает, насколько полно проверка опиралась на материалы.">
           <div className="stack compact">
             <div><strong>Версия правил:</strong> {String(ruleExecution.rulebook_version ?? '—')}</div>
-            <div><strong>Объём проверки:</strong> {ruleExecution.validation_scope === 'full' || !ruleExecution.validation_scope ? 'Полный' : String(ruleExecution.validation_scope)}</div>
+            <div><strong>Объём проверки:</strong> {String(ruleExecution.validation_scope ?? 'full')}</div>
             <div><strong>Проверенные группы:</strong> {Array.isArray(ruleExecution.executed_rule_groups) ? ruleExecution.executed_rule_groups.map((value) => verificationRuleGroupLabel(String(value))).join(', ') || '—' : '—'}</div>
             <div><strong>Замечаний с основанием:</strong> {String(evidenceCoverage.findings_with_evidence ?? 0)} / {String(evidenceCoverage.finding_count ?? effectiveFindings.length)}</div>
             <div><strong>Обязательных материалов:</strong> {String(basisPackage.required_basis_count ?? 0)} / {String(basisPackage.basis_document_count ?? protocol.basis_documents.length)}</div>
@@ -330,7 +333,7 @@ export function ProtocolPage() {
               <tbody>
                 {protocol.basis_documents.map((item) => (
                   <tr key={item.protocol_basis_document_id ?? `${item.title}-${item.sort_order}`}>
-                    <td>{cleanDisplayFileName(item.title) ?? item.title}</td>
+                    <td>{item.title}</td>
                     <td>{item.role_code ?? '—'}</td>
                     <td>{item.version_ref ?? '—'}</td>
                     <td>{item.required_flag ? 'Да' : 'Нет'}</td>
@@ -342,7 +345,7 @@ export function ProtocolPage() {
         )}
       </Card>
 
-      <Card title="Замечания и нарушения" subtitle="Здесь показаны адресные нарушения, сгруппированные по группам правил проверки.">
+      <Card title="Замечания и нарушения" subtitle="Здесь показаны адресные нарушения, сгруппированные по rule group из verification API.">
         {Object.keys(groupedFindings).length === 0 ? (
           <EmptyState title="По текущему фильтру ничего не найдено" />
         ) : (
@@ -363,10 +366,10 @@ export function ProtocolPage() {
                         <span className="muted small">{titleStatus(finding.status)} · {verificationFindingImpact(finding.status, finding.severity).label}</span>
                       </div>
                       <div>{finding.finding_text ?? 'Замечаний нет.'}</div>
-                      {finding.evidence ? <div className="muted small">Основание: {finding.evidence}</div> : null}
+                      {finding.evidence ? <div className="muted small">Основание: {compactEvidenceLabel(finding.evidence)}</div> : null}
                       {finding.related_section_ref ? (
                         <div className="actions">
-                          <span className="muted small">Раздел решения: {solutionSectionLabel(finding.related_section_ref)}</span>
+                          <span className="muted small">Раздел решения: {finding.related_section_ref}</span>
                           <Link className="button" to={`/solutions/${protocol.solution_version_id}#section-${finding.related_section_ref}`}>Перейти к разделу решения</Link>
                         </div>
                       ) : null}

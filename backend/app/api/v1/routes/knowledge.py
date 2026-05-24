@@ -9,7 +9,7 @@ from app.api.v1.routes.knowledge_sources_routes import router as sources_router
 from app.api.v1.routes.knowledge_update_runs_routes import router as update_runs_router
 from app.api.v1.routes.knowledge_versions_routes import router as versions_router
 
-router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+router = APIRouter(prefix="/knowledge", tags=["Базы знаний"])
 router.include_router(bases_router)
 router.include_router(sources_router)
 router.include_router(documents_router)
