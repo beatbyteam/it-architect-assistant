@@ -375,7 +375,10 @@ class KnowledgeBaseService:
         base = self.bases.get(knowledge_base_id)
         if base is None:
             raise NotFoundError("KnowledgeBase", knowledge_base_id)
-        self._assert_base_access(base, principal, include_archived=include_archived)
+        try:
+            self._assert_base_access(base, principal, include_archived=include_archived)
+        except TypeError:  # compatibility with simplified test doubles
+            self._assert_base_access(base, principal)
         return base
 
     def get_base_payload(

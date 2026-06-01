@@ -35,6 +35,8 @@ FORBIDDEN_IP_NETWORKS = (
 SUPPORTED_DOCUMENT_SUFFIXES = {
     ".pdf",
     ".docx",
+    ".odt",
+    ".archimate",
     ".html",
     ".htm",
     ".md",
@@ -42,6 +44,7 @@ SUPPORTED_DOCUMENT_SUFFIXES = {
     ".txt",
     ".text",
     ".json",
+    ".xlsx",
 }
 
 _AUTO_DIRECTORY_SOURCE_TYPES = {
@@ -215,7 +218,7 @@ def ensure_supported_document_target(
     if allow_suffixless_remote and not suffix and urlparse(uri).scheme in {"http", "https"}:
         return
     raise SourceSecurityError(
-        "Only PDF, DOCX, HTML, Markdown, plain-text and JSON documents are supported",
+        "Only PDF, DOCX, ODT, XLSX, ArchiMate, HTML, Markdown, plain-text and JSON documents are supported",
         error_code="UNSUPPORTED_DOCUMENT_TYPE",
         details={"uri": uri, "suffix": suffix or None},
     )

@@ -4,6 +4,9 @@ import hashlib
 import io
 import json
 import re
+import zipfile
+import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +45,9 @@ class ContentLoadError(RuntimeError):
 
 
 HEADING_RE = re.compile(r"^(#{1,6}\s+.+|\d+(?:\.\d+)*\s+.+)$")
+ImageTextAnalyzer = Callable[[bytes, str, str | None], str]
+_EMBEDDED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+_MAX_EMBEDDED_IMAGE_SECTIONS = 12
 
 
 @dataclass(slots=True)
@@ -65,6 +71,8 @@ class NormalizedDocument:
 SUPPORTED_DOCUMENT_SUFFIXES = {
     ".pdf",
     ".docx",
+    ".odt",
+    ".archimate",
     ".html",
     ".htm",
     ".md",
@@ -78,6 +86,7 @@ SUPPORTED_DOCUMENT_SUFFIXES = {
 MEDIA_TYPE_SUFFIXES = {
     "application/pdf": ".pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.oasis.opendocument.text": ".odt",
     "application/xhtml+xml": ".html",
     "text/html": ".html",
     "text/markdown": ".md",
@@ -135,13 +144,21 @@ def normalize_document(uri: str, data: bytes, *, media_type: str | None = None) 
 
 
 def normalize_document_payload(
-    uri: str, data: bytes, *, media_type: str | None = None
+    uri: str,
+    data: bytes,
+    *,
+    media_type: str | None = None,
+    image_analyzer: ImageTextAnalyzer | None = None,
 ) -> NormalizedDocument:
     suffix = _detect_document_suffix(uri, media_type=media_type)
     if suffix == ".pdf":
-        return _extract_pdf_payload(uri, data)
+        return _extract_pdf_payload(uri, data, image_analyzer=image_analyzer)
     if suffix == ".docx":
-        return _extract_docx_payload(data)
+        return _extract_docx_payload(data, image_analyzer=image_analyzer)
+    if suffix == ".odt":
+        return _extract_odt_payload(data, image_analyzer=image_analyzer)
+    if suffix == ".archimate":
+        return _extract_archimate_payload(uri, data)
     if suffix in {".html", ".htm"}:
         return _extract_html_payload(data)
     if suffix in {".md", ".markdown"}:
@@ -275,14 +292,27 @@ def _normalize_media_type(media_type: str | None) -> str | None:
     return normalized or None
 
 
-def _extract_pdf_payload(uri: str, data: bytes) -> NormalizedDocument:
+def _extract_pdf_payload(
+    uri: str,
+    data: bytes,
+    *,
+    image_analyzer: ImageTextAnalyzer | None = None,
+) -> NormalizedDocument:
     try:
         reader = PdfReader(io.BytesIO(data))
         sections: list[StructuredSection] = []
+        image_sections: list[StructuredSection] = []
         page_texts: list[str] = []
         skipped_pages: list[dict[str, Any]] = []
         seen_page_signatures: set[str] = set()
         for index, page in enumerate(reader.pages, start=1):
+            image_sections.extend(
+                _embedded_image_sections(
+                    _extract_pdf_page_images(page, index),
+                    source_prefix=f"page:{index}",
+                    image_analyzer=image_analyzer,
+                )
+            )
             page_text = (page.extract_text() or "").strip()
             if not page_text:
                 skipped_pages.append({"page_number": index, "reason": "empty_page"})
@@ -303,6 +333,8 @@ def _extract_pdf_payload(uri: str, data: bytes) -> NormalizedDocument:
                     metadata={"page_number": index},
                 )
             )
+        if image_sections:
+            sections.extend(image_sections)
         text = "\n\n".join(
             _render_section(section) for section in sections if section.content.strip()
         )
@@ -323,6 +355,7 @@ def _extract_pdf_payload(uri: str, data: bytes) -> NormalizedDocument:
             metadata={
                 "page_count": len(reader.pages),
                 "section_count": len(sections),
+                "embedded_image_count": len(image_sections),
                 "skipped_page_count": len(skipped_pages),
                 "skipped_pages": skipped_pages,
                 "page_map": page_map,
@@ -340,7 +373,11 @@ def _extract_pdf_payload(uri: str, data: bytes) -> NormalizedDocument:
         return fallback
 
 
-def _extract_docx_payload(data: bytes) -> NormalizedDocument:
+def _extract_docx_payload(
+    data: bytes,
+    *,
+    image_analyzer: ImageTextAnalyzer | None = None,
+) -> NormalizedDocument:
     try:
         document = DocxDocument(io.BytesIO(data))
         sections: list[StructuredSection] = []
@@ -412,6 +449,12 @@ def _extract_docx_payload(data: bytes) -> NormalizedDocument:
                     buffer.append(f"Table {table_index}\n" + "\n".join(rows))
                     block_end = current_block_index
         flush()
+        image_sections = _embedded_image_sections(
+            _extract_docx_images(document),
+            source_prefix="docx",
+            image_analyzer=image_analyzer,
+        )
+        sections.extend(image_sections)
         if not sections:
             flat = [p.text.strip() for p in document.paragraphs if p.text.strip()]
             sections = [
@@ -431,6 +474,7 @@ def _extract_docx_payload(data: bytes) -> NormalizedDocument:
                 "section_count": len(sections),
                 "paragraph_count": len(document.paragraphs),
                 "table_count": len(document.tables),
+                "embedded_image_count": len(image_sections),
                 "section_map": _build_section_map(sections),
                 "canonical_text_stats": _text_stats(canonical_text),
                 "parser_warnings": [],
@@ -447,6 +491,160 @@ def _iter_docx_blocks(document: DocxNativeDocument):
             yield Paragraph(child, document)
         elif isinstance(child, CT_Tbl):
             yield Table(child, document)
+
+
+def _extract_odt_payload(
+    data: bytes,
+    *,
+    image_analyzer: ImageTextAnalyzer | None = None,
+) -> NormalizedDocument:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            content_xml = archive.read("content.xml")
+            root = ET.fromstring(content_xml)
+            sections: list[StructuredSection] = []
+            block_index = 0
+            for element in root.iter():
+                local_name = _xml_local_name(element.tag)
+                if local_name not in {"h", "p", "table-cell"}:
+                    continue
+                text = _xml_text_content(element)
+                if not text:
+                    continue
+                block_index += 1
+                is_heading = local_name == "h"
+                sections.append(
+                    StructuredSection(
+                        heading=text if is_heading else None,
+                        content=text,
+                        source_location=f"odt:block:{block_index}",
+                        level=_parse_int_attr(element, "outline-level") if is_heading else None,
+                        metadata={"block_index": block_index, "xml_tag": local_name},
+                    )
+                )
+
+            image_sections = _embedded_image_sections(
+                _extract_odt_images(archive),
+                source_prefix="odt",
+                image_analyzer=image_analyzer,
+            )
+            sections.extend(image_sections)
+
+        canonical_text = "\n\n".join(
+            _render_section(section) for section in sections if section.content.strip()
+        )
+        return NormalizedDocument(
+            text=canonical_text,
+            content_format="odt",
+            parser_name="odt-xml",
+            sections=sections,
+            metadata={
+                "section_count": len(sections),
+                "embedded_image_count": len(image_sections),
+                "section_map": _build_section_map(sections),
+                "canonical_text_stats": _text_stats(canonical_text),
+                "parser_warnings": [],
+            },
+        )
+    except Exception as exc:  # pragma: no cover
+        raise ContentLoadError(f"Failed to parse ODT: {exc}") from exc
+
+
+def _extract_archimate_payload(uri: str, data: bytes) -> NormalizedDocument:
+    try:
+        root = ET.fromstring(data)
+    except Exception:
+        fallback = _extract_fallback_payload(
+            uri, data, suffix=".archimate", media_type="application/xml"
+        )
+        fallback.metadata = {**fallback.metadata, "archimate_fallback_reason": "parse_failed"}
+        return fallback
+
+    element_lines: list[str] = []
+    relation_lines: list[str] = []
+    view_lines: list[str] = []
+    for node in root.iter():
+        local_name = _xml_local_name(node.tag)
+        attrs = {_xml_local_name(key): value for key, value in node.attrib.items()}
+        item_type = attrs.get("type") or attrs.get("xsi:type") or attrs.get("archimateType")
+        item_name = attrs.get("name") or _first_child_text(node, "name") or attrs.get("identifier")
+        identifier = attrs.get("identifier") or attrs.get("id")
+        if local_name == "element":
+            element_lines.append(
+                _compact_join([item_name, item_type, f"id={identifier}" if identifier else None])
+            )
+        elif local_name == "relationship":
+            relation_lines.append(
+                _compact_join(
+                    [
+                        item_name,
+                        item_type,
+                        f"{attrs.get('source')} -> {attrs.get('target')}"
+                        if attrs.get("source") or attrs.get("target")
+                        else None,
+                    ]
+                )
+            )
+        elif local_name == "view":
+            view_lines.append(_compact_join([item_name, item_type, f"id={identifier}" if identifier else None]))
+
+    sections: list[StructuredSection] = []
+    if element_lines:
+        sections.append(
+            StructuredSection(
+                heading="ArchiMate elements",
+                content="\n".join(element_lines),
+                source_location="archimate:elements",
+                level=1,
+            )
+        )
+    if relation_lines:
+        sections.append(
+            StructuredSection(
+                heading="ArchiMate relationships",
+                content="\n".join(relation_lines),
+                source_location="archimate:relationships",
+                level=1,
+            )
+        )
+    if view_lines:
+        sections.append(
+            StructuredSection(
+                heading="ArchiMate views",
+                content="\n".join(view_lines),
+                source_location="archimate:views",
+                level=1,
+            )
+        )
+    if not sections:
+        decoded = _decode_best_effort_text(data)
+        sections = [
+            StructuredSection(
+                heading="ArchiMate XML",
+                content=decoded or "ArchiMate XML parsed without extractable model items.",
+                source_location="archimate:xml",
+                level=1,
+            )
+        ]
+
+    canonical_text = "\n\n".join(
+        _render_section(section) for section in sections if section.content.strip()
+    )
+    return NormalizedDocument(
+        text=canonical_text,
+        content_format="archimate",
+        parser_name="archimate-xml",
+        sections=sections,
+        metadata={
+            "section_count": len(sections),
+            "element_count": len(element_lines),
+            "relationship_count": len(relation_lines),
+            "view_count": len(view_lines),
+            "section_map": _build_section_map(sections),
+            "canonical_text_stats": _text_stats(canonical_text),
+            "parser_warnings": [],
+        },
+    )
 
 
 def _extract_xlsx_payload(data: bytes) -> NormalizedDocument:
@@ -837,6 +1035,158 @@ def _looks_like_table_of_contents_page(text: str) -> bool:
     return toc_like_lines >= 8 and toc_ratio >= 0.55
 
 
+def _embedded_image_sections(
+    images: list[tuple[str, bytes, str | None]],
+    *,
+    source_prefix: str,
+    image_analyzer: ImageTextAnalyzer | None,
+) -> list[StructuredSection]:
+    sections: list[StructuredSection] = []
+    for index, (name, blob, media_type) in enumerate(images[:_MAX_EMBEDDED_IMAGE_SECTIONS], start=1):
+        if not blob:
+            continue
+        content = _describe_embedded_image(
+            blob,
+            filename=name or f"image-{index}",
+            media_type=media_type,
+            image_analyzer=image_analyzer,
+        )
+        sections.append(
+            StructuredSection(
+                heading=f"Embedded image {index}",
+                content=content,
+                source_location=f"{source_prefix}:image:{index}",
+                level=1,
+                metadata={
+                    "image_name": name,
+                    "media_type": media_type,
+                    "size_bytes": len(blob),
+                },
+            )
+        )
+    if len(images) > _MAX_EMBEDDED_IMAGE_SECTIONS:
+        skipped = len(images) - _MAX_EMBEDDED_IMAGE_SECTIONS
+        sections.append(
+            StructuredSection(
+                heading="Embedded images",
+                content=f"Skipped embedded images because the document contains too many: {skipped}.",
+                source_location=f"{source_prefix}:image:skipped",
+                level=1,
+                metadata={"skipped_image_count": skipped},
+            )
+        )
+    return sections
+
+
+def _describe_embedded_image(
+    blob: bytes,
+    *,
+    filename: str,
+    media_type: str | None,
+    image_analyzer: ImageTextAnalyzer | None,
+) -> str:
+    if image_analyzer is not None:
+        with suppress(Exception):
+            analyzed = image_analyzer(blob, filename, media_type).strip()
+            if analyzed:
+                return analyzed
+    media_label = media_type or _guess_image_media_type(filename) or "unknown"
+    return (
+        f"Изображение в документе: {filename}\n"
+        f"Тип: {media_label}\n"
+        f"Размер: {len(blob)} bytes\n\n"
+        "Автоматическое описание изображения недоступно. "
+        "Если на изображении есть схема или скриншот, "
+        "добавьте ее текстовое описание или настройте vision-модель."
+    )
+
+
+def _extract_docx_images(document: DocxNativeDocument) -> list[tuple[str, bytes, str | None]]:
+    images: list[tuple[str, bytes, str | None]] = []
+    seen: set[str] = set()
+    for relation in document.part.rels.values():
+        target_part = getattr(relation, "target_part", None)
+        content_type = getattr(target_part, "content_type", None)
+        if not str(content_type or "").startswith("image/"):
+            continue
+        part_name = str(getattr(target_part, "partname", "") or "")
+        if part_name in seen:
+            continue
+        seen.add(part_name)
+        blob = getattr(target_part, "blob", b"")
+        if isinstance(blob, bytes):
+            images.append((Path(part_name).name or "docx-image", blob, str(content_type)))
+    return images
+
+
+def _extract_odt_images(archive: zipfile.ZipFile) -> list[tuple[str, bytes, str | None]]:
+    images: list[tuple[str, bytes, str | None]] = []
+    for name in archive.namelist():
+        path = Path(name)
+        if not name.startswith("Pictures/") or path.suffix.lower() not in _EMBEDDED_IMAGE_SUFFIXES:
+            continue
+        with suppress(Exception):
+            images.append((path.name, archive.read(name), _guess_image_media_type(path.name)))
+    return images
+
+
+def _extract_pdf_page_images(page: Any, page_number: int) -> list[tuple[str, bytes, str | None]]:
+    images: list[tuple[str, bytes, str | None]] = []
+    with suppress(Exception):
+        page_images = getattr(page, "images", []) or []
+        for index, image in enumerate(page_images, start=1):
+            blob = getattr(image, "data", None)
+            if not isinstance(blob, bytes) or not blob:
+                continue
+            name = str(getattr(image, "name", "") or f"page-{page_number}-image-{index}")
+            images.append((name, blob, _guess_image_media_type(name)))
+    return images
+
+
+def _guess_image_media_type(filename: str) -> str | None:
+    suffix = Path(filename).suffix.lower()
+    return {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(suffix)
+
+
+def _xml_local_name(name: str) -> str:
+    if "}" in name:
+        return name.rsplit("}", 1)[-1]
+    if ":" in name:
+        return name.rsplit(":", 1)[-1]
+    return name
+
+
+def _xml_text_content(element: ET.Element) -> str:
+    return re.sub(r"\s+", " ", "".join(element.itertext())).strip()
+
+
+def _first_child_text(element: ET.Element, child_local_name: str) -> str | None:
+    for child in element:
+        if _xml_local_name(child.tag) == child_local_name:
+            text = _xml_text_content(child)
+            if text:
+                return text
+    return None
+
+
+def _parse_int_attr(element: ET.Element, local_attr_name: str) -> int | None:
+    for key, value in element.attrib.items():
+        if _xml_local_name(key) != local_attr_name:
+            continue
+        with suppress(ValueError):
+            return int(value)
+    return None
+
+
+def _compact_join(parts: list[str | None]) -> str:
+    return " | ".join(part for part in parts if part)
+
+
 def _build_pdf_page_map(sections: list[StructuredSection]) -> list[dict[str, Any]]:
     page_map: list[dict[str, Any]] = []
     offset = 0
@@ -911,9 +1261,14 @@ def _guess_media_type(suffix: str) -> str | None:
     return {
         ".pdf": "application/pdf",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".odt": "application/vnd.oasis.opendocument.text",
+        ".archimate": "application/xml",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".html": "text/html",
         ".htm": "text/html",
         ".md": "text/markdown",
         ".markdown": "text/markdown",
+        ".txt": "text/plain",
+        ".text": "text/plain",
+        ".json": "application/json",
     }.get(suffix)

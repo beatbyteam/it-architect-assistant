@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.config import Settings
 from app.core.exceptions import AuthorizationError, NotFoundError
 from app.core.security import AuthPrincipal
-from app.db.models.generation import BusinessTask, ClarificationRequest, GenerationRun
+from app.db.models.generation import BusinessTask, ClarificationRequest, GenerationRun, SolutionVersion
+from app.db.models.verification import VerificationRun
 from app.db.repositories.generation import BusinessTaskRepository, GenerationRunRepository
 from app.db.repositories.knowledge import KnowledgeVersionRepository
 from app.domain.services.audit import AuditService
@@ -164,6 +165,10 @@ class CanonicalTaskService:
                 selectinload(BusinessTask.generation_runs).selectinload(
                     GenerationRun.solution_version
                 ),
+                selectinload(BusinessTask.generation_runs)
+                .selectinload(GenerationRun.solution_version)
+                .selectinload(SolutionVersion.verification_runs)
+                .selectinload(VerificationRun.protocol),
             )
         )
         task = self.session.scalar(statement)

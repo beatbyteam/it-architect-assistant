@@ -12,6 +12,7 @@ import type { SolutionRegistryItem, TaskListItem, VerificationProtocolRegistryIt
 type RegistryTab = 'tasks' | 'solutions' | 'protocols';
 type RegistryTask = TaskListItem & {
   latest_generation_state?: string | null;
+  latest_verification_state?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -34,6 +35,7 @@ const STATUS_OPTIONS: Record<RegistryTab, StatusOption[]> = {
     { value: 'clarified', label: 'Данные уточнены' },
   ],
   solutions: [
+    { value: 'running', label: 'В работе' },
     { value: 'published', label: 'Опубликовано' },
     { value: 'superseded', label: 'Есть новая версия' },
     { value: 'failed', label: 'Ошибка' },
@@ -59,6 +61,7 @@ const ACTIVE_GENERATION_STATES = new Set([
   'finalizing',
   'publishing',
 ]);
+const ACTIVE_VERIFICATION_STATES = new Set(['queued', 'running']);
 
 function matchesDate(value: string | null | undefined, from?: string, to?: string) {
   if (!from && !to) return true;
@@ -76,6 +79,13 @@ function matchesDate(value: string | null | undefined, from?: string, to?: strin
 }
 
 function taskActionLabel(item: TaskListItem) {
+  if (
+    isExternalArchitectureTask(item)
+    && item.latest_verification_state
+    && ACTIVE_VERIFICATION_STATES.has(item.latest_verification_state)
+  ) {
+    return 'Открыть проверку в работе';
+  }
   if (isExternalArchitectureTask(item) && item.state === 'draft') {
     return 'Продолжить черновик проверки';
   }
@@ -98,7 +108,16 @@ function taskLink(item: RegistryTask) {
 }
 
 function taskBadgeValue(item: RegistryTask) {
+  if (item.latest_verification_state && ACTIVE_VERIFICATION_STATES.has(item.latest_verification_state)) {
+    return 'running';
+  }
   return item.latest_generation_state && ACTIVE_GENERATION_STATES.has(item.latest_generation_state)
+    ? 'running'
+    : item.state;
+}
+
+function solutionBadgeValue(item: SolutionRegistryItem) {
+  return item.latest_verification_state && ACTIVE_VERIFICATION_STATES.has(item.latest_verification_state)
     ? 'running'
     : item.state;
 }
@@ -179,6 +198,7 @@ export function RegistryPage() {
   const filteredSolutions = useMemo(() => {
     const rows = solutionsQuery.data ?? [];
     return rows.filter((item: SolutionRegistryItem) => {
+      const badgeStatus = solutionBadgeValue(item);
       const searchParts = [
         item.solution_version_id,
         item.solution_title,
@@ -186,6 +206,8 @@ export function RegistryPage() {
         item.task_id,
         item.state,
         titleStatus(item.state),
+        badgeStatus,
+        titleStatus(badgeStatus),
         item.generation_run_id,
         item.latest_verification_state,
         titleStatus(item.latest_verification_state),
@@ -193,7 +215,7 @@ export function RegistryPage() {
         item.verification_run_count,
       ];
       return matchesSearch(searchParts, searchValue)
-        && (!statusFilter || item.state === statusFilter)
+        && (!statusFilter || item.state === statusFilter || badgeStatus === statusFilter || item.latest_verification_state === statusFilter)
         && matchesDate(item.published_at ?? item.created_at, dateFrom, dateTo);
     });
   }, [dateFrom, dateTo, searchValue, solutionsQuery.data, statusFilter]);
@@ -307,7 +329,7 @@ export function RegistryPage() {
                     <tr key={item.task_id}>
                       <td>
                         <strong>{item.title ?? 'Задача без названия'}</strong>
-                        <div className="muted small mono">{truncate(item.task_id, 18)}</div>
+                        {item.latest_verification_state ? <div className="muted small">Проверка: <Badge value={item.latest_verification_state} /></div> : null}
                       </td>
                       <td><Badge value={taskBadgeValue(item)} /></td>
                       <td>
@@ -346,9 +368,8 @@ export function RegistryPage() {
                     <tr key={item.solution_version_id}>
                       <td>
                         <strong>{item.solution_title}</strong>
-                        <div className="muted small">Задача: {truncate(item.task_id, 18)}</div>
                       </td>
-                      <td><Badge value={item.state} /></td>
+                      <td><Badge value={solutionBadgeValue(item)} /></td>
                       <td>
                         {item.verification_run_count ?? 0}
                         {item.latest_verification_state ? <div className="muted small">Последняя: <Badge value={item.latest_verification_state} /></div> : null}
@@ -391,7 +412,6 @@ export function RegistryPage() {
                     <tr key={item.protocol_id}>
                       <td>
                         <strong>{truncate(item.summary_text || 'Проверка решения', 40)}</strong>
-                        <div className="muted small">Решение: {truncate(item.solution_version_id, 18)}</div>
                       </td>
                       <td><Badge value={item.summary_status} /></td>
                       <td><Badge value={item.state} /></td>

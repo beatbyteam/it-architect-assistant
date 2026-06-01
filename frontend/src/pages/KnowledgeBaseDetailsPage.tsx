@@ -214,7 +214,6 @@ export function KnowledgeBaseDetailsPage() {
   const [dirtySourceIds, setDirtySourceIds] = useState<Record<string, boolean>>({});
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadSourceDefaults, setUploadSourceDefaults] = useState<SourceDraft>(DEFAULT_UPLOAD_SOURCE_DRAFT);
   const [uploadRunId, setUploadRunId] = useState<string | null>(null);
   const [documentActionNotice, setDocumentActionNotice] = useState<DocumentActionNotice | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -290,9 +289,7 @@ export function KnowledgeBaseDetailsPage() {
     () => (sourcesQuery.data ?? []).find((source: Source) => source.source_type === 'manual_upload') as Source | undefined,
     [sourcesQuery.data],
   );
-  const uploadSourceDraft = uploadSource ? (sourceDrafts[uploadSource.source_id] ?? toSourceDraft(uploadSource)) : uploadSourceDefaults;
-  const uploadSourceDirty = uploadSource ? Boolean(dirtySourceIds[uploadSource.source_id]) : false;
-  const uploadSourceStatusOptions = uploadSource ? allowedSourceStatuses(uploadSourceDraft.status) : ['active', 'disabled'];
+  const uploadSourceDraft = uploadSource ? (sourceDrafts[uploadSource.source_id] ?? toSourceDraft(uploadSource)) : DEFAULT_UPLOAD_SOURCE_DRAFT;
   const uploadSourceReady = uploadSourceDraft.status === 'active';
 
   useEffect(() => {
@@ -437,16 +434,6 @@ export function KnowledgeBaseDetailsPage() {
       invalidate();
     },
   });
-
-  const updateUploadSourceDraft = (patch: Partial<SourceDraft>) => {
-    const nextDraft = { ...uploadSourceDraft, ...patch };
-    if (uploadSource) {
-      setSourceDrafts((current) => ({ ...current, [uploadSource.source_id]: nextDraft }));
-      setDirtySourceIds((current) => ({ ...current, [uploadSource.source_id]: true }));
-    } else {
-      setUploadSourceDefaults(nextDraft);
-    }
-  };
 
   const uploadMutation = useMutation({
     mutationFn: async () => {
@@ -814,32 +801,9 @@ export function KnowledgeBaseDetailsPage() {
               <FormRow label="Файл">
                 <Input type="file" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles(Array.from(event.target.files ?? []))} disabled={uploadLearningInProgress} />
               </FormRow>
-              <div className="grid grid-2">
-                <FormRow label="Политика обновления">
-                  <Select value={uploadSourceDraft.refresh_policy} onChange={(event: ChangeEvent<HTMLSelectElement>) => updateUploadSourceDraft({ refresh_policy: event.target.value })} disabled={uploadLearningInProgress}>
-                    {KNOWLEDGE_REFRESH_POLICY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </Select>
-                </FormRow>
-                <FormRow label="Статус источника">
-                  <div className="readonly-field">Активен</div>
-                </FormRow>
-                {uploadSource ? (
-                  <div className="actions">
-                    <Button
-                      onClick={() => sourceSettingsMutation.mutate({
-                        sourceId: uploadSource.source_id,
-                        refresh_policy: uploadSourceDraft.refresh_policy,
-                        status: uploadSourceDraft.status === uploadSource.status || uploadSourceDraft.status === 'unavailable' ? undefined : uploadSourceDraft.status,
-                      })}
-                      disabled={sourceSettingsMutation.isPending || !uploadSourceDirty || uploadLearningInProgress}
-                    >
-                      {sourceSettingsMutation.isPending ? 'Сохраняю…' : 'Сохранить настройки'}
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
+              <FormRow label="Статус источника">
+                <div className="readonly-field">{titleStatus(uploadSourceDraft.status)}</div>
+              </FormRow>
               {trackedUploadRun ? (
                 <Banner tone={trackedUploadRun.status === 'failed' ? 'danger' : 'info'}>
                   <strong>Документ принят. {titleStatus(trackedUploadStage)}</strong>

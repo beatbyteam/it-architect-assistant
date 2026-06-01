@@ -20,15 +20,18 @@ def extract_knowledge_scope(
             scope = {**scope, "document_scope": document_scope}
         return scope
     if payload.get("knowledge_version_id") or payload.get("knowledge_version_ids"):
-        return {
+        compact_scope = {
             "selected_generation_version_id": payload.get("knowledge_version_id")
             or fallback_version_id,
             "effective_version_ids": list(
                 payload.get("knowledge_version_ids")
                 or ([fallback_version_id] if fallback_version_id else [])
             ),
-            "document_scope": safe_dict(payload.get("document_scope")) or None,
         }
+        document_scope = safe_dict(payload.get("document_scope"))
+        if document_scope:
+            compact_scope["document_scope"] = document_scope
+        return compact_scope
     if fallback_version_id:
         return {
             "selected_generation_version_id": fallback_version_id,

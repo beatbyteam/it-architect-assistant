@@ -85,6 +85,11 @@ class RetrievalService:
         section_fragment_ids: dict[str, list[str]] = {}
         diagnostics_list: list[dict[str, Any]] = []
         section_diagnostics: list[dict[str, Any]] = []
+        settings = getattr(self, "settings", None)
+        section_limit = max(
+            0,
+            int(getattr(settings, "generation_section_retrieval_limit", 0) or 0),
+        )
         versions = [self.versions.get_with_documents(version_id) for version_id in requested_ids]
         for version_id in requested_ids:
             result = self.knowledge_query.search_text(
@@ -101,7 +106,6 @@ class RetrievalService:
                     existing
                 ):
                     merged_fragments[fragment.fragment_id] = fragment
-            section_limit = max(0, int(self.settings.generation_section_retrieval_limit or 0))
             if section_limit:
                 for section_code, section_focus in SECTION_RETRIEVAL_FOCUS.items():
                     section_result = self.knowledge_query.search_text(
@@ -155,10 +159,8 @@ class RetrievalService:
             "knowledge_version_ids": requested_ids,
             "version_diagnostics": diagnostics_list,
             "section_retrieval": {
-                "enabled": bool(max(0, int(self.settings.generation_section_retrieval_limit or 0))),
-                "limit_per_section": max(
-                    0, int(self.settings.generation_section_retrieval_limit or 0)
-                ),
+                "enabled": bool(section_limit),
+                "limit_per_section": section_limit,
                 "sections_with_fragments": sorted(
                     section for section, ids in section_fragment_ids.items() if ids
                 ),

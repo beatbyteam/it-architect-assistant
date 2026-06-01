@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { getKnowledgeDocument, getKnowledgeDocumentMemory, getKnowledgeDocumentSnapshot } from '../shared/api/knowledge';
 import { queryKeys } from '../shared/api/queryKeys';
 import { getApiErrorStatus } from '../shared/api/client';
-import { documentTypeLabel, extractedItemTypeLabel, formatDateTime, safeJson, sourceTypeLabel, titleStatus } from '../shared/lib/format';
+import { cleanDisplayFileName, documentTypeLabel, extractedItemTypeLabel, formatDateTime, safeJson, sourceTypeLabel, titleStatus } from '../shared/lib/format';
 import { Badge, Banner, Button, Card, CollapsibleCodeBlock, EmptyState, ErrorNotice, ErrorState, LoadingState, PageHeader, Select, StateBox, TabStrip } from '../shared/ui/components';
 import type { NormalizedDocumentMemory, NormalizedDocumentSnapshot } from '../shared/api/normalized';
 import type { DocumentChunk, ExtractedKnowledgeItem, SourceDocument } from '../types/api';
@@ -201,6 +201,7 @@ export function KnowledgeDocumentPage() {
     return <ErrorState message="Не удалось загрузить память документа." />;
   }
   const resolvedUri = document.resolved_uri ?? document.uri;
+  const displayDocumentTitle = cleanDisplayFileName(document.title) ?? cleanDisplayFileName(document.uri) ?? document.title;
   const canOpenResolved = isOpenableUri(resolvedUri);
   const canOpenSource = isOpenableUri(document.uri);
   const documentLifecycle = sourceDocumentLifecycleStatus(document);
@@ -211,7 +212,7 @@ export function KnowledgeDocumentPage() {
   return (
     <div className="stack">
       <PageHeader
-        title={document.title}
+        title={displayDocumentTitle}
         subtitle="Просмотр документа, извлечённых знаний и исходных фрагментов, на которые ссылается память документа."
         actions={document.knowledge_base_id ? <Link to={`/knowledge/bases/${document.knowledge_base_id}`} className="button">Назад к базе</Link> : undefined}
       />

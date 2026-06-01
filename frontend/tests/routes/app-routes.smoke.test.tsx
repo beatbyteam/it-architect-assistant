@@ -79,6 +79,18 @@ test('task workspace route renders readiness and actions', () => {
   assert.match(html, /Можно запускать подготовку решения/);
 });
 
+test('task workspace preserves user line breaks and indentation', () => {
+  const formattedText = '1. Цель решения\n  - сохранить переносы\n\n2. Ограничения';
+  const formattedWorkspaceSeeds = workspaceSeeds.map((seed) => (
+    seed.key[0] === 'task' && seed.key[1] === 'task-1'
+      ? { ...seed, data: { ...task, raw_text: formattedText } }
+      : seed
+  ));
+  const html = renderAppAt('/tasks/task-1', formattedWorkspaceSeeds);
+  assert.match(html, /preserve-lines task-raw-text/);
+  assert.ok(html.includes(formattedText));
+});
+
 test('external architecture check route renders form', () => {
   const html = renderAppAt('/external-check');
   assert.match(html, /General information/);

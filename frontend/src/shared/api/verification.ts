@@ -1,4 +1,4 @@
-import { request, type RequestOptions } from './client';
+import { apiUrl, request, type RequestOptions } from './client';
 import type { paths, SuccessJson } from '../../generated/openapi';
 import { normalizeVerificationProtocol, normalizeVerificationRun } from './normalized';
 
@@ -73,4 +73,8 @@ export async function getVerificationProtocolViolations(protocolId: string, opti
     ...response,
     violations: Array.isArray(response.violations) ? response.violations : [],
   } as VerificationProtocolViolationsResponse;
+}
+
+export function verificationProtocolExportUrl(protocolId: string, format: 'pdf' | 'docx' | 'odt' | 'archimate') {
+  return apiUrl(`/verification-protocols/${protocolId}/export/${format}`);
 }

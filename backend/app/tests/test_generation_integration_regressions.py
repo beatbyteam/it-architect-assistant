@@ -268,6 +268,32 @@ def test_verification_renderer_outputs_unknown_groups() -> None:
     assert "TRACE-1" in html
 
 
+def test_verification_renderer_hides_technical_rag_evidence() -> None:
+    payload = VerificationProtocolPayload(
+        final_status=ProtocolSummaryStatus.PASSED_WITH_COMMENTS,
+        summary="Есть замечания",
+        check_results=[
+            VerificationCheckResultPayload(
+                rule_group="technical",
+                rule_code="VR-TEC-01",
+                check_name="Решение опубликовано",
+                status=CheckResultStatus.WARNING,
+                severity=Severity.MAJOR,
+                finding_text="Нужно проверить публикацию",
+                evidence_ref=(
+                    "ccb12ed4-1b7e-4a1f-96d2-d70fa49db4cc | RAG: "
+                    "b77ea9f041da46fbacea8adacc9b7f7c_wellarchitected-framework.pdf compact:53"
+                ),
+            )
+        ],
+    )
+    html = VerificationProtocolRenderer().render_html(protocol_no="VP-1", payload=payload)
+    assert "wellarchitected-framework.pdf" in html
+    assert "ccb12ed4" not in html
+    assert "RAG:" not in html
+    assert "compact:53" not in html
+
+
 def test_document_memory_llm_unwraps_wrapped_json_payload(monkeypatch) -> None:
     class _Response:
         def raise_for_status(self) -> None:

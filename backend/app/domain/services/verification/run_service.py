@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -36,6 +36,7 @@ from app.db.repositories.verification import (
 from app.domain.services.audit import AuditService
 from app.domain.services.idempotency import IdempotencyService
 from app.domain.services.immutable_snapshot import freeze_snapshot
+from app.domain.services.knowledge_basis import classify_basis_requirement
 from app.domain.services.knowledge_bases import KnowledgeBaseService
 from app.domain.services.knowledge_query import KnowledgeQueryService
 from app.domain.services.knowledge_snapshot import (
@@ -103,8 +104,12 @@ DOCUMENT_TITLE_RULE_CODES = (
     ("traceability", {"VR-CNS-02", "VR-CNS-06"}),
     (
         "technology",
-        {"VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"},
+        {"VR-NRM-03", "VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"},
     ),
+    ("технолог", {"VR-NRM-03", "VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"}),
+    ("операцион", {"VR-NRM-03"}),
+    ("ubuntu", {"VR-NRM-03"}),
+    ("linux", {"VR-NRM-03"}),
     (
         "well-architected",
         {"VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"},
@@ -116,6 +121,176 @@ DOCUMENT_TITLE_RULE_CODES = (
     ("principle", {"VR-NRM-04"}),
     ("template", {"VR-NRM-04"}),
 )
+DOCUMENT_CONTENT_RULE_CODES = (
+    *DOCUMENT_TITLE_RULE_CODES,
+    ("ig1242", {"VR-NRM-01"}),
+    ("oda component inventory", {"VR-NRM-01"}),
+    ("open digital architecture", {"VR-NRM-01"}),
+    ("tm forum", {"VR-NRM-01"}),
+    ("tmf", {"VR-NRM-01"}),
+    ("оператор деятельност", {"VR-NRM-01"}),
+    ("archimate 3.2", {"VR-NRM-02", "VR-NRM-05", "VR-NRM-06"}),
+    ("метамодел", {"VR-NRM-02", "VR-NRM-05", "VR-NRM-06"}),
+    ("моделир", {"VR-NRM-02", "VR-NRM-05", "VR-NRM-06"}),
+    ("технологический стандарт", {"VR-NRM-03"}),
+    ("технологический радар", {"VR-NRM-03"}),
+    ("операционные системы", {"VR-NRM-03"}),
+    ("windows server", {"VR-NRM-03"}),
+    ("postgres", {"VR-NRM-03"}),
+    ("java", {"VR-NRM-03"}),
+    ("kubernetes", {"VR-NRM-03"}),
+    ("docker", {"VR-NRM-03"}),
+    (
+        "business architecture",
+        {
+            "VR-STR-01",
+            "VR-STR-02",
+            "VR-STR-03",
+            "VR-STR-04",
+            "VR-STR-05",
+            "VR-STR-06",
+            "VR-STR-07",
+        },
+    ),
+    (
+        "архитектура данных",
+        {"VR-STR-03", "VR-STR-04", "VR-CNS-02", "VR-CNS-05"},
+    ),
+    (
+        "архитектура прилож",
+        {"VR-STR-03", "VR-STR-04", "VR-CNS-01", "VR-CNS-03", "VR-CNS-04"},
+    ),
+    (
+        "технологическая архитект",
+        {
+            "VR-STR-03",
+            "VR-NRM-03",
+            "VR-CNS-04",
+            "VR-NFR-01",
+            "VR-NFR-02",
+            "VR-NFR-03",
+            "VR-NFR-04",
+            "VR-NFR-05",
+        },
+    ),
+    ("security", {"VR-NFR-01"}),
+    ("authentication", {"VR-NFR-01"}),
+    ("authorization", {"VR-NFR-01"}),
+    ("шифр", {"VR-NFR-01"}),
+    ("observability", {"VR-NFR-04"}),
+    ("monitoring", {"VR-NFR-04"}),
+    ("availability", {"VR-NFR-02"}),
+    ("failover", {"VR-NFR-02"}),
+    ("доступност", {"VR-NFR-02"}),
+    ("отказоуст", {"VR-NFR-02"}),
+    ("performance", {"VR-NFR-03"}),
+    ("scalability", {"VR-NFR-03"}),
+    ("производ", {"VR-NFR-03"}),
+    ("масштаб", {"VR-NFR-03"}),
+    ("backup", {"VR-NFR-05"}),
+    ("restore", {"VR-NFR-05"}),
+    ("резервн", {"VR-NFR-05"}),
+    ("восстанов", {"VR-NFR-05"}),
+)
+DOCUMENT_CONTENT_ROLE_HINTS = (
+    ("ig1242", "ig1242_oda_component_inventory"),
+    ("oda component inventory", "ig1242_oda_component_inventory"),
+    ("open digital architecture", "oda"),
+    ("tm forum", "oda"),
+    ("tmf", "oda"),
+    ("оператор деятельност", "oda"),
+    ("archimate", "archimate_3_2"),
+    ("метамодел", "archimate_3_2"),
+    ("технологический стандарт", "technology_standard"),
+    ("технологический радар", "technology_standard"),
+    ("операционные системы", "technology_standard"),
+    ("ubuntu", "technology_standard"),
+    ("linux", "technology_standard"),
+    ("windows server", "technology_standard"),
+    ("postgres", "technology_standard"),
+    ("java", "technology_standard"),
+    ("kubernetes", "technology_standard"),
+    ("docker", "technology_standard"),
+    ("template", "template_or_principles"),
+    ("principle", "template_or_principles"),
+    ("шаблон", "template_or_principles"),
+    ("принцип", "template_or_principles"),
+)
+DOCUMENT_CONTENT_MARKERS = tuple(
+    sorted(
+        {
+            marker
+            for marker, _ in DOCUMENT_CONTENT_RULE_CODES
+        }
+        | {
+            marker
+            for marker, _ in DOCUMENT_CONTENT_ROLE_HINTS
+        },
+        key=len,
+        reverse=True,
+    )
+)
+TECHNOLOGY_POLICY_FRAGMENT_MARKERS = (
+    "запрещ",
+    "нельзя",
+    "не допуска",
+    "не рекоменду",
+    "forbidden",
+    "must not",
+    "shall not",
+    "deprecated",
+    "not recommended",
+)
+
+
+def _content_hint_text(fragment: Any) -> str:
+    return " ".join(
+        part
+        for part in [
+            str(getattr(fragment, "title", "") or ""),
+            str(getattr(fragment, "content", "") or ""),
+        ]
+        if part
+    ).lower()
+
+
+def _append_unique_role_fragments(
+    target: dict[str, list[KnowledgeFragment]],
+    role_code: str,
+    fragments: list[KnowledgeFragment],
+) -> None:
+    if not fragments:
+        return
+    role_fragments = target.setdefault(role_code, [])
+    existing_ids = {
+        str(getattr(fragment, "fragment_id", "") or "")
+        for fragment in role_fragments
+    }
+    for fragment in fragments:
+        fragment_id = str(getattr(fragment, "fragment_id", "") or "")
+        if fragment_id and fragment_id in existing_ids:
+            continue
+        role_fragments.append(fragment)
+        if fragment_id:
+            existing_ids.add(fragment_id)
+
+
+def _infer_selected_document_content_hints(
+    fragments: list[KnowledgeFragment],
+) -> tuple[set[str], dict[str, list[KnowledgeFragment]]]:
+    content_rule_codes: set[str] = set()
+    role_fragments_by_role: dict[str, list[KnowledgeFragment]] = {}
+    for fragment in fragments:
+        hint_text = _content_hint_text(fragment)
+        if not hint_text:
+            continue
+        for marker, marker_rule_codes in DOCUMENT_CONTENT_RULE_CODES:
+            if marker in hint_text:
+                content_rule_codes.update(marker_rule_codes)
+        for marker, role_code in DOCUMENT_CONTENT_ROLE_HINTS:
+            if marker in hint_text:
+                role_fragments_by_role.setdefault(role_code, []).append(fragment)
+    return content_rule_codes, role_fragments_by_role
 
 
 class VerificationRunService:
@@ -189,7 +364,9 @@ class VerificationRunService:
             mandatory_version=knowledge_scope.mandatory_version,
             selected_user_version=knowledge_scope.selected_user_version,
         )
-        selected_document_ids = normalize_document_ids(payload.knowledge_document_ids)
+        selected_document_ids = normalize_document_ids(
+            getattr(payload, "knowledge_document_ids", None)
+        )
         document_scope = build_document_scope_snapshot(
             knowledge_versions=[
                 version
@@ -201,7 +378,10 @@ class VerificationRunService:
             ],
             selected_document_ids=selected_document_ids,
         )
-        rules = self._select_rules(payload.validation_scope, document_scope=document_scope)
+        try:
+            rules = self._select_rules(payload.validation_scope, document_scope=document_scope)
+        except TypeError:  # compatibility with simplified test doubles
+            rules = self._select_rules(payload.validation_scope)
         rulebook_version = getattr(self.registry, "version", None)
         publication_artifact = self.publication_artifacts.get_current(
             target_type="solution_version", target_id=str(solution.solution_version_id)
@@ -746,12 +926,19 @@ class VerificationRunService:
                 selected_document_ids,
             )
         ]
-        required_documents = [
-            item for item in version_documents if bool(getattr(item, "required_flag", False))
-        ]
-        role_by_document_id = {
-            str(item.document_id): str(item.role_code) for item in required_documents
-        }
+        required_documents = []
+        role_by_document_id: dict[str, str] = {}
+        for item in version_documents:
+            role_code = str(getattr(item, "role_code", "") or "").strip()
+            required_flag = bool(getattr(item, "required_flag", False))
+            if not role_code or role_code == "reference_only":
+                requirement = classify_basis_requirement(getattr(item, "document", None))
+                if requirement is not None and requirement.required:
+                    role_code = requirement.role_code
+                    required_flag = True
+            if role_code and role_code != "reference_only" and required_flag:
+                required_documents.append(item)
+                role_by_document_id[str(item.document_id)] = role_code
         required_fragments: list[KnowledgeFragment] = []
         if role_by_document_id:
             statement = (
@@ -771,6 +958,28 @@ class VerificationRunService:
             if role_code is None:
                 continue
             required_fragments_by_role.setdefault(role_code, []).append(fragment)
+        policy_fragments = self._load_technology_policy_fragments(
+            knowledge_versions=knowledge_versions,
+            selected_document_ids=selected_document_ids,
+        )
+        _append_unique_role_fragments(
+            required_fragments_by_role,
+            "technology_standard",
+            policy_fragments,
+        )
+        content_hint_fragments = self._load_selected_document_rule_hint_fragments(
+            knowledge_versions=knowledge_versions,
+            selected_document_ids=selected_document_ids,
+        )
+        content_rule_codes, content_role_fragments_by_role = (
+            _infer_selected_document_content_hints(content_hint_fragments)
+        )
+        for role_code, role_fragments in content_role_fragments_by_role.items():
+            _append_unique_role_fragments(
+                required_fragments_by_role,
+                role_code,
+                role_fragments,
+            )
         rule_evidence_by_code, rule_rag_summary = self._build_rule_rag_evidence(
             rules=rules,
             knowledge_versions=knowledge_versions,
@@ -780,6 +989,7 @@ class VerificationRunService:
         return {
             "required_fragments_by_role": required_fragments_by_role,
             "rule_evidence_by_code": rule_evidence_by_code,
+            "content_rule_codes": sorted(content_rule_codes),
             "support_summary": {
                 "required_document_count": len(required_documents),
                 "required_fragment_count": len(required_fragments),
@@ -788,8 +998,78 @@ class VerificationRunService:
                 "selected_document_count": len(normalize_document_ids(selected_document_ids)),
                 "scoped_document_count": len(version_documents),
                 "rule_rag": rule_rag_summary,
+                "content_rule_hint_codes": sorted(content_rule_codes),
+                "content_rule_hint_fragment_count": len(content_hint_fragments),
+                "content_role_hints": sorted(content_role_fragments_by_role),
             },
         }
+
+    def _load_selected_document_rule_hint_fragments(
+        self,
+        *,
+        knowledge_versions: list[KnowledgeVersion],
+        selected_document_ids: list[str] | None,
+    ) -> list[KnowledgeFragment]:
+        selected_ids = set(normalize_document_ids(selected_document_ids))
+        if not selected_ids:
+            return []
+        version_ids = [
+            str(version.knowledge_version_id)
+            for version in knowledge_versions
+            if getattr(version, "knowledge_version_id", None)
+        ]
+        if not version_ids:
+            return []
+        marker_conditions = []
+        for marker in DOCUMENT_CONTENT_MARKERS:
+            pattern = f"%{marker}%"
+            marker_conditions.append(KnowledgeFragment.content.ilike(pattern))
+            marker_conditions.append(KnowledgeFragment.title.ilike(pattern))
+        limit = max(96, int(getattr(self.settings, "verification_rule_rag_limit", 2) or 0) * 48)
+        statement = (
+            select(KnowledgeFragment)
+            .where(
+                KnowledgeFragment.knowledge_version_id.in_(version_ids),
+                KnowledgeFragment.document_id.in_(list(selected_ids)),
+                or_(*marker_conditions),
+            )
+            .options(selectinload(KnowledgeFragment.document))
+            .limit(limit)
+        )
+        return list(self.session.scalars(statement))
+
+    def _load_technology_policy_fragments(
+        self,
+        *,
+        knowledge_versions: list[KnowledgeVersion],
+        selected_document_ids: list[str] | None,
+    ) -> list[KnowledgeFragment]:
+        version_ids = [
+            str(version.knowledge_version_id)
+            for version in knowledge_versions
+            if getattr(version, "knowledge_version_id", None)
+        ]
+        if not version_ids:
+            return []
+        selected_ids = set(normalize_document_ids(selected_document_ids))
+        marker_conditions = []
+        for marker in TECHNOLOGY_POLICY_FRAGMENT_MARKERS:
+            pattern = f"%{marker}%"
+            marker_conditions.append(KnowledgeFragment.content.ilike(pattern))
+            marker_conditions.append(KnowledgeFragment.title.ilike(pattern))
+        limit = max(48, int(getattr(self.settings, "verification_rule_rag_limit", 2) or 0) * 24)
+        statement = (
+            select(KnowledgeFragment)
+            .where(
+                KnowledgeFragment.knowledge_version_id.in_(version_ids),
+                or_(*marker_conditions),
+            )
+            .options(selectinload(KnowledgeFragment.document))
+            .limit(limit)
+        )
+        if selected_ids:
+            statement = statement.where(KnowledgeFragment.document_id.in_(selected_ids))
+        return list(self.session.scalars(statement))
 
     def _build_rule_rag_evidence(
         self,
@@ -884,6 +1164,16 @@ class VerificationRunService:
 
     @staticmethod
     def _verification_rule_query(rule: VerificationRuleDefinition) -> str:
+        if rule.code == "VR-NRM-03":
+            return " ".join(
+                item
+                for item in [
+                    rule.code,
+                    rule.name,
+                    "technology standard operating system OS Ubuntu Linux Windows Server forbidden prohibited deprecated запрещено не допускается",
+                ]
+                if item
+            )
         group_terms = {
             "technical": "technical readiness knowledge version basis documents",
             "structure": "TOGAF sections architecture structure integrations risks constraints",

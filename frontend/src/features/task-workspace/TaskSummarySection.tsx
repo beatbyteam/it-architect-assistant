@@ -117,7 +117,7 @@ export function TaskSummarySection({
             <div><strong>Открытых уточнений:</strong> {task.open_clarification_count ?? 0}</div>
             {task.overdue_clarification_flag ? <Banner tone="warning">Есть старые уточнения, на которые лучше ответить перед запуском.</Banner> : null}
           </div>
-          <StateBox className="with-top-margin">{task.raw_text}</StateBox>
+          <StateBox className="with-top-margin preserve-lines task-raw-text">{task.raw_text}</StateBox>
         </Card>
 
         <Card title="Подготовка решения">

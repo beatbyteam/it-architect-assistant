@@ -5,6 +5,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from app.api.v1.routes import api_router
@@ -16,6 +17,74 @@ from app.core.request_context import request_id_ctx_var
 from app.schemas.errors import ApiErrorResponse
 
 logger = logging.getLogger(__name__)
+
+OPENAPI_TAGS = [
+    {
+        "name": "Обучение базы знаний",
+        "description": "Загрузка, разбор, обновление и выбор материалов базы знаний.",
+    },
+    {
+        "name": "Генерация решения",
+        "description": "Задачи, уточнения, запуск генерации и чтение подготовленных архитектурных решений.",
+    },
+    {
+        "name": "Проверка существующего решения",
+        "description": "Запуск проверки, протоколы, нарушения и проверка внешней архитектуры.",
+    },
+    {"name": "Операции", "description": "Журнал операций, аудит и технические метрики."},
+    {"name": "Health", "description": "Проверки доступности API и зависимостей."},
+]
+
+OPENAPI_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+
+
+def _openapi_tag_for_path(path: str) -> str:
+    normalized = path.removeprefix("/api/v1")
+    if normalized.startswith("/health"):
+        return "Health"
+    if normalized.startswith("/knowledge"):
+        return "Обучение базы знаний"
+    if normalized.startswith("/external-architectures") or normalized.startswith(
+        "/verification-runs"
+    ) or normalized.startswith("/verification-protocols"):
+        return "Проверка существующего решения"
+    if normalized.startswith("/solutions/") and "/verification-runs" in normalized:
+        return "Проверка существующего решения"
+    if (
+        normalized.startswith("/tasks")
+        or normalized.startswith("/task-inputs")
+        or normalized.startswith("/generation-runs")
+        or normalized.startswith("/solutions")
+    ):
+        return "Генерация решения"
+    if normalized.startswith("/operations") or normalized.startswith("/audit-events"):
+        return "Операции"
+    return "Операции"
+
+
+def _install_custom_openapi(app: FastAPI) -> None:
+    def custom_openapi() -> dict[str, object]:
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+            description=app.description,
+            tags=OPENAPI_TAGS,
+        )
+        for path, path_item in (schema.get("paths") or {}).items():
+            if not isinstance(path_item, dict):
+                continue
+            tag = _openapi_tag_for_path(str(path))
+            for method, operation in path_item.items():
+                if method not in OPENAPI_METHODS or not isinstance(operation, dict):
+                    continue
+                operation["tags"] = [tag]
+        app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
 def create_app() -> FastAPI:
@@ -86,6 +155,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "service": settings.app_name, "version": settings.app_version}
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+    _install_custom_openapi(app)
     return app
 
 

@@ -58,6 +58,10 @@ function buildUrl(path: string, query?: Record<string, string | number | undefin
   return url.toString();
 }
 
+export function apiUrl(path: string, query?: Record<string, string | number | undefined | null>) {
+  return buildUrl(path, query);
+}
+
 function formatValidationLocation(value: unknown) {
   if (!Array.isArray(value) || value.length === 0) return null;
   const labels: Record<string, string> = {

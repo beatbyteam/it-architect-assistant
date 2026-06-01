@@ -168,6 +168,8 @@ def _resolve_upload_base(
 
 
 def _normalize_upload_source_status(value: str | SourceStatus | None) -> SourceStatus:
+    if not isinstance(value, str | SourceStatus):
+        value = getattr(value, "default", None)
     if value is None or str(value).strip() == "":
         return SourceStatus.ACTIVE
     if isinstance(value, SourceStatus):

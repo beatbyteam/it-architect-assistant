@@ -599,6 +599,15 @@ def _compact_chunk_for_llm(text: str, *, char_limit: int = _LLM_CHUNK_CHAR_LIMIT
         content,
         limit=_LLM_CHUNK_COMPACT_SENTENCE_LIMIT,
     )
+    all_sentences = _split_sentences(content, limit=_EXTRACTION_SENTENCE_SCAN_LIMIT)
+    tail_sentence = all_sentences[-1] if all_sentences else None
+    if tail_sentence and tail_sentence.casefold() not in {
+        sentence.casefold() for sentence in selected_sentences
+    }:
+        if len(selected_sentences) >= _LLM_CHUNK_COMPACT_SENTENCE_LIMIT:
+            selected_sentences[-1] = tail_sentence
+        else:
+            selected_sentences.append(tail_sentence)
     compacted = "\n".join(selected_sentences).strip()
     if not compacted:
         compacted = content
