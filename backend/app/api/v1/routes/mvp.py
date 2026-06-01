@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 
 from app.api.deps import PrincipalDep, SessionDep, SettingsDep, WriteGuardDep, require_roles
 from app.core.exceptions import ValidationError
@@ -10,6 +10,15 @@ from app.domain.services.external_architecture_check import ExternalArchitecture
 from app.domain.services.generation.run_service import GenerationRunService
 from app.domain.services.mvp_canonical import CanonicalReadService, CanonicalTaskService
 from app.domain.services.verification.run_service import VerificationRunService
+from app.integrations.export import (
+    EXPORT_CONTENT_TYPES,
+    export_filename,
+    export_protocol_document,
+    export_solution_archimate,
+    export_solution_document,
+)
+from app.integrations.knowledge.content_loader import ContentLoadError, normalize_document_payload
+from app.integrations.vision import analyze_task_input_image, is_supported_image_file
 from app.schemas.mvp import (
     ClarificationAnswerRequest,
     ExternalArchitectureCheckRequest,
@@ -25,6 +34,7 @@ from app.schemas.mvp import (
     SolutionSectionAssessmentsEnvelope,
     TaskCreateRequest,
     TaskGenerationRunCreateRequest,
+    TaskInputFileImportResponse,
     TaskListItemResponse,
     TaskSnapshotResponse,
     TaskUpdateRequest,
@@ -38,6 +48,8 @@ from app.schemas.mvp import (
 
 router = APIRouter(tags=["mvp"])
 UserDep = Depends(require_roles(*MVP_USER_ROLE_CODES))
+DOCUMENT_EXPORT_FORMATS = {"pdf", "docx", "odt"}
+SOLUTION_EXPORT_FORMATS = {*DOCUMENT_EXPORT_FORMATS, "archimate"}
 
 
 @router.get("/tasks", response_model=list[TaskListItemResponse])
@@ -111,6 +123,79 @@ def update_task(
         principal=principal,
     )
     return TaskSnapshotResponse(**read_service.build_task_snapshot(task))
+
+
+@router.post("/task-inputs/import-file", response_model=TaskInputFileImportResponse)
+async def import_task_input_file(
+    settings: SettingsDep,
+    file: UploadFile = File(...),
+    _guard: AuthPrincipal = UserDep,
+):
+    filename = file.filename or "document"
+    data = await file.read(settings.knowledge_max_upload_size_bytes + 1)
+    if not data:
+        raise ValidationError(
+            "Файл пустой или не удалось прочитать его содержимое",
+            error_code="TASK_INPUT_FILE_EMPTY",
+        )
+    if len(data) > settings.knowledge_max_upload_size_bytes:
+        raise ValidationError(
+            "Файл слишком большой для импорта входных данных",
+            error_code="TASK_INPUT_FILE_TOO_LARGE",
+        )
+    if is_supported_image_file(filename, file.content_type):
+        analysis = analyze_task_input_image(
+            data,
+            filename=filename,
+            media_type=file.content_type,
+            settings=settings,
+        )
+        return TaskInputFileImportResponse(
+            title=filename,
+            text=analysis.text.strip(),
+            source_filename=filename,
+            content_format="image",
+            parser_name=analysis.parser_name,
+            section_count=0,
+        )
+
+    def embedded_image_analyzer(
+        image_data: bytes, image_filename: str, image_media_type: str | None
+    ) -> str:
+        return analyze_task_input_image(
+            image_data,
+            filename=image_filename,
+            media_type=image_media_type,
+            settings=settings,
+        ).text
+
+    try:
+        normalized = normalize_document_payload(
+            filename,
+            data,
+            media_type=file.content_type,
+            image_analyzer=embedded_image_analyzer,
+        )
+    except ContentLoadError as exc:
+        raise ValidationError(
+            "Не удалось извлечь текст из файла. Поддерживаются PDF, DOCX, ODT, XLSX, ArchiMate, HTML, Markdown, TXT, JSON, PNG, JPG и WebP.",
+            error_code="TASK_INPUT_FILE_PARSE_FAILED",
+            details={"filename": filename, "reason": str(exc)},
+        ) from exc
+    text = normalized.text.strip()
+    if not text:
+        raise ValidationError(
+            "В файле не найден текст для задачи",
+            error_code="TASK_INPUT_FILE_TEXT_EMPTY",
+        )
+    return TaskInputFileImportResponse(
+        title=filename,
+        text=text,
+        source_filename=filename,
+        content_format=normalized.content_format,
+        parser_name=normalized.parser_name,
+        section_count=len(normalized.sections),
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskSnapshotResponse)
@@ -325,6 +410,39 @@ def get_solution_rendered(
     )
 
 
+@router.get("/solutions/{solution_version_id}/export/{export_format}")
+def export_solution(
+    solution_version_id: str,
+    export_format: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+):
+    normalized_format = export_format.strip().lower()
+    if normalized_format not in SOLUTION_EXPORT_FORMATS:
+        raise ValidationError(
+            "Поддерживаются форматы экспорта: pdf, docx, odt, archimate",
+            error_code="SOLUTION_EXPORT_FORMAT_UNSUPPORTED",
+        )
+    solution = CanonicalReadService(session, settings).get_solution_payload(
+        solution_version_id, principal
+    )
+    if normalized_format == "archimate":
+        data = export_solution_archimate(solution)
+    else:
+        data = export_solution_document(solution, normalized_format)
+    filename = export_filename(
+        str(solution.get("solution_title") or solution_version_id),
+        normalized_format,
+    )
+    return Response(
+        content=data,
+        media_type=EXPORT_CONTENT_TYPES[normalized_format],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.delete("/solutions/{solution_version_id}", include_in_schema=False)
 def delete_solution_not_supported(solution_version_id: str, _guard: AuthPrincipal = UserDep):
     _ = solution_version_id
@@ -471,6 +589,40 @@ def get_verification_protocol_rendered(
         **CanonicalReadService(session, settings).get_verification_protocol_rendered_payload(
             protocol_id, principal
         )
+    )
+
+
+@router.get("/verification-protocols/{protocol_id}/export/{export_format}")
+def export_verification_protocol(
+    protocol_id: str,
+    export_format: str,
+    session: SessionDep,
+    settings: SettingsDep,
+    principal: PrincipalDep,
+    _guard: AuthPrincipal = UserDep,
+):
+    normalized_format = export_format.strip().lower()
+    if normalized_format not in SOLUTION_EXPORT_FORMATS:
+        raise ValidationError(
+            "Поддерживаются форматы экспорта: pdf, docx, odt, archimate",
+            error_code="PROTOCOL_EXPORT_FORMAT_UNSUPPORTED",
+        )
+    read_service = CanonicalReadService(session, settings)
+    protocol = read_service.get_verification_protocol_payload(protocol_id, principal)
+    if normalized_format == "archimate":
+        solution = read_service.get_solution_payload(
+            str(protocol.get("solution_version_id")), principal
+        )
+        data = export_solution_archimate(solution)
+        filename_base = str(solution.get("solution_title") or protocol_id)
+    else:
+        data = export_protocol_document(protocol, normalized_format)
+        filename_base = f"protocol_{protocol_id}"
+    filename = export_filename(filename_base, normalized_format)
+    return Response(
+        content=data,
+        media_type=EXPORT_CONTENT_TYPES[normalized_format],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

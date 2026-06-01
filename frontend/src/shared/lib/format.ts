@@ -18,6 +18,24 @@ export function cleanDisplayFileName(value?: string | null) {
   return basename.replace(/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})[_-]/i, '') || basename;
 }
 
+const TECHNICAL_EVIDENCE_PATTERN = /^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}|VR-[A-Z]+-\d+)$/i;
+
+function cleanEvidenceSegment(value: string) {
+  return value
+    .replace(/^RAG:\s*/i, '')
+    .replace(/\s+compact:\d+\b.*$/i, '')
+    .trim();
+}
+
+export function cleanEvidenceRef(value?: string | null) {
+  if (!value) return null;
+  const parts = value.split(/\s*\|\s*/).map((part) => part.trim()).filter(Boolean);
+  const ragPart = parts.find((part) => /^RAG:/i.test(part));
+  const candidate = cleanEvidenceSegment(ragPart ?? value);
+  if (!candidate || TECHNICAL_EVIDENCE_PATTERN.test(candidate)) return null;
+  return cleanDisplayFileName(candidate) ?? candidate;
+}
+
 export function userErrorText(value?: string | null) {
   if (!value) return '—';
   const normalized = value.trim().toLowerCase();

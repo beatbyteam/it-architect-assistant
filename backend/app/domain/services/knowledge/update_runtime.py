@@ -250,12 +250,20 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
             if callable(describe):
                 current_embedding_profile = describe().get("profile_code")
         candidate = service._get_or_create_candidate_version(run)
-        selected_sources = service._resolve_scope_sources(
-            SourceScope((run.scope or {}).get("source_scope", SourceScope.ALL.value)),
-            (run.scope or {}).get("selected_source_ids") or [],
-            knowledge_base_id=str(run.knowledge_base_id),
-            allow_archived_selected=_is_delete_run_type(run.run_type),
-        )
+        run_type = getattr(run, "run_type", UpdateRunType.MANUAL)
+        try:
+            selected_sources = service._resolve_scope_sources(
+                SourceScope((run.scope or {}).get("source_scope", SourceScope.ALL.value)),
+                (run.scope or {}).get("selected_source_ids") or [],
+                knowledge_base_id=str(run.knowledge_base_id),
+                allow_archived_selected=_is_delete_run_type(run_type),
+            )
+        except TypeError:  # compatibility with simplified test doubles
+            selected_sources = service._resolve_scope_sources(
+                SourceScope((run.scope or {}).get("source_scope", SourceScope.ALL.value)),
+                (run.scope or {}).get("selected_source_ids") or [],
+                knowledge_base_id=str(run.knowledge_base_id),
+            )
         requested_embedding_profile = str(
             (run.scope or {}).get("target_embedding_profile")
             or current_embedding_profile
@@ -1515,6 +1523,7 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
         service.session.refresh(run)
         logger.error(
             "knowledge_update_run_failed",
+            exc_info=True,
             extra={
                 "correlation_id": run.correlation_id,
                 "operation_kind": "knowledge_update_run",

@@ -512,6 +512,7 @@ class TaskReadinessPolicy:
             )
 
         categories = {
+            "generic": ["огранич"],
             "time": ["срок", "дедлайн", "недел", "месяц", "квартал"],
             "security": ["безопас", "шифр", "доступ", "персональн", "auth", "sso"],
             "performance": ["sla", "latency", "нагруз", "производ", "доступност", "rps"],

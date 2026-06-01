@@ -338,6 +338,8 @@ def _is_supported_media_type(media_type: str | None) -> bool:
     return _normalize_media_type(media_type) in {
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.oasis.opendocument.text",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "text/html",
         "application/xhtml+xml",
         "text/markdown",
@@ -368,6 +370,9 @@ def _looks_like_document_link(
             "document",
             "pdf",
             "docx",
+            "odt",
+            "xlsx",
+            "archimate",
             "json",
             "txt",
             "markdown",
@@ -426,8 +431,11 @@ def guess_document_type_from_name(filename: str) -> DocumentType:
         return DocumentType.API
     if any(token in lowered for token in {"archimate", "modelling", "modeling"}):
         return DocumentType.ARCHITECTURE
+    if "операцион" in lowered:
+        return DocumentType.TECHNOLOGY
     if any(
-        token in lowered for token in {"norm", "policy", "rule", "requirement", "standard", "togaf"}
+        token in lowered
+        for token in {"norm", "policy", "rule", "requirement", "standard", "стандарт", "togaf"}
     ):
         return DocumentType.NORMATIVE
     if any(token in lowered for token in {"arch", "component", "integration", "solution"}):
@@ -441,6 +449,9 @@ def _guess_media_type(suffix: str) -> str | None:
     return {
         ".pdf": "application/pdf",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".odt": "application/vnd.oasis.opendocument.text",
+        ".archimate": "application/xml",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".html": "text/html",
         ".htm": "text/html",
         ".md": "text/markdown",

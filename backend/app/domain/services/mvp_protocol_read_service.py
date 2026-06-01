@@ -283,7 +283,7 @@ def _materialize_basis_documents(
     ]
     scoped_version_documents = filter_version_documents_for_scope(
         version_documents,
-        protocol.verification_run.scope_snapshot,
+        getattr(protocol.verification_run, "scope_snapshot", None),
     )
     basis_documents: list[VerificationBasisDocument] = []
     for index, item in enumerate(scoped_version_documents, start=1):
@@ -320,7 +320,8 @@ def _knowledge_versions_for_protocol(
     service, protocol: VerificationProtocol
 ) -> list[KnowledgeVersion]:
     run = protocol.verification_run
-    scope_snapshot = run.scope_snapshot if isinstance(run.scope_snapshot, dict) else {}
+    raw_scope_snapshot = getattr(run, "scope_snapshot", None)
+    scope_snapshot = raw_scope_snapshot if isinstance(raw_scope_snapshot, dict) else {}
     version_ids = normalize_document_ids(scope_snapshot.get("knowledge_version_ids") or [])
     if not version_ids:
         knowledge_version = getattr(run, "knowledge_version", None)

@@ -17,6 +17,9 @@ export interface components {
       correlation_id?: string | null;
     };
     "AuditSeverity": "info" | "warning" | "error" | "critical";
+    "Body_import_task_input_file_api_v1_task_inputs_import_file_post": {
+      file: string;
+    };
     "Body_upload_and_ingest_document_api_v1_knowledge_uploads_ingest_post": {
       file: string;
       title?: string | null;
@@ -863,6 +866,14 @@ export interface components {
       correlation_id?: string | null;
       execute_inline?: boolean | null;
     };
+    "TaskInputFileImportResponse": {
+      title: string;
+      text: string;
+      source_filename: string;
+      content_format: string;
+      parser_name: string;
+      section_count?: number;
+    };
     "TaskListItemResponse": {
       task_id: string;
       title?: string | null;
@@ -872,6 +883,8 @@ export interface components {
       metadata?: Record<string, unknown> | null;
       latest_knowledge_version_id?: string | null;
       latest_generation_state?: string | null;
+      latest_verification_state?: string | null;
+      latest_protocol_id?: string | null;
       open_clarification_count?: number;
       overdue_clarification_flag?: boolean;
     };
@@ -887,6 +900,9 @@ export interface components {
       clarification_requests?: components['schemas']["ClarificationRequestResponse"][];
       generation_runs?: components['schemas']["GenerationRunRefResponse"][];
       latest_knowledge_version_id?: string | null;
+      latest_generation_state?: string | null;
+      latest_verification_state?: string | null;
+      latest_protocol_id?: string | null;
       open_clarification_count?: number;
       overdue_clarification_flag?: boolean;
       readiness_assessment?: Record<string, unknown> | null;
@@ -1180,6 +1196,27 @@ export interface paths {
       };
     };
   };
+  "/task-inputs/import-file": {
+    post: {
+      requestBody: {
+        content: {
+          "multipart/form-data": components['schemas']["Body_import_task_input_file_api_v1_task_inputs_import_file_post"];
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": components['schemas']["TaskInputFileImportResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
   "/solutions": {
     get: {
       parameters: {
@@ -1407,6 +1444,28 @@ export interface paths {
       };
     };
   };
+  "/solutions/{solution_version_id}/export/{export_format}": {
+    get: {
+      parameters: {
+        path: {
+          solution_version_id: string;
+          export_format: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": unknown;
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
   "/solutions/{solution_version_id}/verification-runs": {
     post: {
       parameters: {
@@ -1549,6 +1608,28 @@ export interface paths {
         "200": {
           content: {
             "application/json": components['schemas']["VerificationProtocolRenderedResponse"];
+          };
+        };
+        "422": {
+          content: {
+            "application/json": components['schemas']["HTTPValidationError"];
+          };
+        };
+      };
+    };
+  };
+  "/verification-protocols/{protocol_id}/export/{export_format}": {
+    get: {
+      parameters: {
+        path: {
+          protocol_id: string;
+          export_format: string;
+        };
+      };
+      responses: {
+        "200": {
+          content: {
+            "application/json": unknown;
           };
         };
         "422": {

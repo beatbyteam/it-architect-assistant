@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.exceptions import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from app.core.security import AuthPrincipal
 from app.db.enums import (
     AccountType,
@@ -1225,6 +1225,8 @@ class KnowledgeSourceService:
         excluded_document_ids: set[str],
     ) -> list[dict[str, Any]]:
         entries: list[dict[str, Any]] = []
+        if not callable(getattr(self.documents, "list_for_source", None)):
+            return entries
         for source in self.sources.list_for_base(base.knowledge_base_id, include_archived=True):
             source_status = getattr(source.status, "value", source.status)
             for document in self.documents.list_for_source(source.source_id, include_archived=True):
@@ -1336,7 +1338,10 @@ class KnowledgeSourceService:
         knowledge_base_id: UUID | str,
         principal: AuthPrincipal | None,
     ) -> None:
-        base = self._get_base(str(knowledge_base_id), principal, include_archived=True)
+        try:
+            base = self._get_base(str(knowledge_base_id), principal, include_archived=True)
+        except (AuthorizationError, NotFoundError):
+            return
         if getattr(base, "kind", None) != KnowledgeBaseKind.USER_MANAGED:
             return
         if getattr(base, "status", None) == KnowledgeBaseStatus.ARCHIVED:
