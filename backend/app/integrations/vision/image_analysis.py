@@ -37,68 +37,6 @@ def analyze_task_input_image(
     media_type: str | None,
     settings: Settings,
 ) -> ImageAnalysisResult:
-<<<<<<< HEAD
-=======
-    prompt = (
-        "Опиши изображение как входные данные для ИТ-архитектора. "
-        "Если это схема, выдели компоненты, интеграции, "
-        "потоки данных, подписи, технологии, роли и заметные риски. "
-        "Не выдумывай невидимые детали; "
-        "если текст на изображении не читается, явно напиши об этом."
-    )
-    return _analyze_image(
-        data,
-        filename=filename,
-        media_type=media_type,
-        settings=settings,
-        prompt=prompt,
-        fallback_action=(
-            "Перед запуском добавьте текстовое описание схемы: "
-            "компоненты, связи, потоки данных, технологии, "
-            "ограничения и риски."
-        ),
-    )
-
-
-def analyze_knowledge_document_image(
-    data: bytes,
-    *,
-    filename: str,
-    media_type: str | None,
-    settings: Settings,
-) -> ImageAnalysisResult:
-    prompt = (
-        "Опиши изображение как материал базы знаний для ИТ-архитектора. "
-        "Если это фотография, скриншот или схема, извлеки видимые подписи, "
-        "объекты, системы, роли, компоненты, интеграции, потоки данных, "
-        "ограничения, требования, риски и любые архитектурно значимые детали. "
-        "Сохрани факты в структурированном текстовом виде. "
-        "Не выдумывай невидимые детали; если текст не читается, явно напиши об этом."
-    )
-    return _analyze_image(
-        data,
-        filename=filename,
-        media_type=media_type,
-        settings=settings,
-        prompt=prompt,
-        fallback_action=(
-            "Для базы знаний добавьте текстовое описание изображения: "
-            "что изображено, какие системы/компоненты связаны, какие есть "
-            "требования, ограничения и риски."
-        ),
-    )
-
-
-def _analyze_image(
-    data: bytes,
-    *,
-    filename: str,
-    media_type: str | None,
-    settings: Settings,
-    prompt: str,
-    fallback_action: str,
-) -> ImageAnalysisResult:
->>>>>>> 13932af (Updating to the correct version(hopefully))
     provider = (settings.vision_provider or "").strip().lower()
     model_id = (settings.vision_model_id or "").strip()
     if provider in {"", "disabled"} or not settings.vision_base_url or not model_id:
@@ -110,10 +48,6 @@ def _analyze_image(
                 "VISION_BASE_URL и VISION_MODEL_ID, чтобы автоматически "
                 "описывать содержимое изображения."
             ),
-<<<<<<< HEAD
-=======
-            fallback_action=fallback_action,
->>>>>>> 13932af (Updating to the correct version(hopefully))
         )
 
     if provider not in {"openai_compatible", "local_openai_compatible", "ollama"}:
@@ -121,7 +55,6 @@ def _analyze_image(
             filename=filename,
             model_id=model_id,
             reason=f"провайдер {settings.vision_provider!r} не поддерживается",
-<<<<<<< HEAD
         )
 
     prompt = (
@@ -131,11 +64,6 @@ def _analyze_image(
         "Не выдумывай невидимые детали; "
         "если текст на изображении не читается, явно напиши об этом."
     )
-=======
-            fallback_action=fallback_action,
-        )
-
->>>>>>> 13932af (Updating to the correct version(hopefully))
     payload: dict[str, Any] = {
         "model": model_id,
         "temperature": 0.0,
@@ -177,10 +105,6 @@ def _analyze_image(
             filename=filename,
             model_id=model_id,
             reason=f"vision-анализ не выполнился: {exc}",
-<<<<<<< HEAD
-=======
-            fallback_action=fallback_action,
->>>>>>> 13932af (Updating to the correct version(hopefully))
         )
 
     text = _extract_message_text(body).strip()
@@ -189,25 +113,11 @@ def _analyze_image(
             filename=filename,
             model_id=model_id,
             reason="vision-модель вернула пустое описание",
-<<<<<<< HEAD
-=======
-            fallback_action=fallback_action,
->>>>>>> 13932af (Updating to the correct version(hopefully))
         )
     return ImageAnalysisResult(text=text, parser_name=f"{provider}_vision", model_id=model_id)
 
 
-<<<<<<< HEAD
 def _fallback_result(*, filename: str, model_id: str | None, reason: str) -> ImageAnalysisResult:
-=======
-def _fallback_result(
-    *,
-    filename: str,
-    model_id: str | None,
-    reason: str,
-    fallback_action: str,
-) -> ImageAnalysisResult:
->>>>>>> 13932af (Updating to the correct version(hopefully))
     text = "\n".join(
         [
             f"Изображение: {filename}",
@@ -215,15 +125,11 @@ def _fallback_result(
             "Автоматическое описание изображения не получено.",
             f"Причина: {reason}",
             "",
-<<<<<<< HEAD
             (
                 "Перед запуском добавьте текстовое описание схемы: "
                 "компоненты, связи, потоки данных, технологии, "
                 "ограничения и риски."
             ),
-=======
-            fallback_action,
->>>>>>> 13932af (Updating to the correct version(hopefully))
         ]
     )
     return ImageAnalysisResult(

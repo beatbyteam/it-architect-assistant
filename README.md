@@ -41,14 +41,9 @@
 
 - 📝 **Приём бизнес‑задачи** на естественном языке
 - 🔁 **Контролируемый цикл уточнений** при недостатке данных
-<<<<<<< HEAD
 - 🤖 **Генерация ИТ-архитектуры** на основе активной базы знаний
 - ✅ **Постгенерационная проверка** на соответствие корпоративной архитектуре, стандартам и НТД
 - 📎 **Импорт входных документов**: PDF, DOCX, ODT, XLSX, ArchiMate, Markdown, TXT, JSON, изображения
-=======
-- 🤖 **Генерация проекта ИТ‑архитектуры решения** на основе активной базы знаний
-- 📎 **Импорт входных документов**: PDF, DOCX, ODT, XLSX, ArchiMate, Markdown, TXT, JSON и изображения
->>>>>>> 13932af (Updating to the correct version(hopefully))
 - 🧠 **Локальный LLM** — не требуется облачных сервисов
 - 🐳 **Docker Compose** — простое развертывание
 
@@ -62,7 +57,6 @@
 
 ### 📦 Требования
 
-<<<<<<< HEAD
 - **Docker Desktop** или **Docker Engine** с Docker Compose plugin*
 - **Свободное место** в Docker под Docker-образы, PostgreSQL, Redis и модели Ollama (~12 ГБ)
 - **Git** (для обновления проекта)
@@ -92,68 +86,6 @@ GPU-ускорение работает только на системах с NV
 Проверить WSL:
 ```PowerShell
 wsl --status
-=======
-## Запуск с GPU
-
-По умолчанию проект запускается без обязательного использования GPU.
-Если на машине нет графического ускорителя, Ollama использует CPU.
-В этом режиме генерация, проверка и построение embeddings выполняются медленее,
-но функциональность сервиса сохраняется.
-
-### Требования для GPU-запуска
-
-GPU-запуск поддерижвается для машин с NVIDIA GPU.
-
-```Linux
-На хостовой машине должны быть установлены:
-- NVIDIA Driver;
-- NVIDIA Container Toolkit;
-- Docker и Docker Compose;
-- Git
-
-Проверить, что видеокарта видна системе:
-```bash
-nvidia-smi
-
-Настроить NVIDIA Container Toolkit для Docker:
-```bash
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-
-Проверить, что Docker видит GPU:
-```bash
-docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu22.04 nvidia-smi
-
-```Windows
-На хостовой машине должны быть:
-- Windows 10/11;
-- NVIDIA GPU;
-- свежий NVIDIA Driver с поддержкой WSL 2;
-- установленный WSL
-- Docker Desktop с включенным WSL 2 backend
-
-Проверить WSL:
-```PowerShell
-wsl --status
-
-Обновить WSL:
-```Powershell
-wsl --update
-
-Проверить видеокарту в Windows:
-```Powershell
-nvidia-smi
-
-Проверить, что Docker видит GPU:
-```PowerShell
-docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu22.04 nvidia-smi
-
-
-## 🤖 Автоматический запуск (рекомендуемый)
-### 🪟 Windows (PowerShell)
-#### ⚠️ Первый запуск: отключение блокировки скриптов
-По умолчанию выполнение скриптов заблокировано. Для однократной разблокировки ввести в PowerShell:
->>>>>>> 13932af (Updating to the correct version(hopefully))
 ```
 
 Обновить WSL:
@@ -221,7 +153,6 @@ Unblock-File .\deploy\scripts\local_release_up.ps1
 Unblock-File .\deploy\scripts\local_release_update.ps1
 Unblock-File .\deploy\scripts\local_release_down.ps1
 ```
-<<<<<<< HEAD
 **3. Запуск проекта**
 
 ##### Первый запуск без GPU
@@ -237,33 +168,10 @@ Unblock-File .\deploy\scripts\local_release_down.ps1
 .\deploy\scripts\local_release_up.ps1 -SkipModelPull
 ```
 ##### Быстрый перезапуск без загрузки моделей с GPU
-=======
-Переход в директорию проекта
-```
-cd C:\путь\к\проекту\it-architect-assistant
-```
-
-Запуск проекта
-
-#### Первый запуск без GPU
-```Powershell
-.\deploy\scripts\local_release_up.ps1
-```
-#### Первый запуск с GPU
-```Powershell
-.\deploy\scripts\local_release_up.ps1 -Gpu
-```
-#### Быстрый перезапуск без загрузки моделей без GPU
-```Powershell
-.\deploy\scripts\local_release_up.ps1 -SkipModelPull
-```
-# Быстрый перезапуск без загрузки моделей с GPU
->>>>>>> 13932af (Updating to the correct version(hopefully))
 ```Powershell
 .\deploy\scripts\local_release_up.ps1 -SkipModelPull -Gpu
 ```
 
-<<<<<<< HEAD
 **4. Обновление проекта**
 
 #### 📌 Требуется Git — скачивает последние изменения и пересобирает стек
@@ -273,20 +181,10 @@ cd C:\путь\к\проекту\it-architect-assistant
 .\deploy\scripts\local_release_update.ps1
 ```
 ##### Обновление проекта с GPU
-=======
-Обновление проекта без GPU
-
-#### Требуется Git — скачивает последние изменения и пересобирает стек
-```Powershell
-.\deploy\scripts\local_release_update.ps1
-```
-Обновление проекта с GPU
->>>>>>> 13932af (Updating to the correct version(hopefully))
 ```Powershell
 .\deploy\scripts\local_release_update.ps1 -Gpu
 ```
 
-<<<<<<< HEAD
 **5. Остановка проекта**
 
 ##### Остановка проекта без GPU
@@ -346,68 +244,6 @@ sh deploy/scripts/local_release_down.sh
 sh deploy/scripts/local_release_down.sh --gpu
 ```
 </details> 
-=======
-Остановка проекта без GPU
-
-```Powershell
-.\deploy\scripts\local_release_down.ps1
-```
-Остановка проекта с GPU
-```Powershell
-.\deploy\scripts\local_release_down.ps1 -Gpu
-```
-### 🐧 Linux / macOS
-
-```
-#### Переход в директорию проекта
-cd /путь/к/проекту/it-architect-assistant
-```
-
-Запуск проекта
-```
-#### Первый запуск без GPU
-```Bash
-sh deploy/scripts/local_release_up.sh
-```
-
-#### Первый запуск с GPU
-```Bash
-sh deploy/scripts/local_release_up.sh --gpu
-```
-
-#### Быстрый перезапуск без GPU
-```Bash
-sh deploy/scripts/local_release_up.sh --skip-model-pull
-```
-
-### Быстрый перезапуск с GPU
-```Bash
-sh deploy/scripts/local_release_up.sh --skip-model-pull --gpu
-```
-
-Обновление проекта
-```
-#### Обновление c GPU (требуется Git)
-```Bash
-sh deploy/scripts/local_release_update.sh
-```
-
-#### Обновление с GPU (требуется Git)
-```Bash
-sh deploy/scripts/local_release_update.sh --gpu
-```
-
-Остановка проекта
-```
-#### Остановка без GPU
-```Bash
-sh deploy/scripts/local_release_down.sh
-```
-#### Остановска с GPU
-```Bash
-sh deploy/scripts/local_release_down.sh --gpu
-```
->>>>>>> 13932af (Updating to the correct version(hopefully))
 
 ### 🐳 Ручной запуск (Docker Compose)
 
@@ -546,20 +382,7 @@ docker compose --env-file .env.local -f deploy/compose.local-production.yml exec
 ```
 docker compose --env-file .env.local -f deploy/compose.local-production.yml exec ollama ollama pull bge-m3
 ```
-<<<<<<< HEAD
 </details>
-=======
-
-### Запуск через docker compose
-Запуск без GPU:
-docker compose --env-file .env.local -f deploy/compose.local-production.yml up --build -d
-
-Запуск с GPU:
-docker compose --env-file .env.local \
-  -f deploy/compose.local-production.yml \
-  -f deploy/compose.local-production.gpu.yml \
-  up --build -d
->>>>>>> 13932af (Updating to the correct version(hopefully))
 
 ### [ОТКРЫТЬ ПРИЛОЖЕНИЕ - http://localhost:8080](http://localhost:8080)
 
@@ -611,7 +434,6 @@ DEBUG=false                   # Режим отладки
 ```
 # Аутентификация
 AUTH_MODE=local_noauth        # Только для local/test окружений
-<<<<<<< HEAD
 ```
 
 ```
@@ -744,57 +566,13 @@ sh deploy/scripts/local_restore.sh --env-file .env.local --backup-dir backups/<b
 </details>
 
 <a id="troubleshooting"></a>
-=======
-
-# База данных
-DATABASE_URL=postgresql://...
-
-# Модели Ollama
-LLM_MODEL_ID=qwen2.5:7b-instruct
-EMBEDDING_MODEL_ID=bge-m3
-
-# Опциональный анализ изображений для задач и проверки архитектуры
-VISION_PROVIDER=disabled
-VISION_BASE_URL=http://ollama:11434/v1
-VISION_MODEL_ID=
-```
-Если нужно разбирать схемы и скриншоты, установите `VISION_PROVIDER=openai_compatible`
-и укажите vision-модель в `VISION_MODEL_ID`, например локальную модель Ollama с поддержкой изображений.
-
-Для локального стенда с GPU профиль по умолчанию настроен на более качественную обработку базы знаний:
-меньшие чанки, overlap `12%`, до `640` чанков для крупных документов, до `128` чанков для LLM-извлечения
-и `KNOWLEDGE_LOCAL_EMBEDDING_MAX_CHUNKS=0`, что отключает пропуск dense embeddings для больших файлов.
-Проверка также использует `VERIFICATION_RULE_RAG_LIMIT=8`, чтобы правила видели больше фрагментов стандарта.
-Если стенд слабее, можно вернуть более быстрый режим: `KNOWLEDGE_LOCAL_EMBEDDING_MAX_CHUNKS=96`,
-`KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS=48`, `VERIFICATION_RULE_RAG_LIMIT=2`.
-
-Плановые обновления баз знаний выполняет сервис `scheduler` в Docker Compose. Он регулярно запускает обработку источников с политикой `weekly`, `monthly`, `scheduled` или `auto`; источники с политикой `manual` обновляются только кнопкой «Обновить сейчас» или при дозагрузке файла.
-
-⚠️ `AUTH_MODE=local_noauth` разрешён только для `APP_ENV=local` и `APP_ENV=test`
-Для настоящего общего production-сервера используется отдельный профиль: SSO/reverse proxy, `APP_ENV=production`, строгие CORS origins.
->>>>>>> 13932af (Updating to the correct version(hopefully))
 
 ## 🧯 Частые ошибки и решения
 
 В этом разделе собраны наиболее частые проблемы при локальном запуске проекта и способы их решения.
 
-<<<<<<< HEAD
 <details>
 <summary> Ошибка загрузки модели Ollama </summary>
-=======
-### Быстрая навигация
-
-- [Ошибка загрузки моделей Ollama](#ошибка-загрузки-моделей-ollama)
-- [Контейнер не запускается после изменения `.env.local`](#контейнер-не-запускается-после-изменения-envlocal)
-- [Нужно пересобрать только один сервис](#нужно-пересобрать-только-один-сервис)
-- [Нужно полностью удалить локальное окружение проекта](#нужно-полностью-удалить-локальное-окружение-проекта)
-- [Порт уже занят](#порт-уже-занят)
-- [Backend не может подключиться к базе данных](#backend-не-может-подключиться-к-базе-данных)
-
----
-
-### Ошибки загрузки моделей Ollama
->>>>>>> 13932af (Updating to the correct version(hopefully))
 
 **Признак:**
 ```text
@@ -1117,8 +895,3 @@ it-architect-assistant/
 <sub>Учебный MVP сервиса поддержки проектирования ИТ-архитектуры</sub>
 
 </div>
-
-<<<<<<< HEAD
-=======
-<div align="center"> <sub> by BeatByte • Пермь, 2026</sub> </div>
->>>>>>> 13932af (Updating to the correct version(hopefully))

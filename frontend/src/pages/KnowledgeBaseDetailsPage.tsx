@@ -799,23 +799,11 @@ export function KnowledgeBaseDetailsPage() {
                 <Input value={uploadTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadTitle(event.target.value)} placeholder="Можно оставить пустым" />
               </FormRow>
               <FormRow label="Файл">
-                <Input
-                  type="file"
-                  multiple
-                  accept=".pdf,.docx,.odt,.xlsx,.archimate,.html,.htm,.md,.markdown,.txt,.text,.json,.png,.jpg,.jpeg,.webp"
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles(Array.from(event.target.files ?? []))}
-                  disabled={uploadLearningInProgress}
-                />
+                <Input type="file" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles(Array.from(event.target.files ?? []))} disabled={uploadLearningInProgress} />
               </FormRow>
               <FormRow label="Статус источника">
                 <div className="readonly-field">{titleStatus(uploadSourceDraft.status)}</div>
               </FormRow>
-<<<<<<< HEAD
-              <FormRow label="Статус источника">
-                <div className="readonly-field">{titleStatus(uploadSourceDraft.status)}</div>
-              </FormRow>
-=======
->>>>>>> 13932af (Updating to the correct version(hopefully))
               {trackedUploadRun ? (
                 <Banner tone={trackedUploadRun.status === 'failed' ? 'danger' : 'info'}>
                   <strong>Документ принят. {titleStatus(trackedUploadStage)}</strong>

@@ -164,26 +164,6 @@ def test_normalize_odt_payload_extracts_text_and_embedded_images() -> None:
     assert payload.metadata["embedded_image_count"] == 1
 
 
-<<<<<<< HEAD
-=======
-def test_normalize_image_payload_uses_vision_description() -> None:
-    payload = normalize_document_payload(
-        "scheme.png",
-        b"\x89PNG\r\n\x1a\nfake",
-        media_type="image/png",
-        image_analyzer=lambda _data, filename, media_type: (
-            f"Knowledge image {filename} {media_type}: CRM -> Billing over REST API."
-        ),
-    )
-
-    assert payload.content_format == "image"
-    assert payload.parser_name == "vision-image"
-    assert "CRM -> Billing over REST API" in payload.text
-    assert payload.metadata["image_count"] == 1
-    assert payload.sections[0].source_location == "image:1"
-
-
->>>>>>> 13932af (Updating to the correct version(hopefully))
 def test_normalize_archimate_payload_extracts_model_items() -> None:
     data = b"""
     <model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
