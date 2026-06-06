@@ -335,6 +335,10 @@ class TaskReadinessPolicy:
     def _has_digit(text: str) -> bool:
         return any(char.isdigit() for char in text)
 
+    @staticmethod
+    def _looks_like_short_answer(text: str, *, max_words: int = 12) -> bool:
+        return 0 < len(text.split()) <= max_words
+
     def _evaluate_goal_answer(self, normalized: str) -> AnswerEvaluation:
         lowered = normalized.lower()
         found: list[str] = []
@@ -645,6 +649,19 @@ class TaskReadinessPolicy:
     def _evaluate_expected_output_answer(self, normalized: str) -> AnswerEvaluation:
         lowered = normalized.lower()
         found: list[str] = []
+        has_explicit_marker = self._contains_any(
+            lowered,
+            [
+                "ожидаемый результат",
+                "результат на выходе",
+                "на выходе",
+                "формат результата",
+                "итоговый артефакт",
+                "нужен артефакт",
+                "deliverable",
+                "output",
+            ],
+        )
 
         if self._contains_any(
             lowered,
@@ -687,7 +704,11 @@ class TaskReadinessPolicy:
         ):
             found.append("detail_level")
 
-        if {"artifact_type", "detail_level"}.issubset(found):
+        if "artifact_type" in found and (
+            "detail_level" in found
+            or has_explicit_marker
+            or self._looks_like_short_answer(lowered)
+        ):
             status = "ready"
         elif found:
             status = "partial"
@@ -708,10 +729,22 @@ class TaskReadinessPolicy:
         if self._contains_any(
             lowered,
             [
+                "nfr нет",
+                "нфт нет",
+                "нфр нет",
+                "нет nfr",
+                "нет нфт",
+                "нет нфр",
                 "нет специальных nfr",
+                "нет специальных нфт",
+                "нет специальных нфр",
                 "нет специальных нефункциональных",
                 "нефункциональных требований нет",
+                "особых нефункциональных требований нет",
                 "без специальных нефункциональных",
+                "nfr не важны",
+                "нфт не важны",
+                "нфр не важны",
             ],
         ):
             return AnswerEvaluation(
@@ -779,12 +812,25 @@ class TaskReadinessPolicy:
                 "monitoring",
             ],
         }
+        has_explicit_marker = self._contains_any(
+            lowered,
+            [
+                "nfr",
+                "нфт",
+                "нфр",
+                "нефункциональн",
+                "не функциональн",
+                "non-functional",
+                "quality attribute",
+                "атрибут качеств",
+            ],
+        )
         found = [
             name
             for name, patterns in groups.items()
             if self._contains_any(lowered, patterns)
         ]
-        if len(found) >= 3:
+        if len(found) >= 3 or (found and (has_explicit_marker or self._looks_like_short_answer(lowered))):
             status = "ready"
         elif found:
             status = "partial"

@@ -48,6 +48,7 @@ from app.integrations.knowledge.text_processing import (
     CHUNKING_POLICY_VERSION,
     extract_normative_rules,
 )
+from app.integrations.vision import analyze_knowledge_document_image
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +119,39 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
 
     def _setting(name: str, default: Any) -> Any:
         return getattr(getattr(service, "settings", None), name, default)
+
+    def _image_analyzer(image_data: bytes, image_filename: str, image_media_type: str | None) -> str:
+        return analyze_knowledge_document_image(
+            image_data,
+            filename=image_filename,
+            media_type=image_media_type,
+            settings=service.settings,
+        ).text
+
+    def _normalize_payload(uri: str, blob: bytes, media_type: str | None):
+        try:
+            return knowledge_core_module.normalize_document_payload(
+                uri,
+                blob,
+                media_type=media_type,
+                image_analyzer=_image_analyzer,
+            )
+        except TypeError as exc:
+            message = str(exc)
+            if "media_type" in message:
+                return knowledge_core_module.normalize_document_payload(uri, blob)
+            if "image_analyzer" not in message:
+                raise
+            try:
+                return knowledge_core_module.normalize_document_payload(
+                    uri,
+                    blob,
+                    media_type=media_type,
+                )
+            except TypeError as nested_exc:
+                if "media_type" not in str(nested_exc):
+                    raise
+                return knowledge_core_module.normalize_document_payload(uri, blob)
 
     def _raise_if_update_canceled() -> None:
         with suppress(Exception):
@@ -642,18 +676,11 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                 )
                 try:
                     _raise_if_update_canceled()
-                    try:
-                        normalized = knowledge_core_module.normalize_document_payload(
-                            document.resolved_uri or document.uri,
-                            blob,
-                            media_type=document.media_type,
-                        )
-                    except TypeError as exc:
-                        if "media_type" not in str(exc):
-                            raise
-                        normalized = knowledge_core_module.normalize_document_payload(
-                            document.resolved_uri or document.uri, blob
-                        )
+                    normalized = _normalize_payload(
+                        document.resolved_uri or document.uri,
+                        blob,
+                        document.media_type,
+                    )
                     normalized_text = normalized.text
                 except KnowledgeUpdateCanceled:
                     raise

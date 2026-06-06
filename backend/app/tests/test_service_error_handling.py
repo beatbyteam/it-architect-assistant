@@ -876,6 +876,36 @@ def test_task_readiness_accepts_short_but_explicit_no_integration_answer() -> No
     assert "integrations" not in assessment["missing_inputs"]
 
 
+def test_task_readiness_accepts_short_expected_output_answer() -> None:
+    policy = TaskReadinessPolicy()
+    task = SimpleNamespace(
+        task_text="Нужно подготовить архитектурное решение для нового процесса.",
+        task_metadata={"clarification_answers": {"expected_output": "Нужен HLD"}},
+    )
+
+    assessment = policy.assess(task).as_dict()
+
+    assert assessment["answer_evaluations"]["expected_output"]["status"] == "ready"
+    assert "expected_output" not in assessment["missing_inputs"]
+
+
+def test_task_readiness_accepts_explicit_nfr_subset() -> None:
+    policy = TaskReadinessPolicy()
+    task = SimpleNamespace(
+        task_text="Нужно подготовить архитектурное решение для нового процесса.",
+        task_metadata={
+            "clarification_answers": {
+                "nfr": "НФТ: доступность 99.9%, мониторинг и резервное копирование."
+            }
+        },
+    )
+
+    assessment = policy.assess(task).as_dict()
+
+    assert assessment["answer_evaluations"]["nfr"]["status"] == "ready"
+    assert "nfr" not in assessment["missing_inputs"]
+
+
 def test_task_readiness_rejects_gibberish_even_when_answer_is_long_enough() -> None:
     policy = TaskReadinessPolicy()
     task = SimpleNamespace(
