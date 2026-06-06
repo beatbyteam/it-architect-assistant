@@ -47,6 +47,15 @@ def test_validate_document_uri_accepts_local_file_inside_allowed_roots(tmp_path:
     validate_document_uri(str(document), allowed_local_roots=[str(allowed_root)])
 
 
+def test_validate_document_uri_accepts_supported_image_material(tmp_path: Path) -> None:
+    allowed_root = tmp_path / "allowed"
+    allowed_root.mkdir()
+    image = allowed_root / "scheme.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    validate_document_uri(str(image), allowed_local_roots=[str(allowed_root)])
+
+
 def test_validate_source_base_uri_respects_unrestricted_override(tmp_path: Path) -> None:
     source_dir = tmp_path / "repo"
     source_dir.mkdir()

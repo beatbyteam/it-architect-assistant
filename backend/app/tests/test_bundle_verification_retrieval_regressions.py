@@ -341,6 +341,59 @@ def test_retrieval_coverage_does_not_require_missing_basis_packages() -> None:
     assert service.is_coverage_sufficient(coverage) is True
 
 
+def test_retrieval_adds_missing_required_role_fallback_fragments() -> None:
+    fallback_fragment = SimpleNamespace(
+        fragment_id="fragment-archimate",
+        document_id="doc-archimate",
+        title="ArchiMate 3.2 notation",
+        content="ArchiMate 3.2 modelling rules for application components.",
+        fragment_type="rule",
+        source_location="lines:1-2",
+        fragment_metadata={"section_tags": ["application_architecture"]},
+        document=SimpleNamespace(
+            title="ArchiMate 3.2",
+            document_type=DocumentType.ARCHITECTURE,
+            version_label="3.2",
+            source=SimpleNamespace(source_id="source-archimate", name="Mandatory baseline"),
+        ),
+    )
+    service = RetrievalService.__new__(RetrievalService)
+    service.session = SimpleNamespace(scalars=lambda _statement: [fallback_fragment])
+    service.knowledge_query = SimpleNamespace(_build_query_profile=lambda **kwargs: {})
+    version = SimpleNamespace(
+        knowledge_version_id="kv-mandatory",
+        version_documents=[
+            SimpleNamespace(
+                document_id="doc-archimate",
+                role_code="archimate_3_2",
+                required_flag=True,
+            )
+        ],
+    )
+    selected_fragments = [
+        SimpleNamespace(
+            fragment_id="fragment-reference",
+            document_id="doc-reference",
+            metadata={"role_code": "reference_only"},
+        )
+    ]
+
+    fallback = service._required_role_fallback_fragments(
+        versions=[version],
+        fragments=selected_fragments,
+    )
+    coverage = service._build_coverage_summary(
+        versions=[version],
+        fragments=[*selected_fragments, *fallback],
+        query_text="target architecture",
+    )
+
+    assert [fragment.fragment_id for fragment in fallback] == ["fragment-archimate"]
+    assert fallback[0].metadata["role_code"] == "archimate_3_2"
+    assert coverage["missing_required_roles"] == []
+    assert service.is_coverage_sufficient(coverage) is True
+
+
 def test_generation_start_run_idempotency_payload_tracks_scope_and_task_snapshot() -> None:
     selected_version = _knowledge_version("kv-user")
     mandatory_version = _knowledge_version("kv-mandatory", base_id="kb-mandatory")

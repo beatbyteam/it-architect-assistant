@@ -41,9 +41,15 @@ export function getClarificationGuidance(questionCode: string): string {
       return 'Укажите системы, API, данные или каналы обмена. Короткий ответ «Интеграций нет» тоже подходит.';
     case 'expected_output':
       return 'Уточните, какой результат ожидается: концепт, HLD, схема интеграций, компонентная модель, рекомендации или другой артефакт.';
+    case 'nfr':
+      return 'Укажите важные НФТ: безопасность, доступность, производительность, мониторинг, резервное копирование. Если особых НФТ нет, это тоже можно написать явно.';
     default:
       return 'Ответ лучше делать конкретным: с объектом, контекстом и ожидаемым результатом.';
   }
+}
+
+function looksLikeShortAnswer(value: string, maxWords = 12) {
+  return value.split(' ').filter(Boolean).length <= maxWords;
 }
 
 export function evaluateClarificationDraft(questionCode: string, rawValue: string): { status: ClarificationDraftStatus; message?: string } {
@@ -125,14 +131,49 @@ export function evaluateClarificationDraft(questionCode: string, rawValue: strin
     case 'expected_output': {
       const hasArtifactType = /(hld|high-level|концепт|концепция|архитектурн|решени|дизайн|компонентн|интеграцион|диаграм|схем|модел|документ|рекомендац)/i.test(lowered);
       const hasDetailLevel = /(верхнеуров|деталь|на уровне|для согласования|чернов|подроб|только концепт|без детализации|вариант)/i.test(lowered);
+      const hasExplicitMarker = /(ожидаемый результат|результат на выходе|на выходе|формат результата|итоговый артефакт|deliverable|output)/i.test(lowered);
 
-      if (hasArtifactType && hasDetailLevel) {
+      if (hasArtifactType && (hasDetailLevel || hasExplicitMarker || looksLikeShortAnswer(lowered))) {
         return { status: 'ready', message: 'Ожидаемый результат описан ясно.' };
       }
       if (hasArtifactType) {
         return { status: 'partial', message: 'Тип результата понятен, но можно уточнить глубину или фокус.' };
       }
       return { status: 'generic', message: 'Укажите, что именно нужно на выходе: концепт, HLD, схема, модель или рекомендации.' };
+    }
+
+    case 'nfr': {
+      const hasExplicitNegative = [
+        /nfr нет/i,
+        /нфт нет/i,
+        /нфр нет/i,
+        /нет nfr/i,
+        /нет нфт/i,
+        /нет нфр/i,
+        /нет специальных (nfr|нфт|нфр|нефункциональных)/i,
+        /нефункциональных требований нет/i,
+        /особых нефункциональных требований нет/i,
+        /без специальных нефункциональных/i,
+        /(nfr|нфт|нфр) не важны/i,
+      ].some((pattern) => pattern.test(lowered));
+      if (hasExplicitNegative) {
+        return { status: 'ready', message: 'Явное отсутствие специальных НФТ подходит.' };
+      }
+      const groups = [
+        /(безопас|доступ|аутенти|авториз|шифр|tls|sso|mfa|rbac|персональн|security|authentication|authorization|encryption)/i,
+        /(доступност|отказоуст|резервирован|реплика|кластер|failover|availability|ha|resilience|redundancy)/i,
+        /(производ|нагруз|задерж|масштаб|sla|rps|latency|throughput|performance|scalability)/i,
+        /(монитор|лог|метрик|трасс|alert|backup|бэкап|резервн|восстанов|rpo|rto|observability|monitoring)/i,
+      ];
+      const foundCount = groups.filter((pattern) => pattern.test(lowered)).length;
+      const hasExplicitMarker = /(nfr|нфт|нфр|нефункциональн|не функциональн|non-functional|quality attribute|атрибут качеств)/i.test(lowered);
+      if (foundCount >= 3 || (foundCount > 0 && (hasExplicitMarker || looksLikeShortAnswer(lowered)))) {
+        return { status: 'ready', message: 'Нефункциональные требования описаны достаточно.' };
+      }
+      if (foundCount > 0) {
+        return { status: 'partial', message: 'Есть часть НФТ, при необходимости можно добавить остальные важные группы.' };
+      }
+      return { status: 'generic', message: 'Назовите хотя бы одну важную группу НФТ или явно укажите, что специальных НФТ нет.' };
     }
 
     default:

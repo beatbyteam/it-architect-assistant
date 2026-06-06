@@ -266,6 +266,7 @@ class Settings(BaseSettings):
     reranker_model_id: str | None = Field(default=None, alias="RERANKER_MODEL_ID")
 
     generation_execute_inline: bool = Field(default=False, alias="GENERATION_EXECUTE_INLINE")
+<<<<<<< HEAD
     generation_retrieval_limit: int = Field(default=16, alias="GENERATION_RETRIEVAL_LIMIT")
     generation_section_retrieval_limit: int = Field(
         default=2, alias="GENERATION_SECTION_RETRIEVAL_LIMIT"
@@ -278,6 +279,20 @@ class Settings(BaseSettings):
     )
     generation_prompt_fragment_char_limit: int = Field(
         default=2200, alias="GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT"
+=======
+    generation_retrieval_limit: int = Field(default=24, alias="GENERATION_RETRIEVAL_LIMIT")
+    generation_section_retrieval_limit: int = Field(
+        default=3, alias="GENERATION_SECTION_RETRIEVAL_LIMIT"
+    )
+    generation_prompt_max_input_tokens: int = Field(
+        default=8000, alias="GENERATION_PROMPT_MAX_INPUT_TOKENS"
+    )
+    generation_prompt_reserved_output_tokens: int = Field(
+        default=1800, alias="GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS"
+    )
+    generation_prompt_fragment_char_limit: int = Field(
+        default=3000, alias="GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT"
+>>>>>>> 13932af (Updating to the correct version(hopefully))
     )
     llm_provider: str = Field(default="openai_compatible", alias="LLM_PROVIDER")
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
