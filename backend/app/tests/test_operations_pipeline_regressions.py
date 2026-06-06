@@ -645,7 +645,7 @@ def test_generation_publication_keeps_completed_state_when_refresh_fails_after_c
     assert run.current_stage == "completed"
     assert task.status == BusinessTaskStatus.COMPLETED
     assert session.commits == 1
-    assert session.refresh_calls == 1
+    assert session.refresh_calls == 2
     assert audit_calls == ["generation.run.completed"]
 
 
@@ -910,5 +910,5 @@ def test_knowledge_update_queue_dispatch_does_not_depend_on_refresh_after_enqueu
 
     assert str(run.update_run_id) in queued_ids
     assert run.status.value == "queued"
-    assert session.commits == 1
+    assert session.commits == 2
     assert session.refresh_calls == 0

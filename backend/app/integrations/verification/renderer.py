@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from html import escape
+import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -69,6 +70,15 @@ METADATA_LABELS = {
     "verification_score": "Оценка проверки",
 }
 
+_TECHNICAL_EVIDENCE_RE = re.compile(
+    r"^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}|VR-[A-Z]+-\d+)$",
+    re.IGNORECASE,
+)
+_TECHNICAL_PREFIX_RE = re.compile(
+    r"^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})[_-]",
+    re.IGNORECASE,
+)
+
 
 def _label(mapping: dict[str, str], value: Any) -> str:
     text = str(value or "")
@@ -91,6 +101,28 @@ def _metadata_value(key: str, value: Any) -> str:
     if key in {"protocol_state", "summary_status"}:
         return _label(STATUS_LABELS, value)
     return str(value)
+
+
+def _display_document_title(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    basename = re.split(r"[\\/]", text.split("?", 1)[0].split("#", 1)[0])[-1]
+    return _TECHNICAL_PREFIX_RE.sub("", basename).strip() or basename
+
+
+def _display_evidence_ref(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parts = [part.strip() for part in re.split(r"\s*\|\s*", text) if part.strip()]
+    rag_part = next((part for part in parts if part.lower().startswith("rag:")), None)
+    candidate = rag_part or text
+    candidate = re.sub(r"^RAG:\s*", "", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"\s+compact:\d+\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+    if not candidate or _TECHNICAL_EVIDENCE_RE.fullmatch(candidate):
+        return ""
+    return _display_document_title(candidate)
 
 
 class VerificationProtocolRenderer:
@@ -138,7 +170,7 @@ class VerificationProtocolRenderer:
                     f"<td>{escape(_label(STATUS_LABELS, item.status.value))}</td>"
                     f"<td>{escape(_label(SEVERITY_LABELS, item.severity.value))}</td>"
                     f"<td>{escape(item.finding_text or '')}</td>"
-                    f"<td>{escape(item.evidence_ref or '')}</td>"
+                    f"<td>{escape(_display_evidence_ref(item.evidence_ref))}</td>"
                     f"<td>{escape(_section_label(item.related_section_ref))}</td>"
                     "</tr>"
                 )
@@ -156,7 +188,7 @@ class VerificationProtocolRenderer:
             )
             basis_rows.append(
                 "<tr>"
-                f"<td>{escape(str(basis_document.get('title') or ''))}</td>"
+                f"<td>{escape(_display_document_title(basis_document.get('title')))}</td>"
                 f"<td>{escape(_label(ROLE_LABELS, basis_document.get('role_code')))}</td>"
                 f"<td>{escape(str(basis_document.get('version_ref') or ''))}</td>"
                 f"<td>{'Да' if basis_document.get('required_flag') else 'Нет'}</td>"

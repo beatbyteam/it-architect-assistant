@@ -85,7 +85,9 @@ export function SolutionPage() {
       <PageHeader
         title={solution.solution_title}
         subtitle="Здесь собраны содержание решения, материалы-основания, TOGAF-секции и нормализованная архитектурная модель."
-        actions={<Link to={`/tasks/${solution.task_id}`} className="button">Вернуться к задаче</Link>}
+        actions={(
+          <Link to={`/tasks/${solution.task_id}`} className="button">Вернуться к задаче</Link>
+        )}
       />
 
       {verificationRunQuery.data?.state === 'failed' ? (

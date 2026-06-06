@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -7,7 +7,7 @@ import {
   getVerificationProtocol,
   type ExternalArchitectureCheckResult,
 } from '../shared/api/verification';
-import { createTask, getTask, updateTask } from '../shared/api/tasks';
+import { createTask, getTask, importTaskInputFile, updateTask } from '../shared/api/tasks';
 import { queryKeys } from '../shared/api/queryKeys';
 import {
   KnowledgeDocumentScopePicker,
@@ -28,7 +28,7 @@ import {
   StateBox,
   Textarea,
 } from '../shared/ui/components';
-import { formatDateTime, titleStatus, truncate, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
+import { cleanEvidenceRef, formatDateTime, titleStatus, truncate, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
 import type { VerificationFinding } from '../types/api';
 
 const EXTERNAL_ARCHITECTURE_DRAFT_TITLE = 'Черновик проверки архитектуры';
@@ -90,7 +90,7 @@ export function ExternalArchitectureCheckPage() {
   function buildDraftPayload() {
     return {
       title: title.trim() || EXTERNAL_ARCHITECTURE_DRAFT_TITLE,
-      raw_text: architectureText.trim(),
+      raw_text: architectureText,
       metadata: {
         source: 'external_architecture',
         verification_only: true,
@@ -120,11 +120,19 @@ export function ExternalArchitectureCheckPage() {
       }
     },
   });
+  const fileImportMutation = useMutation({
+    mutationFn: importTaskInputFile,
+    onSuccess: (preview) => {
+      setArchitectureText(preview.text);
+      if (!title.trim()) setTitle(preview.title);
+      markDraftChanged();
+    },
+  });
 
   const mutation = useMutation({
     mutationFn: () => checkExternalArchitecture({
       title: title.trim(),
-      architecture_text: architectureText.trim(),
+      architecture_text: architectureText,
       source_ref: null,
       draft_task_id: draftTaskId,
       knowledge_document_ids: knowledgeDocumentScopeMode === 'selected' ? knowledgeDocumentIds : [],
@@ -184,6 +192,14 @@ export function ExternalArchitectureCheckPage() {
     mutation.mutate();
   }
 
+  function handleFileImport(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) {
+      fileImportMutation.mutate(file);
+    }
+    event.target.value = '';
+  }
+
   return (
     <div className="stack">
       <PageHeader
@@ -216,6 +232,17 @@ export function ExternalArchitectureCheckPage() {
               required
             />
           </FormRow>
+          <FormRow label="Импорт из файла" hint="PDF, DOCX, ODT, XLSX, ArchiMate, HTML, Markdown, TXT, JSON и изображения будут разобраны в текст архитектуры.">
+            <Input
+              type="file"
+              accept=".pdf,.docx,.odt,.xlsx,.archimate,.html,.htm,.md,.markdown,.txt,.text,.json,.png,.jpg,.jpeg,.webp"
+              onChange={handleFileImport}
+              disabled={mutation.isPending || saveDraftMutation.isPending || fileImportMutation.isPending}
+            />
+          </FormRow>
+          {fileImportMutation.isPending ? <Banner tone="info">Извлекаю текст из файла…</Banner> : null}
+          {fileImportMutation.isSuccess ? <Banner tone="success">Текст файла перенесён в поле архитектуры. Проверьте его перед запуском.</Banner> : null}
+          {fileImportMutation.isError ? <ErrorNotice error={fileImportMutation.error} fallback="Не удалось извлечь текст из файла." /> : null}
           <FormRow label="Текст архитектуры">
             <Textarea
               value={architectureText}
@@ -301,19 +328,22 @@ export function ExternalArchitectureCheckPage() {
               <EmptyState title="Замечаний по протоколу нет" />
             ) : (
               <div className="timeline">
-                {findings.map((finding) => (
-                  <div className="timeline-item" key={finding.check_result_id}>
-                    <div className="actions between">
-                      <strong>{finding.rule_name ?? finding.rule_id ?? 'Проверка'}</strong>
-                      <span className="muted small">
-                        {verificationRuleGroupLabel(finding.rule_group ?? 'other')} · {titleStatus(finding.status)} · {verificationFindingImpact(finding.status, finding.severity).label}
-                      </span>
+                {findings.map((finding) => {
+                  const evidence = cleanEvidenceRef(finding.evidence);
+                  return (
+                    <div className="timeline-item" key={finding.check_result_id}>
+                      <div className="actions between">
+                        <strong>{finding.rule_name ?? finding.rule_id ?? 'Проверка'}</strong>
+                        <span className="muted small">
+                          {verificationRuleGroupLabel(finding.rule_group ?? 'other')} · {titleStatus(finding.status)} · {verificationFindingImpact(finding.status, finding.severity).label}
+                        </span>
+                      </div>
+                      <div>{finding.finding_text ?? 'Требуется ручной просмотр результата.'}</div>
+                      {finding.related_section_ref ? <div className="muted small">Раздел: {finding.related_section_ref}</div> : null}
+                      {evidence ? <div className="muted small">Основание: {evidence}</div> : null}
                     </div>
-                    <div>{finding.finding_text ?? 'Требуется ручной просмотр результата.'}</div>
-                    {finding.related_section_ref ? <div className="muted small">Раздел: {finding.related_section_ref}</div> : null}
-                    {finding.evidence ? <div className="muted small">Основание: {finding.evidence}</div> : null}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Card>

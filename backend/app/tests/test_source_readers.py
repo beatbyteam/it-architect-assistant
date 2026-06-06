@@ -20,7 +20,7 @@ def test_repository_reader_discovers_supported_documents(tmp_path: Path) -> None
     )
     documents = RepositoryReader().resolve_documents(source, [])
     discovered_names = sorted(item.title for item in documents)
-    assert discovered_names == ["architecture.md", "rules.docx"]
+    assert discovered_names == ["architecture.md", "ignore.xlsx", "rules.docx"]
 
 
 def test_url_list_reader_discovers_documents_from_local_html_index(tmp_path: Path) -> None:

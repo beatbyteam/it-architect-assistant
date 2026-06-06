@@ -6,13 +6,14 @@ import {
   getVerificationProtocol,
   getVerificationProtocolRendered,
   getVerificationProtocolViolations,
+  verificationProtocolExportUrl,
 } from '../shared/api/verification';
 import { queryKeys } from '../shared/api/queryKeys';
 import { sanitizeHtml } from '../shared/lib/html';
 import { matchesSearch } from '../shared/lib/search';
 import { Badge, Banner, Card, CollapsibleCodeBlock, EmptyState, ErrorState, Input, LoadingState, PageHeader, Select, StateBox } from '../shared/ui/components';
 import { KnowledgeScopeSummary } from '../entities/knowledge/KnowledgeScopeSummary';
-import { cleanDisplayFileName, formatDateTime, solutionSectionLabel, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
+import { cleanDisplayFileName, cleanEvidenceRef, formatDateTime, solutionSectionLabel, titleStatus, verificationFindingImpact, verificationRuleGroupLabel } from '../shared/lib/format';
 import {
   normalizeVerificationProtocol,
 } from '../shared/api/normalized';
@@ -40,12 +41,13 @@ function ImpactBadge(props: { finding: VerificationFinding }) {
 function findingSearchParts(finding: VerificationFinding) {
   const impact = verificationFindingImpact(finding.status, finding.severity);
   const group = finding.rule_group ?? 'other';
+  const evidence = cleanEvidenceRef(finding.evidence);
   return [
     finding,
     finding.rule_id,
     finding.rule_name,
     finding.finding_text,
-    finding.evidence,
+    evidence,
     finding.related_section_ref,
     titleStatus(finding.status),
     titleStatus(finding.severity),
@@ -131,7 +133,12 @@ export function ProtocolPage() {
       <PageHeader
         title="Протокол проверки"
         subtitle="Здесь собран итог проверки, список нарушений, группировка по правилам и адресные замечания по TOGAF и ArchiMate."
-        actions={<Link to={`/solutions/${protocol.solution_version_id}`} className="button">Вернуться к решению</Link>}
+        actions={(
+          <>
+            <a className="button" href={verificationProtocolExportUrl(protocol.protocol_id, 'odt')}>ODT</a>
+            <Link to={`/solutions/${protocol.solution_version_id}`} className="button">Вернуться к решению</Link>
+          </>
+        )}
       />
 
       {(protocol.summary_status === 'incomplete' || protocol.state === 'incomplete') ? (
@@ -354,24 +361,27 @@ export function ProtocolPage() {
                   <span className="muted small">{findings.length} проверок</span>
                 </div>
                 <div className="timeline">
-                  {findings.map((finding: VerificationFinding) => (
-                    <div className="timeline-item" key={finding.check_result_id ?? finding.rule_id ?? `${group}-${finding.related_section_ref ?? 'finding'}`}>
-                      <div className="actions between">
-                        <strong>
-                          {finding.rule_name ?? finding.rule_id ?? 'Проверка'}
-                        </strong>
-                        <span className="muted small">{titleStatus(finding.status)} · {verificationFindingImpact(finding.status, finding.severity).label}</span>
-                      </div>
-                      <div>{finding.finding_text ?? 'Замечаний нет.'}</div>
-                      {finding.evidence ? <div className="muted small">Основание: {finding.evidence}</div> : null}
-                      {finding.related_section_ref ? (
-                        <div className="actions">
-                          <span className="muted small">Раздел решения: {solutionSectionLabel(finding.related_section_ref)}</span>
-                          <Link className="button" to={`/solutions/${protocol.solution_version_id}#section-${finding.related_section_ref}`}>Перейти к разделу решения</Link>
+                  {findings.map((finding: VerificationFinding) => {
+                    const evidence = cleanEvidenceRef(finding.evidence);
+                    return (
+                      <div className="timeline-item" key={finding.check_result_id ?? finding.rule_id ?? `${group}-${finding.related_section_ref ?? 'finding'}`}>
+                        <div className="actions between">
+                          <strong>
+                            {finding.rule_name ?? finding.rule_id ?? 'Проверка'}
+                          </strong>
+                          <span className="muted small">{titleStatus(finding.status)} · {verificationFindingImpact(finding.status, finding.severity).label}</span>
                         </div>
-                      ) : null}
-                    </div>
-                  ))}
+                        <div>{finding.finding_text ?? 'Замечаний нет.'}</div>
+                        {evidence ? <div className="muted small">Основание: {evidence}</div> : null}
+                        {finding.related_section_ref ? (
+                          <div className="actions">
+                            <span className="muted small">Раздел решения: {solutionSectionLabel(finding.related_section_ref)}</span>
+                            <Link className="button" to={`/solutions/${protocol.solution_version_id}#section-${finding.related_section_ref}`}>Перейти к разделу решения</Link>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}

@@ -156,7 +156,7 @@ export function EmptyState(props: { title: string; description?: string; action?
   );
 }
 
-export function Banner(props: { tone?: 'info' | 'warning' | 'danger'; children: ReactNode }) {
+export function Banner(props: { tone?: 'info' | 'warning' | 'danger' | 'success'; children: ReactNode }) {
   return <div className={`banner banner-${props.tone ?? 'info'}`}>{props.children}</div>;
 }
 

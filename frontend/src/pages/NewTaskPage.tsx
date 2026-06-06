@@ -2,7 +2,7 @@ import { type ChangeEvent, type FormEvent, useMemo, useRef, useState } from 'rea
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
-import { createTask } from '../shared/api/tasks';
+import { createTask, importTaskInputFile } from '../shared/api/tasks';
 import { getActiveKnowledgeVersion, getKnowledgeBases } from '../shared/api/knowledge';
 import { getApiErrorStatus } from '../shared/api/client';
 import { KnowledgeScopeSelector } from '../entities/knowledge/KnowledgeScopeSelector';
@@ -41,6 +41,14 @@ export function NewTaskPage() {
     },
     onSettled: () => setPendingAction(null),
   });
+  const fileImportMutation = useMutation({
+    mutationFn: importTaskInputFile,
+    onSuccess: (preview) => {
+      setTaskText(preview.text);
+      if (!title.trim()) setTitle(preview.title);
+      setLocalError(null);
+    },
+  });
 
   const qualityHints = useMemo(() => [
     'цель и ожидаемый бизнес-результат;',
@@ -52,30 +60,38 @@ export function NewTaskPage() {
 
   const submit = (saveAsDraft: boolean) => {
     const mode: SubmitMode = saveAsDraft ? 'draft' : 'submit';
-    const normalizedText = taskText.trim();
-    if (!saveAsDraft && normalizedText.length < MIN_TASK_LENGTH) {
+    const trimmedText = taskText.trim();
+    if (!saveAsDraft && trimmedText.length < MIN_TASK_LENGTH) {
       setLocalError(`Для отправки описание должно содержать минимум ${MIN_TASK_LENGTH} символов.`);
       return;
     }
-    if (!normalizedText.length) {
+    if (!trimmedText.length) {
       setLocalError('Описание задачи не может быть пустым.');
       return;
     }
     setLocalError(null);
     const normalizedTitle = title.trim() || undefined;
-    const fingerprint = JSON.stringify({ title: normalizedTitle ?? null, raw_text: normalizedText, save_as_draft: saveAsDraft });
+    const fingerprint = JSON.stringify({ title: normalizedTitle ?? null, raw_text: taskText, save_as_draft: saveAsDraft });
     let idempotencyRecord = idempotencyRef.current;
     if (!idempotencyRecord || idempotencyRecord.fingerprint !== fingerprint) {
       idempotencyRecord = { key: crypto.randomUUID(), fingerprint };
       idempotencyRef.current = idempotencyRecord;
     }
     setPendingAction(mode);
-    mutation.mutate({ title: normalizedTitle, raw_text: normalizedText, save_as_draft: saveAsDraft, idempotency_key: idempotencyRecord.key });
+    mutation.mutate({ title: normalizedTitle, raw_text: taskText, save_as_draft: saveAsDraft, idempotency_key: idempotencyRecord.key });
   };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     submit(false);
+  };
+
+  const handleFileImport = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      fileImportMutation.mutate(file);
+    }
+    event.target.value = '';
   };
 
   const activeVersionStatus = getApiErrorStatus(activeVersionQuery.error);
@@ -128,6 +144,17 @@ export function NewTaskPage() {
           <FormRow label="Короткое название">
             <Input value={title} onChange={(event: ChangeEvent<HTMLInputElement>) => setTitle(event.target.value)} placeholder="Например: Архитектура сервиса согласования артефактов" />
           </FormRow>
+          <FormRow label="Импорт из файла" hint="PDF, DOCX, ODT, XLSX, ArchiMate, HTML, Markdown, TXT, JSON и изображения будут разобраны в текст задачи.">
+            <Input
+              type="file"
+              accept=".pdf,.docx,.odt,.xlsx,.archimate,.html,.htm,.md,.markdown,.txt,.text,.json,.png,.jpg,.jpeg,.webp"
+              onChange={handleFileImport}
+              disabled={fileImportMutation.isPending || mutation.isPending}
+            />
+          </FormRow>
+          {fileImportMutation.isPending ? <Banner tone="info">Извлекаю текст из файла…</Banner> : null}
+          {fileImportMutation.isSuccess ? <Banner tone="success">Текст файла перенесён в описание задачи. Проверьте его перед запуском.</Banner> : null}
+          {fileImportMutation.isError ? <ErrorNotice error={fileImportMutation.error} fallback="Не удалось извлечь текст из файла." /> : null}
           <FormRow label="Подробное описание" hint="Опишите цель, контекст, ограничения, интеграции и ожидаемый результат.">
             <Textarea value={taskText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setTaskText(event.target.value)} placeholder="Нужно подготовить решение для..." />
           </FormRow>

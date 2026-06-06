@@ -64,6 +64,23 @@ def build_task_snapshot(service, task: BusinessTask) -> dict[str, Any]:
             }
         )
     latest_generation = generation_items[0] if generation_items else None
+    verification_items = []
+    for run in task.generation_runs:
+        solution = getattr(run, "solution_version", None)
+        if solution is None:
+            continue
+        for verification_run in getattr(solution, "verification_runs", []) or []:
+            verification_items.append(
+                {
+                    "state": service.map_verification_run_state(verification_run.status),
+                    "started_at": verification_run.started_at,
+                    "protocol_id": str(verification_run.protocol.verification_protocol_id)
+                    if getattr(verification_run, "protocol", None)
+                    else None,
+                }
+            )
+    verification_items.sort(key=lambda row: row["started_at"], reverse=True)
+    latest_verification = verification_items[0] if verification_items else None
     now = datetime.now(UTC)
     open_clarification_count = sum(
         1 for item in task.clarification_requests if item.state == ClarificationRequestStatus.OPEN
@@ -94,6 +111,10 @@ def build_task_snapshot(service, task: BusinessTask) -> dict[str, Any]:
         if latest_generation
         else None,
         "latest_generation_state": latest_generation["state"] if latest_generation else None,
+        "latest_verification_state": latest_verification["state"]
+        if latest_verification
+        else None,
+        "latest_protocol_id": latest_verification["protocol_id"] if latest_verification else None,
         "open_clarification_count": open_clarification_count,
         "overdue_clarification_flag": overdue_clarification_flag,
         "readiness_assessment": readiness_assessment,

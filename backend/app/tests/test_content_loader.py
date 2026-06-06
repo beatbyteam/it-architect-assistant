@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import zipfile
 
 from docx import Document as DocxDocument
 from openpyxl import Workbook
@@ -128,6 +129,66 @@ def test_normalize_docx_payload_preserves_headings() -> None:
     assert payload.content_format == "docx"
     assert payload.sections[0].heading == "Business Architecture"
     assert "Application component shall expose API." in payload.text
+
+
+def test_normalize_odt_payload_extracts_text_and_embedded_images() -> None:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "content.xml",
+            """
+            <office:document-content
+                xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+                xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+              <office:body>
+                <office:text>
+                  <text:h text:outline-level="1">Technology architecture</text:h>
+                  <text:p>Backend exposes REST API and stores data in PostgreSQL.</text:p>
+                </office:text>
+              </office:body>
+            </office:document-content>
+            """,
+        )
+        archive.writestr("Pictures/scheme.png", b"\x89PNG\r\n\x1a\nfake")
+
+    payload = normalize_document_payload(
+        "solution.odt",
+        buffer.getvalue(),
+        image_analyzer=lambda _data, filename, _media_type: f"Vision summary for {filename}",
+    )
+
+    assert payload.content_format == "odt"
+    assert payload.parser_name == "odt-xml"
+    assert "Backend exposes REST API" in payload.text
+    assert "Vision summary for scheme.png" in payload.text
+    assert payload.metadata["embedded_image_count"] == 1
+
+
+def test_normalize_archimate_payload_extracts_model_items() -> None:
+    data = b"""
+    <model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <elements>
+        <element identifier="app" xsi:type="ApplicationComponent">
+          <name>Vacation Portal</name>
+        </element>
+      </elements>
+      <relationships>
+        <relationship identifier="rel" xsi:type="ServingRelationship" source="app" target="db" />
+      </relationships>
+      <views>
+        <view identifier="view-1"><name>Application view</name></view>
+      </views>
+    </model>
+    """
+
+    payload = normalize_document_payload("model.archimate", data)
+
+    assert payload.content_format == "archimate"
+    assert payload.parser_name == "archimate-xml"
+    assert "Vacation Portal" in payload.text
+    assert "app -> db" in payload.text
+    assert payload.metadata["element_count"] == 1
+    assert payload.metadata["relationship_count"] == 1
 
 
 def test_normalize_xlsx_payload_extracts_sheets_and_rows() -> None:

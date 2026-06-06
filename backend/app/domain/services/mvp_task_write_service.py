@@ -18,7 +18,9 @@ from app.db.models.generation import (
     ClarificationAnswer,
     ClarificationRequest,
     GenerationRun,
+    SolutionVersion,
 )
+from app.db.models.verification import VerificationRun
 from app.domain.services.principal_keys import principal_owner_key
 from app.domain.services.task_readiness import QUESTION_TEMPLATES
 from app.schemas.generation import InternalGenerationRunStartRequest
@@ -32,6 +34,10 @@ def list_tasks(service, principal: AuthPrincipal) -> list[BusinessTask]:
                 ClarificationRequest.answers
             ),
             selectinload(BusinessTask.generation_runs).selectinload(GenerationRun.solution_version),
+            selectinload(BusinessTask.generation_runs)
+            .selectinload(GenerationRun.solution_version)
+            .selectinload(SolutionVersion.verification_runs)
+            .selectinload(VerificationRun.protocol),
         )
         .order_by(BusinessTask.created_at.desc())
     )
@@ -69,7 +75,7 @@ def create_task(
     owner_key = principal_owner_key(principal)
     request_payload = {
         "title": title,
-        "raw_text": normalized_text,
+        "raw_text": raw_text,
         "metadata": metadata or {},
         "save_as_draft": save_as_draft,
     }
@@ -84,7 +90,7 @@ def create_task(
     task = BusinessTask(
         created_by_user_id=owner_key,
         title=title,
-        task_text=normalized_text,
+        task_text=raw_text,
         task_metadata=metadata or {},
         status=BusinessTaskStatus.DRAFT if save_as_draft else BusinessTaskStatus.SUBMITTED,
     )
@@ -140,7 +146,7 @@ def update_task(
             raise ValidationError(
                 "Business task text is required", error_code="BUSINESS_TASK_TEXT_REQUIRED"
             )
-        task.task_text = normalized_text
+        task.task_text = raw_text
     if metadata is not None:
         merged_metadata = dict(task.task_metadata or {})
         merged_metadata.update(metadata)
@@ -239,7 +245,7 @@ def answer_clarification(
             )
         )
 
-    metadata = dict(task.task_metadata or {})
+    metadata = dict(getattr(task, "task_metadata", None) or {})
     stored_answers = dict(metadata.get("clarification_answers") or {})
     for answer in answers:
         stored_answers[answer["question_code"]] = answer["answer_text"]
@@ -279,7 +285,7 @@ def start_generation(
     read_service_factory,
 ) -> dict[str, Any]:
     task = service._get_task(task_id, principal)
-    metadata = dict(task.task_metadata or {})
+    metadata = dict(getattr(task, "task_metadata", None) or {})
     if metadata.get("source") == "external_architecture" and metadata.get("verification_only") is True:
         raise ConflictError(
             "Черновик проверки архитектуры нельзя запускать как генерацию решения",

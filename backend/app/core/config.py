@@ -215,30 +215,30 @@ class Settings(BaseSettings):
     knowledge_allow_unrestricted_local_sources: bool = Field(
         default=False, alias="KNOWLEDGE_ALLOW_UNRESTRICTED_LOCAL_SOURCES"
     )
-    knowledge_chunk_max_chars: int = Field(default=2200, alias="KNOWLEDGE_CHUNK_MAX_CHARS")
-    knowledge_chunk_target_tokens: int = Field(default=420, alias="KNOWLEDGE_CHUNK_TARGET_TOKENS")
-    knowledge_chunk_overlap_pct: int = Field(default=5, alias="KNOWLEDGE_CHUNK_OVERLAP_PCT")
+    knowledge_chunk_max_chars: int = Field(default=1800, alias="KNOWLEDGE_CHUNK_MAX_CHARS")
+    knowledge_chunk_target_tokens: int = Field(default=300, alias="KNOWLEDGE_CHUNK_TARGET_TOKENS")
+    knowledge_chunk_overlap_pct: int = Field(default=12, alias="KNOWLEDGE_CHUNK_OVERLAP_PCT")
     knowledge_large_document_threshold_bytes: int = Field(
         default=DEFAULT_KNOWLEDGE_LARGE_DOCUMENT_THRESHOLD_BYTES,
         alias="KNOWLEDGE_LARGE_DOCUMENT_THRESHOLD_BYTES",
     )
     knowledge_large_document_chunk_max_chars: int = Field(
-        default=6000, alias="KNOWLEDGE_LARGE_DOCUMENT_CHUNK_MAX_CHARS"
+        default=3600, alias="KNOWLEDGE_LARGE_DOCUMENT_CHUNK_MAX_CHARS"
     )
     knowledge_large_document_chunk_target_tokens: int = Field(
-        default=900, alias="KNOWLEDGE_LARGE_DOCUMENT_CHUNK_TARGET_TOKENS"
+        default=600, alias="KNOWLEDGE_LARGE_DOCUMENT_CHUNK_TARGET_TOKENS"
     )
     knowledge_large_document_chunk_overlap_pct: int = Field(
-        default=0, alias="KNOWLEDGE_LARGE_DOCUMENT_CHUNK_OVERLAP_PCT"
+        default=8, alias="KNOWLEDGE_LARGE_DOCUMENT_CHUNK_OVERLAP_PCT"
     )
     knowledge_large_document_max_chunks: int = Field(
-        default=240, alias="KNOWLEDGE_LARGE_DOCUMENT_MAX_CHUNKS"
+        default=640, alias="KNOWLEDGE_LARGE_DOCUMENT_MAX_CHUNKS"
     )
     knowledge_llm_extraction_max_chunks: int = Field(
-        default=48, alias="KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS"
+        default=128, alias="KNOWLEDGE_LLM_EXTRACTION_MAX_CHUNKS"
     )
     knowledge_local_embedding_max_chunks: int = Field(
-        default=96, alias="KNOWLEDGE_LOCAL_EMBEDDING_MAX_CHUNKS"
+        default=0, alias="KNOWLEDGE_LOCAL_EMBEDDING_MAX_CHUNKS"
     )
     knowledge_auto_sync_interval_days: int = Field(
         default=30, alias="KNOWLEDGE_AUTO_SYNC_INTERVAL_DAYS"
@@ -256,8 +256,8 @@ class Settings(BaseSettings):
     embedding_dimensions: int = Field(default=1024, alias="EMBEDDING_DIMENSIONS")
     embedding_base_url: str | None = Field(default=None, alias="EMBEDDING_BASE_URL")
     embedding_api_key: str | None = Field(default=None, alias="EMBEDDING_API_KEY")
-    embedding_timeout_sec: float = Field(default=30.0, alias="EMBEDDING_TIMEOUT_SEC")
-    embedding_batch_size: int = Field(default=64, alias="EMBEDDING_BATCH_SIZE")
+    embedding_timeout_sec: float = Field(default=300.0, alias="EMBEDDING_TIMEOUT_SEC")
+    embedding_batch_size: int = Field(default=96, alias="EMBEDDING_BATCH_SIZE")
     embedding_model_id: str | None = Field(default="bge-m3", alias="EMBEDDING_MODEL_ID")
     reranker_provider: str = Field(default="heuristic", alias="RERANKER_PROVIDER")
     reranker_base_url: str | None = Field(default=None, alias="RERANKER_BASE_URL")
@@ -266,18 +266,18 @@ class Settings(BaseSettings):
     reranker_model_id: str | None = Field(default=None, alias="RERANKER_MODEL_ID")
 
     generation_execute_inline: bool = Field(default=False, alias="GENERATION_EXECUTE_INLINE")
-    generation_retrieval_limit: int = Field(default=12, alias="GENERATION_RETRIEVAL_LIMIT")
+    generation_retrieval_limit: int = Field(default=16, alias="GENERATION_RETRIEVAL_LIMIT")
     generation_section_retrieval_limit: int = Field(
-        default=1, alias="GENERATION_SECTION_RETRIEVAL_LIMIT"
+        default=2, alias="GENERATION_SECTION_RETRIEVAL_LIMIT"
     )
     generation_prompt_max_input_tokens: int = Field(
-        default=3000, alias="GENERATION_PROMPT_MAX_INPUT_TOKENS"
+        default=4500, alias="GENERATION_PROMPT_MAX_INPUT_TOKENS"
     )
     generation_prompt_reserved_output_tokens: int = Field(
-        default=1200, alias="GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS"
+        default=1600, alias="GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS"
     )
     generation_prompt_fragment_char_limit: int = Field(
-        default=1600, alias="GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT"
+        default=2200, alias="GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT"
     )
     llm_provider: str = Field(default="openai_compatible", alias="LLM_PROVIDER")
     llm_base_url: str | None = Field(default=None, alias="LLM_BASE_URL")
@@ -291,9 +291,14 @@ class Settings(BaseSettings):
     llm_fallback_base_url: str | None = Field(default=None, alias="LLM_FALLBACK_BASE_URL")
     llm_fallback_api_key: str | None = Field(default=None, alias="LLM_FALLBACK_API_KEY")
     llm_fallback_model_id: str | None = Field(default=None, alias="LLM_FALLBACK_MODEL_ID")
+    vision_provider: str = Field(default="disabled", alias="VISION_PROVIDER")
+    vision_base_url: str | None = Field(default=None, alias="VISION_BASE_URL")
+    vision_api_key: str | None = Field(default=None, alias="VISION_API_KEY")
+    vision_model_id: str | None = Field(default=None, alias="VISION_MODEL_ID")
+    vision_timeout_sec: float = Field(default=120.0, alias="VISION_TIMEOUT_SEC")
 
     verification_execute_inline: bool = Field(default=False, alias="VERIFICATION_EXECUTE_INLINE")
-    verification_rule_rag_limit: int = Field(default=2, alias="VERIFICATION_RULE_RAG_LIMIT")
+    verification_rule_rag_limit: int = Field(default=8, alias="VERIFICATION_RULE_RAG_LIMIT")
 
     @field_validator(
         "allowed_cors_origins",
@@ -481,6 +486,23 @@ class Settings(BaseSettings):
             raise ValidationError(
                 "LLM_MAX_TOKENS must be positive when configured",
                 error_code="LLM_MAX_TOKENS_INVALID",
+            )
+        vision_provider = (self.vision_provider or "").strip().lower()
+        if vision_provider not in {
+            "",
+            "disabled",
+            "openai_compatible",
+            "local_openai_compatible",
+            "ollama",
+        }:
+            raise ValidationError(
+                "VISION_PROVIDER must be one of: disabled, openai_compatible, local_openai_compatible, ollama",
+                error_code="VISION_PROVIDER_UNSUPPORTED",
+            )
+        if self.vision_timeout_sec <= 0:
+            raise ValidationError(
+                "VISION_TIMEOUT_SEC must be positive",
+                error_code="VISION_TIMEOUT_INVALID",
             )
 
         if self.knowledge_auto_sync_interval_days < 1:

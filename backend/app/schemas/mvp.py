@@ -60,6 +60,15 @@ class TaskUpdateRequest(BaseModel):
     save_as_draft: bool | None = None
 
 
+class TaskInputFileImportResponse(BaseModel):
+    title: str
+    text: str
+    source_filename: str
+    content_format: str
+    parser_name: str
+    section_count: int = 0
+
+
 class TaskListItemResponse(BaseModel):
     task_id: str
     title: str | None = None
@@ -69,6 +78,8 @@ class TaskListItemResponse(BaseModel):
     metadata: dict[str, Any] | None = None
     latest_knowledge_version_id: str | None = None
     latest_generation_state: str | None = None
+    latest_verification_state: str | None = None
+    latest_protocol_id: str | None = None
     open_clarification_count: int = 0
     overdue_clarification_flag: bool = False
 
@@ -123,6 +134,9 @@ class TaskSnapshotResponse(BaseModel):
     clarification_requests: list[ClarificationRequestResponse] = Field(default_factory=list)
     generation_runs: list[GenerationRunRefResponse] = Field(default_factory=list)
     latest_knowledge_version_id: str | None = None
+    latest_generation_state: str | None = None
+    latest_verification_state: str | None = None
+    latest_protocol_id: str | None = None
     open_clarification_count: int = 0
     overdue_clarification_flag: bool = False
     readiness_assessment: dict[str, Any] | None = None

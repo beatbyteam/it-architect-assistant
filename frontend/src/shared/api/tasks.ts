@@ -1,4 +1,4 @@
-import { request, type RequestOptions } from './client';
+import { apiUrl, request, type RequestOptions } from './client';
 import type { paths, SuccessJson } from '../../generated/openapi';
 import {
   normalizeGenerationRun,
@@ -19,6 +19,15 @@ type RenderedSolutionResponse = SuccessJson<paths['/solutions/{solution_version_
 type SolutionModelResponse = SuccessJson<paths['/solutions/{solution_version_id}/model']['get']>;
 type SolutionSectionAssessmentsResponse = SuccessJson<paths['/solutions/{solution_version_id}/section-assessments']['get']>;
 
+export interface TaskInputFileImportPreview {
+  title: string;
+  text: string;
+  source_filename: string;
+  content_format: string;
+  parser_name: string;
+  section_count: number;
+}
+
 export function getTasks(filters?: { state?: string; search?: string; limit?: number }, options?: RequestOptions) {
   return request<TasksListResponse>('/tasks', options, filters);
 }
@@ -33,6 +42,15 @@ export async function createTask(payload: { title?: string | null; raw_text: str
 
 export async function updateTask(taskId: string, payload: { title?: string | null; raw_text?: string | null; metadata?: Record<string, unknown> | null; save_as_draft?: boolean }) {
   return normalizeTaskSnapshot(await request<TaskMutationResponse>(`/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify(payload) }));
+}
+
+export async function importTaskInputFile(file: File) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return request<TaskInputFileImportPreview>('/task-inputs/import-file', {
+    method: 'POST',
+    body: formData,
+  });
 }
 
 export function answerClarification(taskId: string, clarificationId: string, answers: Array<{ question_code: string; answer_text: string }>) {
@@ -90,4 +108,8 @@ export async function getSolutionSectionAssessments(solutionVersionId: string, o
     ...response,
     section_assessments: Array.isArray(response.section_assessments) ? response.section_assessments : [],
   } as SolutionSectionAssessmentsResponse;
+}
+
+export function solutionExportUrl(solutionVersionId: string, format: 'pdf' | 'docx' | 'odt' | 'archimate') {
+  return apiUrl(`/solutions/${solutionVersionId}/export/${format}`);
 }

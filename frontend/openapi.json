@@ -8,7 +8,7 @@
     "/api/v1/health/live": {
       "get": {
         "tags": [
-          "health"
+          "Health"
         ],
         "summary": "Live",
         "operationId": "live_api_v1_health_live_get",
@@ -29,7 +29,7 @@
     "/api/v1/health/ready": {
       "get": {
         "tags": [
-          "health"
+          "Health"
         ],
         "summary": "Ready",
         "operationId": "ready_api_v1_health_ready_get",
@@ -50,7 +50,7 @@
     "/api/v1/health/dependencies": {
       "get": {
         "tags": [
-          "health"
+          "Health"
         ],
         "summary": "Dependencies",
         "operationId": "dependencies_api_v1_health_dependencies_get",
@@ -71,7 +71,7 @@
     "/api/v1/tasks": {
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "List Tasks",
         "operationId": "list_tasks_api_v1_tasks_get",
@@ -150,7 +150,7 @@
       },
       "post": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Create Task",
         "operationId": "create_task_api_v1_tasks_post",
@@ -191,7 +191,7 @@
     "/api/v1/tasks/{task_id}": {
       "patch": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Update Task",
         "operationId": "update_task_api_v1_tasks__task_id__patch",
@@ -241,7 +241,7 @@
       },
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Get Task",
         "operationId": "get_task_api_v1_tasks__task_id__get",
@@ -280,10 +280,51 @@
         }
       }
     },
+    "/api/v1/task-inputs/import-file": {
+      "post": {
+        "tags": [
+          "Генерация решения"
+        ],
+        "summary": "Import Task Input File",
+        "operationId": "import_task_input_file_api_v1_task_inputs_import_file_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_task_input_file_api_v1_task_inputs_import_file_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskInputFileImportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/solutions": {
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "List Solutions",
         "operationId": "list_solutions_api_v1_solutions_get",
@@ -378,7 +419,7 @@
     "/api/v1/verification-protocols": {
       "get": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "List Verification Protocols",
         "operationId": "list_verification_protocols_api_v1_verification_protocols_get",
@@ -473,7 +514,7 @@
     "/api/v1/tasks/{task_id}/clarifications/{clarification_id}/answers": {
       "post": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Answer Clarification",
         "operationId": "answer_clarification_api_v1_tasks__task_id__clarifications__clarification_id__answers_post",
@@ -534,7 +575,7 @@
     "/api/v1/tasks/{task_id}/generation-runs": {
       "post": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Start Generation Run",
         "operationId": "start_generation_run_api_v1_tasks__task_id__generation_runs_post",
@@ -594,7 +635,7 @@
     "/api/v1/generation-runs/{generation_run_id}": {
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Get Generation Run",
         "operationId": "get_generation_run_api_v1_generation_runs__generation_run_id__get",
@@ -636,7 +677,7 @@
     "/api/v1/generation-runs/{generation_run_id}/cancel": {
       "post": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Cancel Generation Run",
         "operationId": "cancel_generation_run_api_v1_generation_runs__generation_run_id__cancel_post",
@@ -678,7 +719,7 @@
     "/api/v1/solutions/{solution_version_id}": {
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Get Solution",
         "operationId": "get_solution_api_v1_solutions__solution_version_id__get",
@@ -720,7 +761,7 @@
     "/api/v1/solutions/{solution_version_id}/model": {
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Get Solution Model",
         "operationId": "get_solution_model_api_v1_solutions__solution_version_id__model_get",
@@ -762,7 +803,7 @@
     "/api/v1/solutions/{solution_version_id}/section-assessments": {
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Get Solution Section Assessments",
         "operationId": "get_solution_section_assessments_api_v1_solutions__solution_version_id__section_assessments_get",
@@ -804,7 +845,7 @@
     "/api/v1/solutions/{solution_version_id}/rendered": {
       "get": {
         "tags": [
-          "mvp"
+          "Генерация решения"
         ],
         "summary": "Get Solution Rendered",
         "operationId": "get_solution_rendered_api_v1_solutions__solution_version_id__rendered_get",
@@ -843,10 +884,59 @@
         }
       }
     },
+    "/api/v1/solutions/{solution_version_id}/export/{export_format}": {
+      "get": {
+        "tags": [
+          "Генерация решения"
+        ],
+        "summary": "Export Solution",
+        "operationId": "export_solution_api_v1_solutions__solution_version_id__export__export_format__get",
+        "parameters": [
+          {
+            "name": "solution_version_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Solution Version Id"
+            }
+          },
+          {
+            "name": "export_format",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Export Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/solutions/{solution_version_id}/verification-runs": {
       "post": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "Start Verification Run",
         "operationId": "start_verification_run_api_v1_solutions__solution_version_id__verification_runs_post",
@@ -898,7 +988,7 @@
     "/api/v1/external-architectures/check": {
       "post": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "Check External Architecture",
         "operationId": "check_external_architecture_api_v1_external_architectures_check_post",
@@ -939,7 +1029,7 @@
     "/api/v1/verification-runs/{verification_run_id}": {
       "get": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "Get Verification Run",
         "operationId": "get_verification_run_api_v1_verification_runs__verification_run_id__get",
@@ -981,7 +1071,7 @@
     "/api/v1/verification-runs/{verification_run_id}/cancel": {
       "post": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "Cancel Verification Run",
         "operationId": "cancel_verification_run_api_v1_verification_runs__verification_run_id__cancel_post",
@@ -1023,7 +1113,7 @@
     "/api/v1/verification-protocols/{protocol_id}": {
       "get": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "Get Verification Protocol",
         "operationId": "get_verification_protocol_api_v1_verification_protocols__protocol_id__get",
@@ -1065,7 +1155,7 @@
     "/api/v1/verification-protocols/{protocol_id}/violations": {
       "get": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "Get Verification Protocol Violations",
         "operationId": "get_verification_protocol_violations_api_v1_verification_protocols__protocol_id__violations_get",
@@ -1107,7 +1197,7 @@
     "/api/v1/verification-protocols/{protocol_id}/rendered": {
       "get": {
         "tags": [
-          "mvp"
+          "Проверка существующего решения"
         ],
         "summary": "Get Verification Protocol Rendered",
         "operationId": "get_verification_protocol_rendered_api_v1_verification_protocols__protocol_id__rendered_get",
@@ -1146,10 +1236,59 @@
         }
       }
     },
+    "/api/v1/verification-protocols/{protocol_id}/export/{export_format}": {
+      "get": {
+        "tags": [
+          "Проверка существующего решения"
+        ],
+        "summary": "Export Verification Protocol",
+        "operationId": "export_verification_protocol_api_v1_verification_protocols__protocol_id__export__export_format__get",
+        "parameters": [
+          {
+            "name": "protocol_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Protocol Id"
+            }
+          },
+          {
+            "name": "export_format",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Export Format"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/knowledge/versions/active": {
       "get": {
         "tags": [
-          "mvp"
+          "Обучение базы знаний"
         ],
         "summary": "Get Active Knowledge Version",
         "operationId": "get_active_knowledge_version_api_v1_knowledge_versions_active_get",
@@ -1170,7 +1309,7 @@
     "/api/v1/knowledge/bases": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Knowledge Bases",
         "operationId": "list_knowledge_bases_api_v1_knowledge_bases_get",
@@ -1215,7 +1354,7 @@
       },
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Create Knowledge Base",
         "operationId": "create_knowledge_base_api_v1_knowledge_bases_post",
@@ -1256,7 +1395,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Knowledge Base",
         "operationId": "get_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__get",
@@ -1306,7 +1445,7 @@
       },
       "patch": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Update Knowledge Base",
         "operationId": "update_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__patch",
@@ -1358,7 +1497,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/archive": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Archive Knowledge Base",
         "operationId": "archive_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__archive_post",
@@ -1400,7 +1539,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/restore": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Restore Knowledge Base",
         "operationId": "restore_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__restore_post",
@@ -1442,7 +1581,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/documents": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Base Documents",
         "operationId": "list_base_documents_api_v1_knowledge_bases__knowledge_base_id__documents_get",
@@ -1524,7 +1663,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/update-runs": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Base Update Runs",
         "operationId": "list_base_update_runs_api_v1_knowledge_bases__knowledge_base_id__update_runs_get",
@@ -1582,7 +1721,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/sync": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Start Base Sync",
         "operationId": "start_base_sync_api_v1_knowledge_bases__knowledge_base_id__sync_post",
@@ -1656,7 +1795,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/reindex": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Reindex Knowledge Base",
         "operationId": "reindex_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__reindex_post",
@@ -1708,7 +1847,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/embedding-profile": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Switch Knowledge Base Embedding Profile",
         "operationId": "switch_knowledge_base_embedding_profile_api_v1_knowledge_bases__knowledge_base_id__embedding_profile_post",
@@ -1760,7 +1899,7 @@
     "/api/v1/knowledge/bases/{knowledge_base_id}/select": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Select Knowledge Base",
         "operationId": "select_knowledge_base_api_v1_knowledge_bases__knowledge_base_id__select_post",
@@ -1812,7 +1951,7 @@
     "/api/v1/knowledge/bundles/import": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Import Bundle",
         "operationId": "import_bundle_api_v1_knowledge_bundles_import_post",
@@ -1853,7 +1992,7 @@
     "/api/v1/knowledge/sources": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Sources",
         "operationId": "list_sources_api_v1_knowledge_sources_get",
@@ -1914,7 +2053,7 @@
       },
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Create Source",
         "operationId": "create_source_api_v1_knowledge_sources_post",
@@ -1955,7 +2094,7 @@
     "/api/v1/knowledge/sources/{source_id}": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Source",
         "operationId": "get_source_api_v1_knowledge_sources__source_id__get",
@@ -2005,7 +2144,7 @@
       },
       "patch": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Update Source",
         "operationId": "update_source_api_v1_knowledge_sources__source_id__patch",
@@ -2057,7 +2196,7 @@
     "/api/v1/knowledge/sources/{source_id}/archive": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Archive Source",
         "operationId": "archive_source_api_v1_knowledge_sources__source_id__archive_post",
@@ -2099,7 +2238,7 @@
     "/api/v1/knowledge/sources/{source_id}/restore": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Restore Source",
         "operationId": "restore_source_api_v1_knowledge_sources__source_id__restore_post",
@@ -2141,7 +2280,7 @@
     "/api/v1/knowledge/sources/{source_id}/disable": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Disable Source",
         "operationId": "disable_source_api_v1_knowledge_sources__source_id__disable_post",
@@ -2183,7 +2322,7 @@
     "/api/v1/knowledge/sources/{source_id}/documents": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Source Documents",
         "operationId": "list_source_documents_api_v1_knowledge_sources__source_id__documents_get",
@@ -2237,7 +2376,7 @@
       },
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Register Source Document",
         "operationId": "register_source_document_api_v1_knowledge_sources__source_id__documents_post",
@@ -2289,7 +2428,7 @@
     "/api/v1/knowledge/uploads": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Upload Document",
         "operationId": "upload_document_api_v1_knowledge_uploads_post",
@@ -2330,7 +2469,7 @@
     "/api/v1/knowledge/uploads/ingest-batch": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Upload And Ingest Documents",
         "operationId": "upload_and_ingest_documents_api_v1_knowledge_uploads_ingest_batch_post",
@@ -2371,7 +2510,7 @@
     "/api/v1/knowledge/uploads/ingest": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Upload And Ingest Document",
         "operationId": "upload_and_ingest_document_api_v1_knowledge_uploads_ingest_post",
@@ -2412,7 +2551,7 @@
     "/api/v1/knowledge/documents/{document_id}": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Document",
         "operationId": "get_document_api_v1_knowledge_documents__document_id__get",
@@ -2462,7 +2601,7 @@
       },
       "patch": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Update Document",
         "operationId": "update_document_api_v1_knowledge_documents__document_id__patch",
@@ -2514,7 +2653,7 @@
     "/api/v1/knowledge/documents/{document_id}/reindex": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Reindex Document",
         "operationId": "reindex_document_api_v1_knowledge_documents__document_id__reindex_post",
@@ -2566,7 +2705,7 @@
     "/api/v1/knowledge/documents/{document_id}/snapshot": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Document Snapshot",
         "operationId": "get_document_snapshot_api_v1_knowledge_documents__document_id__snapshot_get",
@@ -2624,7 +2763,7 @@
     "/api/v1/knowledge/documents/{document_id}/chunks": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Document Chunks",
         "operationId": "list_document_chunks_api_v1_knowledge_documents__document_id__chunks_get",
@@ -2686,7 +2825,7 @@
     "/api/v1/knowledge/documents/{document_id}/memory": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Document Memory",
         "operationId": "get_document_memory_api_v1_knowledge_documents__document_id__memory_get",
@@ -2744,7 +2883,7 @@
     "/api/v1/knowledge/documents/{document_id}/extracted-items": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Document Extracted Items",
         "operationId": "list_document_extracted_items_api_v1_knowledge_documents__document_id__extracted_items_get",
@@ -2802,7 +2941,7 @@
     "/api/v1/knowledge/documents/{document_id}/disable": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Disable Document",
         "operationId": "disable_document_api_v1_knowledge_documents__document_id__disable_post",
@@ -2844,7 +2983,7 @@
     "/api/v1/knowledge/documents/{document_id}/remove": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Remove Document",
         "operationId": "remove_document_api_v1_knowledge_documents__document_id__remove_post",
@@ -2951,7 +3090,7 @@
     "/api/v1/knowledge/documents/{document_id}/restore": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Restore Document",
         "operationId": "restore_document_api_v1_knowledge_documents__document_id__restore_post",
@@ -3026,7 +3165,7 @@
     "/api/v1/knowledge/notifications": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Knowledge Notifications",
         "operationId": "list_knowledge_notifications_api_v1_knowledge_notifications_get",
@@ -3091,7 +3230,7 @@
     "/api/v1/knowledge/update-runs": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Knowledge Update Runs",
         "operationId": "list_knowledge_update_runs_api_v1_knowledge_update_runs_get",
@@ -3170,7 +3309,7 @@
       },
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Start Knowledge Update",
         "operationId": "start_knowledge_update_api_v1_knowledge_update_runs_post",
@@ -3211,7 +3350,7 @@
     "/api/v1/knowledge/update-runs/{update_run_id}": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Knowledge Update",
         "operationId": "get_knowledge_update_api_v1_knowledge_update_runs__update_run_id__get",
@@ -3253,7 +3392,7 @@
     "/api/v1/knowledge/update-runs/{update_run_id}/cancel": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Cancel Knowledge Update",
         "operationId": "cancel_knowledge_update_api_v1_knowledge_update_runs__update_run_id__cancel_post",
@@ -3295,7 +3434,7 @@
     "/api/v1/knowledge/update-runs/{update_run_id}/status": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Knowledge Update Status",
         "operationId": "get_knowledge_update_status_api_v1_knowledge_update_runs__update_run_id__status_get",
@@ -3337,7 +3476,7 @@
     "/api/v1/knowledge/update-runs/scheduled/execute": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Execute Scheduled Syncs",
         "operationId": "execute_scheduled_syncs_api_v1_knowledge_update_runs_scheduled_execute_post",
@@ -3358,7 +3497,7 @@
     "/api/v1/knowledge/versions": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "List Versions",
         "operationId": "list_versions_api_v1_knowledge_versions_get",
@@ -3411,7 +3550,7 @@
     "/api/v1/knowledge/versions/{knowledge_version_id}": {
       "get": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Get Version",
         "operationId": "get_version_api_v1_knowledge_versions__knowledge_version_id__get",
@@ -3453,7 +3592,7 @@
     "/api/v1/knowledge/versions/{knowledge_version_id}/activate": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Activate Version",
         "operationId": "activate_version_api_v1_knowledge_versions__knowledge_version_id__activate_post",
@@ -3505,7 +3644,7 @@
     "/api/v1/knowledge/evaluation/retrieval": {
       "post": {
         "tags": [
-          "knowledge"
+          "Обучение базы знаний"
         ],
         "summary": "Run Retrieval Evaluation",
         "operationId": "run_retrieval_evaluation_api_v1_knowledge_evaluation_retrieval_post",
@@ -3546,7 +3685,7 @@
     "/api/v1/operations": {
       "get": {
         "tags": [
-          "operations"
+          "Операции"
         ],
         "summary": "List Operations",
         "operationId": "list_operations_api_v1_operations_get",
@@ -3691,7 +3830,7 @@
     "/api/v1/audit-events": {
       "get": {
         "tags": [
-          "operations"
+          "Операции"
         ],
         "summary": "List Audit Events",
         "operationId": "list_audit_events_api_v1_audit_events_get",
@@ -3804,7 +3943,7 @@
     "/api/v1/audit-events/{audit_event_id}": {
       "get": {
         "tags": [
-          "operations"
+          "Операции"
         ],
         "summary": "Get Audit Event",
         "operationId": "get_audit_event_api_v1_audit_events__audit_event_id__get",
@@ -3846,7 +3985,7 @@
     "/api/v1/operations/metrics": {
       "get": {
         "tags": [
-          "operations"
+          "Операции"
         ],
         "summary": "Get Operation Metrics",
         "operationId": "get_operation_metrics_api_v1_operations_metrics_get",
@@ -3867,7 +4006,7 @@
     "/api/v1/operations/{operation_id}": {
       "get": {
         "tags": [
-          "operations"
+          "Операции"
         ],
         "summary": "Get Operation Detail",
         "operationId": "get_operation_detail_api_v1_operations__operation_id__get",
@@ -4016,6 +4155,20 @@
           "critical"
         ],
         "title": "AuditSeverity"
+      },
+      "Body_import_task_input_file_api_v1_task_inputs_import_file_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_task_input_file_api_v1_task_inputs_import_file_post"
       },
       "Body_upload_and_ingest_document_api_v1_knowledge_uploads_ingest_post": {
         "properties": {
@@ -10647,6 +10800,44 @@
         "type": "object",
         "title": "TaskGenerationRunCreateRequest"
       },
+      "TaskInputFileImportResponse": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "source_filename": {
+            "type": "string",
+            "title": "Source Filename"
+          },
+          "content_format": {
+            "type": "string",
+            "title": "Content Format"
+          },
+          "parser_name": {
+            "type": "string",
+            "title": "Parser Name"
+          },
+          "section_count": {
+            "type": "integer",
+            "title": "Section Count",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "text",
+          "source_filename",
+          "content_format",
+          "parser_name"
+        ],
+        "title": "TaskInputFileImportResponse"
+      },
       "TaskListItemResponse": {
         "properties": {
           "task_id": {
@@ -10711,6 +10902,28 @@
               }
             ],
             "title": "Latest Generation State"
+          },
+          "latest_verification_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Verification State"
+          },
+          "latest_protocol_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Protocol Id"
           },
           "open_clarification_count": {
             "type": "integer",
@@ -10807,6 +11020,39 @@
               }
             ],
             "title": "Latest Knowledge Version Id"
+          },
+          "latest_generation_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Generation State"
+          },
+          "latest_verification_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Verification State"
+          },
+          "latest_protocol_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Protocol Id"
           },
           "open_clarification_count": {
             "type": "integer",
@@ -12149,5 +12395,27 @@
         "title": "KnowledgeVersionResponse"
       }
     }
-  }
+  },
+  "tags": [
+    {
+      "name": "Обучение базы знаний",
+      "description": "Загрузка, разбор, обновление и выбор материалов базы знаний."
+    },
+    {
+      "name": "Генерация решения",
+      "description": "Задачи, уточнения, запуск генерации и чтение подготовленных архитектурных решений."
+    },
+    {
+      "name": "Проверка существующего решения",
+      "description": "Запуск проверки, протоколы, нарушения и проверка внешней архитектуры."
+    },
+    {
+      "name": "Операции",
+      "description": "Журнал операций, аудит и технические метрики."
+    },
+    {
+      "name": "Health",
+      "description": "Проверки доступности API и зависимостей."
+    }
+  ]
 }

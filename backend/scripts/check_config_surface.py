@@ -79,7 +79,7 @@ def validate_compose_files() -> list[str]:
             continue
         for service_name, service_def in services.items():
             env_keys = collect_env_from_compose((service_def or {}).get("environment"))
-            if service_name in {"api", "worker", "knowledge-bootstrap"}:
+            if service_name in {"api", "worker", "scheduler", "knowledge-bootstrap"}:
                 unknown = sorted(env_keys - allowed_backend)
                 if unknown:
                     errors.append(

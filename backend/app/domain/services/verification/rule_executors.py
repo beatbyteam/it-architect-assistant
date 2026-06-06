@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 from app.db.enums import (
@@ -78,6 +79,129 @@ def _section_list(section_codes: list[str] | set[str] | tuple[str, ...]) -> str:
     return ", ".join(_section_label(code) for code in section_codes)
 
 
+PROHIBITED_TECH_MARKERS = (
+    "forbid",
+    "forbidden",
+    "must not",
+    "shall not",
+    "deprecated",
+    "not recommended",
+    "запрещ",
+    "нельзя",
+    "не допуска",
+    "не рекоменду",
+)
+TECH_PHRASE_PATTERNS = (
+    re.compile(r"\bubuntu\s+\d+(?:\.\d+)*(?:\s+lts)?\b"),
+    re.compile(r"\bdebian\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\bcentos\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\brhel\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\bred\s+hat(?:\s+enterprise\s+linux)?\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\boracle\s+linux\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\brocky\s+linux\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\balma\s*linux\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\bwindows\s+server\s+\d{4}(?:\s+r2)?\b"),
+    re.compile(r"\bpostgres(?:ql)?\s+\d+(?:\.\d+)*\b"),
+    re.compile(r"\bjava\s+\d+\b"),
+)
+TECH_POLICY_STOPWORDS = {
+    "status",
+    "статус",
+    "разрешено",
+    "запрещено",
+    "forbidden",
+    "allowed",
+    "must",
+    "shall",
+    "not",
+    "не",
+    "для",
+    "всех",
+    "серверов",
+    "требуется",
+    "установка",
+}
+
+
+def _normalize_tech_policy_text(value: str | None) -> str:
+    normalized = (value or "").casefold().replace("ё", "е")
+    normalized = normalized.replace("—", " ").replace("–", " ").replace("|", " ")
+    normalized = re.sub(r"[^a-zа-я0-9.+#]+", " ", normalized)
+    normalized = re.sub(r"(?<!\d)\.(?!\d)", " ", normalized)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _contains_prohibited_marker(value: str) -> bool:
+    lowered = value.casefold().replace("ё", "е")
+    return any(marker in lowered for marker in PROHIBITED_TECH_MARKERS)
+
+
+def _technology_phrases(value: str | None) -> set[str]:
+    normalized = _normalize_tech_policy_text(value)
+    phrases: set[str] = set()
+    for pattern in TECH_PHRASE_PATTERNS:
+        phrases.update(match.group(0) for match in pattern.finditer(normalized))
+    return phrases
+
+
+def _generic_policy_phrases_near_marker(segment: str) -> set[str]:
+    lowered = segment.casefold().replace("ё", "е")
+    marker_positions = [
+        index
+        for marker in PROHIBITED_TECH_MARKERS
+        if (index := lowered.find(marker)) >= 0
+    ]
+    if not marker_positions:
+        return set()
+    marker_index = min(marker_positions)
+    candidates: set[str] = set()
+    for part, take_tail in ((segment[:marker_index], True), (segment[marker_index:], False)):
+        tokens = [
+            token
+            for token in _normalize_tech_policy_text(part).split()
+            if token not in TECH_POLICY_STOPWORDS
+        ]
+        if not tokens:
+            continue
+        selected = tokens[-6:] if take_tail else tokens[:6]
+        if len(selected) >= 2 or any(any(char.isdigit() for char in token) for token in selected):
+            candidates.add(" ".join(selected))
+    return candidates
+
+
+def _prohibited_technology_phrases(value: str | None) -> set[str]:
+    phrases: set[str] = set()
+    lines = [line for line in re.split(r"[\n\r;]+", value or "") if line.strip()]
+    for index, segment in enumerate(lines):
+        if not _contains_prohibited_marker(segment):
+            continue
+        phrases.update(_technology_phrases(segment))
+        phrases.update(_generic_policy_phrases_near_marker(segment))
+        if not _technology_phrases(segment) and index > 0:
+            phrases.update(_technology_phrases(lines[index - 1]))
+    return {phrase for phrase in phrases if phrase and phrase not in TECH_POLICY_STOPWORDS}
+
+
+def _contains_technology_phrase(haystack: str | None, phrase: str) -> bool:
+    normalized_haystack = f" {_normalize_tech_policy_text(haystack)} "
+    normalized_phrase = _normalize_tech_policy_text(phrase)
+    return bool(normalized_phrase and f" {normalized_phrase} " in normalized_haystack)
+
+
+def _solution_technology_text(support: "VerificationSupportContext") -> str:
+    component_parts: list[str] = []
+    for component in support.components:
+        component_parts.extend(
+            str(getattr(component, field_name, "") or "")
+            for field_name in ("component_name", "role_description", "technology_stack")
+        )
+        component_parts.extend(
+            str(interface)
+            for interface in list(getattr(component, "interfaces", []) or [])
+        )
+    return "\n".join([support.combined_section_text, *component_parts])
+
+
 @dataclass(slots=True)
 class VerificationSupportContext:
     section_by_code: dict[str, Any]
@@ -90,8 +214,8 @@ class VerificationSupportContext:
     risks: list[Any]
     basis_inventory: Any
     required_fragments_by_role: dict[str, list[Any]]
-    rule_evidence_by_code: dict[str, list[dict[str, Any]]]
-    support_summary: dict[str, Any]
+    rule_evidence_by_code: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    support_summary: dict[str, Any] = field(default_factory=dict)
 
     def evidence_for_roles(self, *roles: str) -> str | None:
         parts: list[str] = []
@@ -812,7 +936,8 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 "it_architecture_content",
             )
             evidence = support.evidence_for_roles("technology_standard")
-            if evidence is None:
+            rule_evidence = support.evidence_for_rule(rule.code)
+            if evidence is None and not rule_evidence:
                 status = (
                     CheckResultStatus.WARNING
                     if self._has_verification_materials(support)
@@ -829,16 +954,34 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                     },
                     related_section_ref=related_section_ref,
                 )
-            tech_text = " ".join(
-                (getattr(component, "technology_stack", None) or "")
-                for component in support.components
-            ).lower()
-            fragments = support.required_fragments_by_role.get("technology_standard") or []
+            if evidence is None:
+                evidence = "; ".join(
+                    str(item.get("fragment_id") or item.get("document_title") or "фрагмент")
+                    for item in rule_evidence[:3]
+                )
+            tech_text_raw = _solution_technology_text(support)
+            tech_text = tech_text_raw.lower()
+            rag_fragments = [
+                SimpleNamespace(
+                    fragment_id=item.get("fragment_id"),
+                    title=item.get("document_title"),
+                    content=item.get("content_preview"),
+                )
+                for item in rule_evidence
+            ]
+            fragments = [
+                *(support.required_fragments_by_role.get("technology_standard") or []),
+                *rag_fragments,
+            ]
             prohibited_hits: list[str] = []
             aligned_hits: list[str] = []
             for fragment in fragments[:12]:
                 content = (getattr(fragment, "content", None) or "").lower()
                 title = (getattr(fragment, "title", None) or "").lower()
+                fragment_text = "\n".join([title, content])
+                for phrase in _prohibited_technology_phrases(fragment_text):
+                    if _contains_technology_phrase(tech_text_raw, phrase):
+                        prohibited_hits.append(phrase)
                 for token in re.findall(r"[a-zA-Z0-9_\-\.]{3,}", tech_text):
                     if token in {"and", "the", "for", "with", "без", "или"}:
                         continue
@@ -886,7 +1029,10 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 for item in support.basis_inventory.basis_documents
                 if item.role_code == "template_or_principles"
             ]
-            if not template_docs:
+            template_fragments = support.required_fragments_by_role.get(
+                "template_or_principles"
+            ) or []
+            if not template_docs and not template_fragments:
                 return self.result(
                     rule=rule,
                     status=CheckResultStatus.NOT_APPLICABLE,
@@ -923,6 +1069,7 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                     "basis_present": True,
                     "selected_document_scope": selected_document_scope,
                     "template_document_count": len(template_docs),
+                    "template_fragment_count": len(template_fragments),
                 },
                 related_section_ref=self._first_section_ref(
                     support,

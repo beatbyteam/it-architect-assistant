@@ -624,10 +624,15 @@ def test_create_task_uses_service_login_for_owner_and_idempotency_scope() -> Non
         _get_task=lambda task_id, principal=None: task_holder["task"],
     )
 
+    raw_text = (
+        "  Нужно подготовить достаточно подробное описание сервисной задачи\n"
+        "    1. Сохранить пользовательские отступы\n"
+        "    2. Не схлопывать переносы при хранении  "
+    )
     task = create_task(
         service,
         title="Service task",
-        raw_text="Нужно подготовить достаточно подробное описание сервисной задачи для запуска генерации.",
+        raw_text=raw_text,
         metadata={"channel": "automation"},
         save_as_draft=True,
         principal=_service_principal(),
@@ -635,5 +640,7 @@ def test_create_task_uses_service_login_for_owner_and_idempotency_scope() -> Non
     )
 
     assert task.created_by_user_id == "svc.worker"
+    assert task.task_text == raw_text
     assert seen["resolve"]["actor_user_id"] == "svc.worker"
+    assert seen["resolve"]["request_payload"]["raw_text"] == raw_text
     assert seen["register"]["actor_user_id"] == "svc.worker"

@@ -6,11 +6,12 @@ import { getTasks, getSolutionsRegistry } from '../shared/api/tasks';
 import { getVerificationProtocolsRegistry } from '../shared/api/verification';
 import { getApiErrorStatus } from '../shared/api/client';
 import { Badge, Banner, Card, EmptyState, ErrorNotice, LoadingState, PageHeader, StatCard } from '../shared/ui/components';
-import { formatDateTime, formatKnowledgeVersionLabel, knowledgeBaseKindLabel, truncate } from '../shared/lib/format';
+import { formatDateTime, formatKnowledgeVersionLabel, knowledgeBaseKindLabel } from '../shared/lib/format';
 import type { KnowledgeBase, KnowledgeNotification, SolutionRegistryItem, TaskListItem, VerificationProtocolRegistryItem } from '../types/api';
 
 type DashboardTask = TaskListItem & {
   latest_generation_state?: string | null;
+  latest_verification_state?: string | null;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -27,8 +28,12 @@ const ACTIVE_GENERATION_STATES = new Set([
   'finalizing',
   'publishing',
 ]);
+const ACTIVE_VERIFICATION_STATES = new Set(['queued', 'running']);
 
 function dashboardTaskBadgeValue(task: DashboardTask) {
+  if (task.latest_verification_state && ACTIVE_VERIFICATION_STATES.has(task.latest_verification_state)) {
+    return 'running';
+  }
   return task.latest_generation_state && ACTIVE_GENERATION_STATES.has(task.latest_generation_state)
     ? 'running'
     : task.state;
@@ -69,6 +74,7 @@ export function DashboardPage() {
   const activeVersionStatus = getApiErrorStatus(activeVersionQuery.error);
 
   const taskActionLabel = (task: DashboardTask) => {
+    if (isExternalArchitectureTask(task) && task.latest_verification_state && ACTIVE_VERIFICATION_STATES.has(task.latest_verification_state)) return 'Открыть проверку в работе';
     if (isExternalArchitectureTask(task) && task.state === 'draft') return 'Продолжить черновик проверки';
     if (task.state === 'needs_clarification') return 'Ответить на уточнения';
     if (task.state === 'ready_for_generation') return 'Подготовить решение';
@@ -138,7 +144,7 @@ export function DashboardPage() {
                     <Badge value={dashboardTaskBadgeValue(task)} />
                   </div>
                   <div className="muted small">Обновлена: {formatDateTime(task.updated_at)}</div>
-                  <div className="muted small">{truncate(task.task_id, 20)}</div>
+                  {task.latest_verification_state ? <div className="muted small">Проверка: <Badge value={task.latest_verification_state} /></div> : null}
                   <div className="actions">
                     <Link className="button" to={dashboardTaskLink(task)}>{taskActionLabel(task)}</Link>
                   </div>
@@ -155,9 +161,10 @@ export function DashboardPage() {
                 <div className="timeline-item" key={item.solution_version_id}>
                   <div className="actions between">
                     <strong>{item.solution_title}</strong>
-                    <Badge value={item.state} />
+                    <Badge value={item.latest_verification_state && ACTIVE_VERIFICATION_STATES.has(item.latest_verification_state) ? 'running' : item.state} />
                   </div>
                   <div className="muted small">Опубликовано: {formatDateTime(item.published_at ?? item.created_at)}</div>
+                  {item.latest_verification_state ? <div className="muted small">Проверка: <Badge value={item.latest_verification_state} /></div> : null}
                   <div className="actions">
                     <Link className="button" to={`/solutions/${item.solution_version_id}`}>Открыть решение</Link>
                     {item.latest_protocol_id ? <Link className="button" to={`/protocols/${item.latest_protocol_id}`}>Открыть последнюю проверку</Link> : null}

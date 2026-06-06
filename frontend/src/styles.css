@@ -459,6 +459,13 @@ h3 {
   color: #78350f;
 }
 
+.banner-success,
+.state-success {
+  background: var(--success-background);
+  border-color: #bbf7d0;
+  color: #065f46;
+}
+
 .banner-danger,
 .state-danger,
 .state-error {
@@ -553,9 +560,11 @@ h3 {
 .table th,
 .table td {
   padding: var(--space-4);
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
   text-align: left;
   vertical-align: top;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .table th {
@@ -563,14 +572,11 @@ h3 {
   font-size: 12px;
   font-weight: 600;
   color: var(--muted-foreground);
+  background: #f8fafc;
 }
 
-.table tbody tr:hover {
+.table tbody tr:hover td {
   background: var(--muted);
-}
-
-.table tr:last-child td {
-  border-bottom: 0;
 }
 
 .timeline {
@@ -666,6 +672,95 @@ h3 {
   padding: var(--space-4);
   background: var(--card);
   overflow: auto;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+
+.html-preview :where(h1, h2, h3, h4, h5, h6),
+.rendered-html :where(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 var(--space-3);
+}
+
+.html-preview :where(section),
+.rendered-html :where(section) {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: #ffffff;
+}
+
+.html-preview > :where(p, dl),
+.rendered-html > :where(p, dl),
+.html-preview > :where(ul, ol),
+.rendered-html > :where(ul, ol) {
+  margin: var(--space-3) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+}
+
+.html-preview > :where(p, dl),
+.rendered-html > :where(p, dl) {
+  padding: var(--space-3);
+}
+
+.html-preview > :where(ul, ol),
+.rendered-html > :where(ul, ol) {
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-6);
+}
+
+.html-preview :where(table),
+.rendered-html :where(table) {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  margin: var(--space-4) 0;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  font-size: 14px;
+  table-layout: auto;
+}
+
+.html-preview :where(th, td),
+.rendered-html :where(th, td) {
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  min-width: 120px;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.html-preview :where(th:nth-child(1), td:nth-child(1)),
+.rendered-html :where(th:nth-child(1), td:nth-child(1)) {
+  min-width: 88px;
+}
+
+.html-preview :where(th:nth-child(2), td:nth-child(2)),
+.rendered-html :where(th:nth-child(2), td:nth-child(2)) {
+  min-width: 240px;
+}
+
+.html-preview :where(th:nth-child(5), td:nth-child(5)),
+.rendered-html :where(th:nth-child(5), td:nth-child(5)),
+.html-preview :where(th:nth-child(6), td:nth-child(6)),
+.rendered-html :where(th:nth-child(6), td:nth-child(6)) {
+  min-width: 420px;
+}
+
+.html-preview :where(th),
+.rendered-html :where(th) {
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.html-preview :where(pre),
+.rendered-html :where(pre) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .code-block {
@@ -787,6 +882,11 @@ h3 {
 .preserve-lines,
 .pre-wrap {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-raw-text {
+  line-height: 1.6;
 }
 
 .list-button {

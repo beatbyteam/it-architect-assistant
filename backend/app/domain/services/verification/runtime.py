@@ -18,6 +18,16 @@ from .document_scope import selected_document_ids_from_scope
 from .rule_executors import calculate_verification_score
 
 
+CONTENT_EVIDENCE_RULE_ROLES: dict[str, tuple[str, ...]] = {
+    "VR-NRM-01": ("oda", "ig1242_oda_component_inventory"),
+    "VR-NRM-02": ("archimate_3_2",),
+    "VR-NRM-03": ("technology_standard",),
+    "VR-NRM-04": ("template_or_principles",),
+    "VR-NRM-05": ("archimate_3_2",),
+    "VR-NRM-06": ("archimate_3_2",),
+}
+
+
 class VerificationRunCanceled(Exception):
     """Internal signal used to stop a verification worker after an API cancellation."""
 
@@ -234,7 +244,6 @@ def _prepare_verification_context(
         scope.get("validation_scope", "full"),
         document_scope=document_scope if isinstance(document_scope, dict) else None,
     )
-    rule_groups = sorted({rule.group for rule in rules})
     support_context = service._build_rule_support_context(
         solution=solution,
         knowledge_versions=knowledge_versions,
@@ -242,6 +251,13 @@ def _prepare_verification_context(
         selected_document_ids=selected_document_ids,
         principal=service._principal_for_run(run),
     )
+    rules = _extend_selected_document_rules_from_support(
+        service,
+        rules=rules,
+        support_context=support_context,
+        document_scope=document_scope,
+    )
+    rule_groups = sorted({rule.group for rule in rules})
     return (
         knowledge_versions,
         knowledge_version,
@@ -253,13 +269,86 @@ def _prepare_verification_context(
     )
 
 
+def _extend_selected_document_rules_from_support(
+    service: Any,
+    *,
+    rules: list[Any],
+    support_context: dict[str, Any],
+    document_scope: Any,
+) -> list[Any]:
+    if not isinstance(document_scope, dict) or document_scope.get("mode") != "selected":
+        return rules
+    existing_codes = {
+        str(getattr(rule, "code", "") or "")
+        for rule in rules
+        if getattr(rule, "code", None)
+    }
+    missing_codes = {
+        rule_code
+        for rule_code, role_codes in CONTENT_EVIDENCE_RULE_ROLES.items()
+        if rule_code not in existing_codes
+        and _support_has_role_fragments(support_context, role_codes)
+    }
+    missing_codes.update(_support_content_rule_codes(support_context) - existing_codes)
+    if not missing_codes:
+        return rules
+    registry_rules = _list_registry_rules(service)
+    if not registry_rules:
+        return rules
+    selected_codes = existing_codes | missing_codes
+    ordered_rules = [
+        rule
+        for rule in registry_rules
+        if str(getattr(rule, "code", "") or "") in selected_codes
+    ]
+    ordered_codes = {str(getattr(rule, "code", "") or "") for rule in ordered_rules}
+    ordered_rules.extend(
+        rule
+        for rule in rules
+        if str(getattr(rule, "code", "") or "") not in ordered_codes
+    )
+    return ordered_rules
+
+
+def _support_has_role_fragments(
+    support_context: dict[str, Any], role_codes: tuple[str, ...]
+) -> bool:
+    role_fragments = support_context.get("required_fragments_by_role")
+    if not isinstance(role_fragments, dict):
+        return False
+    return any(bool(role_fragments.get(role_code)) for role_code in role_codes)
+
+
+def _support_content_rule_codes(support_context: dict[str, Any]) -> set[str]:
+    raw_codes = support_context.get("content_rule_codes")
+    if raw_codes is None:
+        support_summary = support_context.get("support_summary")
+        if isinstance(support_summary, dict):
+            raw_codes = support_summary.get("content_rule_hint_codes")
+    if not isinstance(raw_codes, list | tuple | set):
+        return set()
+    return {
+        str(rule_code)
+        for rule_code in raw_codes
+        if str(rule_code or "").startswith("VR-")
+    }
+
+
+def _list_registry_rules(service: Any) -> list[Any]:
+    registry = getattr(service, "registry", None)
+    list_rules = getattr(registry, "list_rules", None)
+    if not callable(list_rules):
+        return []
+    return list(list_rules())
+
+
 def _run_verification_stage(
     service: Any,
     *,
     run: VerificationRun,
     solution: Any,
     knowledge_versions: list[Any],
-    rules: list[Any],
+    rules: list[Any] | None = None,
     rule_lookup: dict[str, Any],
     support_context: dict[str, Any],
     selected_document_ids: list[str],
@@ -287,7 +376,7 @@ def _run_verification_stage(
                 "support_summary": support_context.get("support_summary"),
                 "generation_grounding": generation_retrieval,
                 "verification_telemetry": {
-                    "rule_count": len(rules),
+                    "rule_count": len(rules or []),
                     "support_scope_count": len(support_context),
                     "support_summary": support_context.get("support_summary"),
                 },
@@ -323,7 +412,7 @@ def _publish_verification_protocol(
     payload: Any,
     validation_summary: dict[str, Any],
     rule_lookup: dict[str, Any],
-    rules: list[Any],
+    rules: list[Any] | None = None,
     rule_groups: list[str],
     support_context: dict[str, Any],
     stage_metrics: dict[str, dict[str, Any]],
@@ -388,7 +477,7 @@ def _publish_verification_protocol(
                 },
                 "verification_telemetry": {
                     "rule_group_count": len(rule_groups),
-                    "rule_count": len(rules),
+                    "rule_count": len(rules or []),
                     "check_count": len(payload.check_results),
                     "final_status": payload.final_status.value,
                     "score": verification_score,

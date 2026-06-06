@@ -5,10 +5,20 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.exceptions import ConflictError
-from app.db.enums import BusinessTaskStatus, CheckResultStatus, ProtocolSummaryStatus, Severity
+from app.db.enums import (
+    BusinessTaskStatus,
+    CheckResultStatus,
+    DocumentType,
+    ProtocolSummaryStatus,
+    Severity,
+)
+from app.domain.services.knowledge_basis import classify_basis_requirement
 from app.domain.services.external_architecture_check import ExternalArchitectureCheckService
 from app.domain.services.verification.post_validation import VerificationPostValidator
-from app.domain.services.verification.run_service import VerificationRunService
+from app.domain.services.verification.run_service import (
+    VerificationRunService,
+    _infer_selected_document_content_hints,
+)
 from app.domain.services.verification.runtime import _prepare_verification_context
 from app.domain.services.verification.rule_executors import (
     NormativeRulesExecutor,
@@ -139,6 +149,109 @@ def test_normative_missing_basis_fragments_warns_when_materials_exist() -> None:
         ),
         expected_rule_codes=["VR-NRM-02"],
     )
+
+
+def test_operating_system_standard_document_is_technology_basis() -> None:
+    requirement = classify_basis_requirement(
+        SimpleNamespace(
+            title="Стандарт по операционным системам",
+            uri="file:///standards/os.pdf",
+            version_label=None,
+            document_type=DocumentType.NORMATIVE,
+        )
+    )
+
+    assert requirement is not None
+    assert requirement.role_code == "technology_standard"
+
+
+def test_technology_standard_forbidden_ubuntu_version_fails_verification() -> None:
+    support = VerificationSupportContext(
+        section_by_code={
+            "technology_architecture": SimpleNamespace(
+                body_markdown="Для всех серверов требуется установка Ubuntu 20.04 LTS.",
+                source_refs=[],
+            )
+        },
+        section_codes={"technology_architecture"},
+        combined_section_text="Для всех серверов требуется установка Ubuntu 20.04 LTS.",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(basis_documents=[]),
+        required_fragments_by_role={
+            "technology_standard": [
+                SimpleNamespace(
+                    fragment_id="fragment-os-standard",
+                    title="Стандарт по операционным системам",
+                    content="Ubuntu 20.04 LTS Запрещено\nUbuntu 22.04 LTS Разрешено",
+                )
+            ]
+        },
+        support_summary={},
+    )
+    rule = VerificationRuleDefinition(
+        "VR-NRM-03",
+        "Technology choice follows selected technology standard",
+        "normative",
+        Severity.CRITICAL,
+    )
+
+    result = NormativeRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.FAILED
+    assert "ubuntu 20.04 lts" in result.diagnostics["prohibited_hits"]
+
+
+def test_technology_standard_forbidden_ubuntu_from_rule_rag_fails_verification() -> None:
+    support = VerificationSupportContext(
+        section_by_code={
+            "technology_architecture": SimpleNamespace(
+                body_markdown="Для всех серверов требуется установка Ubuntu 20.04 LTS.",
+                source_refs=[],
+            )
+        },
+        section_codes={"technology_architecture"},
+        combined_section_text="Для всех серверов требуется установка Ubuntu 20.04 LTS.",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(basis_documents=[]),
+        required_fragments_by_role={},
+        rule_evidence_by_code={
+            "VR-NRM-03": [
+                {
+                    "fragment_id": "fragment-rag-os-standard",
+                    "document_title": "1003161951_6c9ab113595e4f9bb68b447c0c469010.pdf",
+                    "content_preview": "Стандарт по операционным системам. Ubuntu 20.04 LTS Запрещено.",
+                }
+            ]
+        },
+        support_summary={},
+    )
+    rule = VerificationRuleDefinition(
+        "VR-NRM-03",
+        "Technology choice follows selected technology standard",
+        "normative",
+        Severity.CRITICAL,
+    )
+
+    result = NormativeRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.FAILED
+    assert "ubuntu 20.04 lts" in result.diagnostics["prohibited_hits"]
 
 
 def test_structural_warnings_fallback_to_existing_solution_section() -> None:
@@ -278,6 +391,194 @@ def test_selected_document_scope_limits_rulebook_to_selected_document_roles() ->
     )
 
     assert [rule.code for rule in rules] == ["VR-TEC-01", "VR-TEC-02", "VR-TEC-04", "VR-NRM-01"]
+
+
+def test_selected_operating_system_standard_keeps_technology_rule() -> None:
+    rule_codes = VerificationRunService._selected_document_rule_codes(
+        {
+            "mode": "selected",
+            "selected_documents": [
+                {
+                    "document_id": "doc-os",
+                    "title": "Стандарт по операционным системам",
+                    "role_code": "reference_only",
+                    "document_type": "normative",
+                }
+            ],
+        }
+    )
+
+    assert "VR-NRM-03" in rule_codes
+
+
+def test_prepare_verification_context_adds_technology_rule_from_selected_content() -> None:
+    selected_scope = {
+        "mode": "selected",
+        "selected_document_ids": ["doc-os"],
+        "selected_documents": [
+            {
+                "document_id": "doc-os",
+                "title": "1003161951_6c9ab113595e4f9bb68b447c0c469010-280526-1616-142.pdf",
+                "role_code": "reference_only",
+                "document_type": "other",
+            }
+        ],
+    }
+    technical_rule = VerificationRuleDefinition(
+        "VR-TEC-01",
+        "Solution is published and ready for verification",
+        "technical",
+        Severity.CRITICAL,
+    )
+    technology_rule = VerificationRuleDefinition(
+        "VR-NRM-03",
+        "Technology choice follows selected technology standard",
+        "normative",
+        Severity.MAJOR,
+    )
+    captured: dict[str, object] = {}
+    service = VerificationRunService.__new__(VerificationRunService)
+    service.registry = SimpleNamespace(
+        list_rules=lambda: [technical_rule, technology_rule]
+    )
+    service._get_knowledge_version = lambda version_id: SimpleNamespace(
+        knowledge_version_id=version_id,
+        version_documents=[],
+    )
+    service._get_rule_lookup = lambda version_ids: {}
+    service._select_rules = lambda validation_scope, *, document_scope=None: (
+        captured.update(
+            {
+                "validation_scope": validation_scope,
+                "document_scope": document_scope,
+            }
+        )
+        or [technical_rule]
+    )
+    service._build_rule_support_context = lambda **kwargs: {
+        "required_fragments_by_role": {
+            "technology_standard": [
+                SimpleNamespace(
+                    fragment_id="fragment-os-standard",
+                    content="Ubuntu 20.04 LTS Запрещено",
+                )
+            ]
+        },
+        "support_summary": {"document_scope": "selected"},
+    }
+    run = SimpleNamespace(
+        scope_snapshot={
+            "validation_scope": "full",
+            "knowledge_version_ids": ["kv-1"],
+            "document_scope": selected_scope,
+        },
+        knowledge_version_id="kv-1",
+    )
+    solution = SimpleNamespace(generation_run=SimpleNamespace(knowledge_version=None))
+
+    _, _, _, rules, rule_groups, _, selected_document_ids = _prepare_verification_context(
+        service,
+        run=run,
+        solution=solution,
+    )
+
+    assert captured["document_scope"] == selected_scope
+    assert selected_document_ids == ["doc-os"]
+    assert [rule.code for rule in rules] == ["VR-TEC-01", "VR-NRM-03"]
+    assert rule_groups == ["normative", "technical"]
+
+
+def test_selected_document_content_hints_cover_bad_metadata() -> None:
+    fragments = [
+        SimpleNamespace(
+            fragment_id="fragment-archimate",
+            title="Файл без нормального названия",
+            content="ArchiMate 3.2 metamodel. Разрешенные элементы ArchiMate для разделов архитектуры.",
+        ),
+        SimpleNamespace(
+            fragment_id="fragment-nfr",
+            title="another-random-file.pdf",
+            content=(
+                "TOGAF technology architecture: integration API traceability, "
+                "security, availability, performance, monitoring, backup."
+            ),
+        ),
+    ]
+
+    rule_codes, role_fragments_by_role = _infer_selected_document_content_hints(fragments)
+
+    assert {"VR-NRM-02", "VR-NRM-05", "VR-NRM-06"}.issubset(rule_codes)
+    assert {"VR-STR-06", "VR-CNS-01", "VR-CNS-02", "VR-NFR-01", "VR-NFR-05"}.issubset(
+        rule_codes
+    )
+    assert role_fragments_by_role["archimate_3_2"] == [fragments[0]]
+
+
+def test_prepare_verification_context_adds_rules_from_selected_content_hints() -> None:
+    selected_scope = {
+        "mode": "selected",
+        "selected_document_ids": ["doc-random"],
+        "selected_documents": [
+            {
+                "document_id": "doc-random",
+                "title": "random-upload.pdf",
+                "role_code": "reference_only",
+                "document_type": "other",
+            }
+        ],
+    }
+    technical_rule = VerificationRuleDefinition(
+        "VR-TEC-01",
+        "Solution is published and ready for verification",
+        "technical",
+        Severity.CRITICAL,
+    )
+    archimate_rule = VerificationRuleDefinition(
+        "VR-NRM-02",
+        "ArchiMate alignment",
+        "normative",
+        Severity.MAJOR,
+    )
+    nfr_rule = VerificationRuleDefinition(
+        "VR-NFR-04",
+        "Monitoring is reflected in the solution",
+        "nfr",
+        Severity.MAJOR,
+    )
+    service = VerificationRunService.__new__(VerificationRunService)
+    service.registry = SimpleNamespace(
+        list_rules=lambda: [technical_rule, archimate_rule, nfr_rule]
+    )
+    service._get_knowledge_version = lambda version_id: SimpleNamespace(
+        knowledge_version_id=version_id,
+        version_documents=[],
+    )
+    service._get_rule_lookup = lambda version_ids: {}
+    service._select_rules = lambda validation_scope, *, document_scope=None: [technical_rule]
+    service._build_rule_support_context = lambda **kwargs: {
+        "required_fragments_by_role": {},
+        "content_rule_codes": ["VR-NRM-02", "VR-NFR-04"],
+        "support_summary": {"document_scope": "selected"},
+    }
+    run = SimpleNamespace(
+        scope_snapshot={
+            "validation_scope": "full",
+            "knowledge_version_ids": ["kv-1"],
+            "document_scope": selected_scope,
+        },
+        knowledge_version_id="kv-1",
+    )
+    solution = SimpleNamespace(generation_run=SimpleNamespace(knowledge_version=None))
+
+    _, _, _, rules, rule_groups, _, selected_document_ids = _prepare_verification_context(
+        service,
+        run=run,
+        solution=solution,
+    )
+
+    assert selected_document_ids == ["doc-random"]
+    assert [rule.code for rule in rules] == ["VR-TEC-01", "VR-NRM-02", "VR-NFR-04"]
+    assert rule_groups == ["nfr", "normative", "technical"]
 
 
 def test_prepare_verification_context_applies_selected_document_scope_to_rules() -> None:
