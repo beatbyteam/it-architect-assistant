@@ -47,6 +47,10 @@ class ContentLoadError(RuntimeError):
 HEADING_RE = re.compile(r"^(#{1,6}\s+.+|\d+(?:\.\d+)*\s+.+)$")
 ImageTextAnalyzer = Callable[[bytes, str, str | None], str]
 _EMBEDDED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+<<<<<<< HEAD
+=======
+_IMAGE_DOCUMENT_SUFFIXES = frozenset(_EMBEDDED_IMAGE_SUFFIXES)
+>>>>>>> 13932af (Updating to the correct version(hopefully))
 _MAX_EMBEDDED_IMAGE_SECTIONS = 12
 
 
@@ -81,6 +85,7 @@ SUPPORTED_DOCUMENT_SUFFIXES = {
     ".text",
     ".json",
     ".xlsx",
+    *_IMAGE_DOCUMENT_SUFFIXES,
 }
 
 MEDIA_TYPE_SUFFIXES = {
@@ -95,6 +100,10 @@ MEDIA_TYPE_SUFFIXES = {
     "application/json": ".json",
     "text/json": ".json",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/webp": ".webp",
 }
 
 
@@ -167,6 +176,8 @@ def normalize_document_payload(
         return _extract_text_payload(data, suffix=suffix)
     if suffix == ".xlsx":
         return _extract_xlsx_payload(data)
+    if suffix in _IMAGE_DOCUMENT_SUFFIXES:
+        return _extract_image_payload(uri, data, suffix=suffix, media_type=media_type, image_analyzer=image_analyzer)
     return _extract_fallback_payload(uri, data, suffix=suffix, media_type=media_type)
 
 
@@ -741,6 +752,51 @@ def _extract_xlsx_payload(data: bytes) -> NormalizedDocument:
         raise ContentLoadError(f"Failed to parse XLSX: {exc}") from exc
 
 
+def _extract_image_payload(
+    uri: str,
+    data: bytes,
+    *,
+    suffix: str,
+    media_type: str | None,
+    image_analyzer: ImageTextAnalyzer | None,
+) -> NormalizedDocument:
+    filename = Path(urlparse(uri).path or uri).name or f"image{suffix or ''}"
+    detected_media_type = _normalize_media_type(media_type) or _guess_image_media_type(filename)
+    content = _describe_embedded_image(
+        data,
+        filename=filename,
+        media_type=detected_media_type,
+        image_analyzer=image_analyzer,
+    )
+    section = StructuredSection(
+        heading="Image content",
+        content=content,
+        source_location="image:1",
+        level=1,
+        metadata={
+            "image_name": filename,
+            "media_type": detected_media_type,
+            "size_bytes": len(data),
+        },
+    )
+    canonical_text = _render_section(section)
+    return NormalizedDocument(
+        text=canonical_text,
+        content_format="image",
+        parser_name="vision-image" if image_analyzer is not None else "image-fallback",
+        sections=[section],
+        metadata={
+            "image_count": 1,
+            "embedded_image_count": 0,
+            "detected_suffix": suffix or None,
+            "detected_media_type": detected_media_type,
+            "section_map": _build_section_map([section]),
+            "canonical_text_stats": _text_stats(canonical_text),
+            "parser_warnings": [] if image_analyzer is not None else ["vision_analyzer_not_configured"],
+        },
+    )
+
+
 def _should_skip_xlsx_sheet(sheet_name: str, all_sheet_names: list[str]) -> bool:
     normalized = re.sub(r"\s+", " ", sheet_name.strip().casefold())
     if normalized in {"document title", "notice", "administrative appendix"}:
@@ -1271,4 +1327,11 @@ def _guess_media_type(suffix: str) -> str | None:
         ".txt": "text/plain",
         ".text": "text/plain",
         ".json": "application/json",
+<<<<<<< HEAD
+=======
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+>>>>>>> 13932af (Updating to the correct version(hopefully))
     }.get(suffix)

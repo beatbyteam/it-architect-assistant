@@ -3,17 +3,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings
 from app.core.exceptions import ValidationError
 from app.core.security import AuthPrincipal
 from app.db.enums import (
+    FragmentStatus,
     GenerationRunStatus,
 )
 from app.db.models.generation import (
     BusinessTask,
 )
+from app.db.models.knowledge import KnowledgeFragment, KnowledgeVersionDocument, SourceDocument
 from app.db.repositories.knowledge import KnowledgeVersionRepository
 from app.domain.services.knowledge_basis import (
     build_basis_inventory_for_version_documents,
@@ -91,6 +94,7 @@ class RetrievalService:
             int(getattr(settings, "generation_section_retrieval_limit", 0) or 0),
         )
         versions = [self.versions.get_with_documents(version_id) for version_id in requested_ids]
+        loaded_versions = [item for item in versions if item is not None]
         for version_id in requested_ids:
             result = self.knowledge_query.search_text(
                 query_text=query_text,
@@ -150,8 +154,19 @@ class RetrievalService:
             section_fragment_ids=section_fragment_ids,
             limit=limit,
         )
+        fallback_fragments = self._required_role_fallback_fragments(
+            versions=loaded_versions,
+            fragments=fragments,
+        )
+        if fallback_fragments:
+            existing_ids = {fragment.fragment_id for fragment in fragments}
+            fragments.extend(
+                fragment
+                for fragment in fallback_fragments
+                if fragment.fragment_id not in existing_ids
+            )
         coverage = self._build_coverage_summary(
-            versions=[item for item in versions if item is not None],
+            versions=loaded_versions,
             fragments=fragments,
             query_text=query_text,
         )
@@ -165,6 +180,17 @@ class RetrievalService:
                     section for section, ids in section_fragment_ids.items() if ids
                 ),
                 "diagnostics": section_diagnostics,
+            },
+            "required_role_fallback": {
+                "added_fragment_count": len(fallback_fragments),
+                "added_fragment_ids": [fragment.fragment_id for fragment in fallback_fragments],
+                "added_roles": sorted(
+                    {
+                        str(fragment.metadata.get("role_code"))
+                        for fragment in fallback_fragments
+                        if fragment.metadata.get("role_code")
+                    }
+                ),
             },
             "coverage_summary": coverage,
         }
@@ -220,6 +246,130 @@ class RetrievalService:
             if len(selected_ids) >= limit:
                 break
         return [merged_fragments[fragment_id] for fragment_id in selected_ids[:limit]]
+
+    def _required_role_fallback_fragments(
+        self,
+        *,
+        versions: list[Any],
+        fragments: list[RetrievedFragment],
+        per_role_limit: int = 1,
+    ) -> list[RetrievedFragment]:
+        version_documents = [
+            doc
+            for version in versions
+            for doc in list(getattr(version, "version_documents", []) or [])
+        ]
+        required_roles = sorted(
+            {
+                str(getattr(item, "role_code", "") or "")
+                for item in version_documents
+                if bool(getattr(item, "required_flag", False)) and getattr(item, "role_code", None)
+            }
+        )
+        retrieved_roles = {
+            str(fragment.metadata.get("role_code") or "reference_only") for fragment in fragments
+        }
+        missing_roles = [role for role in required_roles if role not in retrieved_roles]
+        if not missing_roles:
+            return []
+
+        fallback: list[RetrievedFragment] = []
+        seen_fragment_ids = {fragment.fragment_id for fragment in fragments}
+        for role_code in missing_roles:
+            role_fragments = self._load_required_role_fragments(
+                versions=versions,
+                role_code=role_code,
+                limit=per_role_limit,
+            )
+            for fragment in role_fragments:
+                if fragment.fragment_id in seen_fragment_ids:
+                    continue
+                seen_fragment_ids.add(fragment.fragment_id)
+                fallback.append(fragment)
+        return fallback
+
+    def _load_required_role_fragments(
+        self,
+        *,
+        versions: list[Any],
+        role_code: str,
+        limit: int,
+    ) -> list[RetrievedFragment]:
+        loaded: list[RetrievedFragment] = []
+        for version in versions:
+            version_id = str(getattr(version, "knowledge_version_id", "") or "")
+            document_ids = [
+                str(getattr(item, "document_id", "") or "")
+                for item in list(getattr(version, "version_documents", []) or [])
+                if bool(getattr(item, "required_flag", False))
+                and str(getattr(item, "role_code", "") or "") == role_code
+            ]
+            document_ids = [item for item in document_ids if item]
+            if not version_id or not document_ids:
+                continue
+            statement = (
+                select(KnowledgeFragment)
+                .join(
+                    KnowledgeVersionDocument,
+                    (KnowledgeVersionDocument.knowledge_version_id == KnowledgeFragment.knowledge_version_id)
+                    & (KnowledgeVersionDocument.document_id == KnowledgeFragment.document_id),
+                )
+                .where(
+                    KnowledgeFragment.knowledge_version_id == version_id,
+                    KnowledgeFragment.document_id.in_(document_ids),
+                    KnowledgeVersionDocument.role_code == role_code,
+                    KnowledgeVersionDocument.required_flag.is_(True),
+                    KnowledgeFragment.status == FragmentStatus.ACTIVE,
+                )
+                .options(
+                    selectinload(KnowledgeFragment.document).selectinload(SourceDocument.source)
+                )
+                .order_by(KnowledgeFragment.created_at.asc(), KnowledgeFragment.fragment_id.asc())
+                .limit(max(1, int(limit or 1)))
+            )
+            rows = list(self.session.scalars(statement))
+            for row in rows:
+                loaded.append(self._retrieved_fragment_from_required_role(row, role_code=role_code))
+        return loaded
+
+    @staticmethod
+    def _retrieved_fragment_from_required_role(
+        fragment: KnowledgeFragment,
+        *,
+        role_code: str,
+    ) -> RetrievedFragment:
+        document = getattr(fragment, "document", None)
+        source = getattr(document, "source", None)
+        metadata = {
+            **dict(getattr(fragment, "fragment_metadata", None) or {}),
+            "role_code": role_code,
+            "required_flag": True,
+            "document_title": getattr(document, "title", None),
+            "document_type": getattr(
+                getattr(document, "document_type", None),
+                "value",
+                getattr(document, "document_type", None),
+            ),
+            "version_label": getattr(document, "version_label", None),
+            "source_name": getattr(source, "name", None),
+            "source_id": str(getattr(source, "source_id", "") or "") or None,
+            "source_location": fragment.source_location,
+            "selection_reason": "required_role_fallback",
+            "retrieval_rank": 0,
+        }
+        return RetrievedFragment(
+            fragment_id=str(fragment.fragment_id),
+            document_id=str(fragment.document_id),
+            title=fragment.title,
+            content=fragment.content,
+            fragment_type=getattr(fragment.fragment_type, "value", fragment.fragment_type),
+            source_location=fragment.source_location,
+            score=0.0,
+            lexical_score=0.0,
+            vector_score=0.0,
+            keyword_score=0.0,
+            metadata=metadata,
+        )
 
     def is_coverage_sufficient(self, coverage: dict[str, Any]) -> bool:
         if int(coverage.get("retrieved_fragment_count") or 0) < 2:

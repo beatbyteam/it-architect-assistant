@@ -45,6 +45,13 @@ SUPPORTED_DOCUMENT_SUFFIXES = {
     ".text",
     ".json",
     ".xlsx",
+<<<<<<< HEAD
+=======
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".webp",
+>>>>>>> 13932af (Updating to the correct version(hopefully))
 }
 
 _AUTO_DIRECTORY_SOURCE_TYPES = {
@@ -218,7 +225,11 @@ def ensure_supported_document_target(
     if allow_suffixless_remote and not suffix and urlparse(uri).scheme in {"http", "https"}:
         return
     raise SourceSecurityError(
+<<<<<<< HEAD
         "Only PDF, DOCX, ODT, XLSX, ArchiMate, HTML, Markdown, plain-text and JSON documents are supported",
+=======
+        "Only PDF, DOCX, ODT, XLSX, ArchiMate, HTML, Markdown, plain-text, JSON and PNG/JPG/WebP images are supported",
+>>>>>>> 13932af (Updating to the correct version(hopefully))
         error_code="UNSUPPORTED_DOCUMENT_TYPE",
         details={"uri": uri, "suffix": suffix or None},
     )
