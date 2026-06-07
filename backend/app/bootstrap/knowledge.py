@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy.orm import Session
 
 from app.bootstrap.bundles import import_knowledge_bundle, system_bundle_principal
@@ -9,10 +11,18 @@ from app.db.enums import KnowledgeVersionStatus
 from app.domain.services.knowledge_bases import KnowledgeBaseService
 from app.domain.services.knowledge_core import KnowledgeUpdateService, KnowledgeVersionService
 
+_DEMO_KNOWLEDGE_BUNDLE_PATH = (
+    Path(__file__).resolve().parent / "knowledge_bundle" / "demo_knowledge_bundle.json"
+)
+
 
 def _ensure_bootstrap_principal(session: Session):
     del session
     return system_bundle_principal()
+
+
+def default_demo_knowledge_bundle_manifest_uri() -> str:
+    return str(_DEMO_KNOWLEDGE_BUNDLE_PATH.resolve())
 
 
 def bootstrap_knowledge_baseline(

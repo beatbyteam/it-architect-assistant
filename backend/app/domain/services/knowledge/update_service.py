@@ -228,6 +228,22 @@ class KnowledgeUpdateService:
         except TypeError:
             return getter()
 
+    @staticmethod
+    def _assert_base_update_allowed(
+        base: KnowledgeBase,
+        principal: AuthPrincipal | None,
+        *,
+        operation: str,
+    ) -> None:
+        if (
+            getattr(base.kind, "value", base.kind) == KnowledgeBaseKind.SYSTEM_MANDATORY.value
+            and getattr(principal, "account_type", None) != AccountType.SERVICE
+        ):
+            raise ValidationError(
+                f"System mandatory knowledge base is immutable for user operation: {operation}",
+                error_code="SYSTEM_KNOWLEDGE_BASE_IMMUTABLE",
+            )
+
     def _list_visible_bases(self, principal: AuthPrincipal | None = None) -> list[Any]:
         base_service = self._make_base_service()
         bases_repo = getattr(base_service, "bases", None)
@@ -711,6 +727,7 @@ class KnowledgeUpdateService:
                     "knowledge_base_id is required when no knowledge base is selected",
                     error_code="KNOWLEDGE_BASE_REQUIRED",
                 )
+        self._assert_base_update_allowed(base, principal, operation="start knowledge update")
         request_payload = {
             "knowledge_base_id": str(base.knowledge_base_id),
             "run_type": payload.run_type.value,

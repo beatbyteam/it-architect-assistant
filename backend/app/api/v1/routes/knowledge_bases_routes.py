@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from app.bootstrap.bundles import system_bundle_principal
+from app.bootstrap.knowledge import default_demo_knowledge_bundle_manifest_uri
+from app.db.enums import KnowledgeBaseKind
+
 from .knowledge_routes_common import (
     APIRouter,
     AuthPrincipal,
@@ -192,7 +196,37 @@ def start_base_sync(
     reason: str | None = Query(default=None),
     _guard: AuthPrincipal = UserDep,
 ):
+    base_service = KnowledgeBaseService(session)
+    base = base_service.get_base(knowledge_base_id, principal)
     service = KnowledgeUpdateService(session, settings)
+    if base.kind == KnowledgeBaseKind.SYSTEM_MANDATORY:
+        result = import_knowledge_bundle(
+            session,
+            manifest_uri=default_demo_knowledge_bundle_manifest_uri(),
+            knowledge_base_id=str(base.knowledge_base_id),
+            principal=system_bundle_principal(),
+            start_update=True,
+            activate_if_validated=True,
+            execute_update_inline=bool(execute_inline),
+            reason=reason or "manual_sync",
+            requested_by=principal_requested_by(principal),
+        )
+        run_id = result.update_run_id
+        if run_id is None:
+            latest_runs = service.list_run_responses(
+                limit=1,
+                knowledge_base_id=str(base.knowledge_base_id),
+                principal=principal,
+            )
+            if not latest_runs:
+                raise ValidationError(
+                    "System knowledge base sync did not start",
+                    error_code="KNOWLEDGE_UPDATE_NOT_STARTED",
+                )
+            return KnowledgeUpdateRunResponse.model_validate(latest_runs[0])
+        return KnowledgeUpdateRunResponse.model_validate(
+            service.get_run_response(str(run_id), principal)
+        )
     run = service.start_manual_run(
         knowledge_base_id=knowledge_base_id,
         source_scope=SourceScope.ALL,
