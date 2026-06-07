@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -15,7 +16,15 @@ from app.bootstrap.bundles import (
 )
 from app.core.exceptions import ValidationError
 from app.core.security import AuthPrincipal
-from app.db.enums import AccountType, CheckResultStatus, Severity, SourceType
+from app.db.enums import (
+    AccountType,
+    CheckResultStatus,
+    KnowledgeBaseKind,
+    Severity,
+    SourceScope,
+    SourceType,
+    UpdateRunType,
+)
 from app.domain.services.verification.rule_executors import (
     ConsistencyRulesExecutor,
     VerificationSupportContext,
@@ -261,6 +270,72 @@ def test_import_bundle_route_coerces_missing_execute_inline_to_false(monkeypatch
 
     assert captured["execute_update_inline"] is False
     assert response.manifest_uri == "file:///tmp/bundle.json"
+
+
+def test_system_base_sync_route_imports_demo_bundle_and_starts_service_update(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    principal = _principal()
+    system_base = SimpleNamespace(
+        knowledge_base_id="kb-system",
+        kind=KnowledgeBaseKind.SYSTEM_MANDATORY,
+    )
+
+    class _BaseService:
+        def __init__(self, session) -> None:
+            self.session = session
+
+        def get_base(self, knowledge_base_id: str, principal=None):
+            return system_base
+
+    class _UpdateService:
+        def __init__(self, session, settings) -> None:
+            self.session = session
+            self.settings = settings
+
+        def get_run_response(self, update_run_id: str, principal=None):
+            return {
+                "update_run_id": update_run_id,
+                "knowledge_base_id": "kb-system",
+                "run_type": UpdateRunType.MANUAL,
+                "status": "queued",
+                "current_stage": "queued",
+                "source_scope": SourceScope.SELECTED,
+                "selected_source_ids": ["src-1"],
+                "requested_by": principal.login if principal is not None else None,
+                "reason": "manual_sync",
+                "started_at": datetime.now(UTC),
+            }
+
+    def _import_bundle_stub(session, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(update_run_id="run-system-1")
+
+    monkeypatch.setattr(knowledge_bases_routes, "KnowledgeBaseService", _BaseService)
+    monkeypatch.setattr(knowledge_bases_routes, "KnowledgeUpdateService", _UpdateService)
+    monkeypatch.setattr(
+        knowledge_bases_routes,
+        "default_demo_knowledge_bundle_manifest_uri",
+        lambda: "file:///demo_knowledge_bundle.json",
+    )
+    monkeypatch.setattr(knowledge_bases_routes, "import_knowledge_bundle", _import_bundle_stub)
+
+    response = knowledge_bases_routes.start_base_sync(
+        knowledge_base_id="kb-system",
+        session=object(),
+        settings=SimpleNamespace(),
+        principal=principal,
+        execute_inline=False,
+        reason="manual_sync",
+        _guard=principal,
+    )
+
+    assert captured["manifest_uri"] == "file:///demo_knowledge_bundle.json"
+    assert captured["knowledge_base_id"] == "kb-system"
+    assert captured["activate_if_validated"] is True
+    assert captured["execute_update_inline"] is False
+    assert captured["requested_by"] == principal.login
+    assert captured["principal"].account_type == AccountType.SERVICE
+    assert response.update_run_id == "run-system-1"
 
 
 def test_find_existing_source_does_not_fallback_to_name_only() -> None:

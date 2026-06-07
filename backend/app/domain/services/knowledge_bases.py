@@ -230,6 +230,7 @@ class KnowledgeBaseService:
         *,
         include_archived: bool = False,
     ) -> list[dict[str, Any]]:
+        self.ensure_system_bases(principal)
         selection = self.selections.get_for_scope(_selection_scope_for_principal(principal))
         effective_scope = self.get_existing_effective_scope(principal)
         selected_base_id = (

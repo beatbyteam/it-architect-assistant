@@ -26,6 +26,17 @@ def _service_principal(login: str = "svc.worker") -> AuthPrincipal:
     )
 
 
+def _user_principal(login: str = "local.user") -> AuthPrincipal:
+    return AuthPrincipal(
+        user_id=None,
+        login=login,
+        display_name="Local User",
+        account_type=AccountType.HUMAN,
+        role_codes=["USER"],
+        is_authenticated=True,
+    )
+
+
 def test_app_main_import_succeeds_without_optional_worker_dependencies() -> None:
     module = importlib.import_module("app.main")
 
@@ -152,6 +163,49 @@ def test_ensure_system_bases_creates_only_mandatory_base() -> None:
     assert created_selections[0].selected_knowledge_base_id == mandatory.knowledge_base_id
 
 
+def test_list_payloads_ensures_system_base_exists_before_listing() -> None:
+    principal = _service_principal()
+    base = KnowledgeBase(
+        knowledge_base_id="kb-mandatory",
+        code="mandatory_architecture_baseline",
+        name="Mandatory Architecture Baseline",
+        kind=KnowledgeBaseKind.SYSTEM_MANDATORY,
+        status=KnowledgeBaseStatus.ACTIVE,
+        owner_user_id=None,
+    )
+    ensured: list[AuthPrincipal | None] = []
+
+    service = KnowledgeBaseService.__new__(KnowledgeBaseService)
+    service.session = SimpleNamespace()
+    service.ensure_system_bases = lambda principal=None: ensured.append(principal)
+    service._assert_base_access = lambda _base_obj, principal=None: None
+    service._is_base_accessible = lambda _base_obj, principal=None: True
+    service._base_stats = lambda _base_obj: {}
+    service.bases = SimpleNamespace(
+        list_visible=lambda include_archived=False, owner_user_id=None: [base]
+    )
+    service.selections = SimpleNamespace(get_for_scope=lambda scope: None)
+    service.versions = SimpleNamespace(
+        get=lambda knowledge_version_id: None,
+        get_active=lambda knowledge_base_id: None,
+        list_visible=lambda knowledge_base_id: [],
+    )
+    service.sources = SimpleNamespace(list_for_base=lambda knowledge_base_id: [])
+    service.documents = SimpleNamespace(
+        list_for_source=lambda source_id, include_archived=False: []
+    )
+    service.update_runs = SimpleNamespace(
+        get_latest_finished=lambda knowledge_base_id: None,
+        list_recent=lambda limit, knowledge_base_id: [],
+    )
+
+    items = service.list_payloads(principal)
+
+    assert ensured == [principal]
+    assert len(items) == 1
+    assert items[0]["code"] == "mandatory_architecture_baseline"
+
+
 def test_select_user_base_uses_service_actor_key_for_traceability() -> None:
     principal = _service_principal()
     base = KnowledgeBase(
@@ -187,6 +241,46 @@ def test_select_user_base_uses_service_actor_key_for_traceability() -> None:
 
     assert resolved.updated_by_user_id == "svc.worker"
     assert audit.record.call_args.kwargs["actor_user_id"] == "svc.worker"
+
+
+def test_knowledge_update_rejects_user_run_for_system_mandatory_base() -> None:
+    principal = _user_principal()
+    base = KnowledgeBase(
+        knowledge_base_id="kb-mandatory",
+        code="mandatory_architecture_baseline",
+        name="Mandatory Architecture Baseline",
+        kind=KnowledgeBaseKind.SYSTEM_MANDATORY,
+        status=KnowledgeBaseStatus.ACTIVE,
+        owner_user_id=None,
+    )
+    service = KnowledgeUpdateService.__new__(KnowledgeUpdateService)
+    service._get_base = lambda knowledge_base_id, principal=None: base
+
+    with pytest.raises(ValidationError) as exc_info:
+        service._create_run(
+            payload=SimpleNamespace(
+                knowledge_base_id="kb-mandatory",
+                run_type=SimpleNamespace(value="manual"),
+                source_scope=SimpleNamespace(value="all"),
+                selected_source_ids=[],
+                document_ids=[],
+                removed_document_ids=[],
+                force_reindex_all_in_scope=False,
+                force_reindex_document_ids=[],
+                target_embedding_profile=None,
+                reason="manual_sync",
+                auto_activate_if_validated=False,
+                idempotency_key=None,
+                requested_by=principal.login,
+                correlation_id="corr-1",
+                execute_inline=False,
+            ),
+            initiator_user_id=principal.login,
+            principal=principal,
+            execute_inline=False,
+        )
+
+    assert exc_info.value.error_code == "SYSTEM_KNOWLEDGE_BASE_IMMUTABLE"
 
 
 def test_select_user_base_rejects_change_while_generation_is_running() -> None:
