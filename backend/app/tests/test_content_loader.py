@@ -4,11 +4,16 @@ import base64
 import io
 import zipfile
 
+import pytest
 from docx import Document as DocxDocument
 from openpyxl import Workbook
 
 from app.integrations.knowledge import content_loader
-from app.integrations.knowledge.content_loader import normalize_document_payload
+from app.integrations.knowledge.content_loader import (
+    ContentLoadError,
+    normalize_document_payload,
+    validate_uploaded_document_payload,
+)
 
 PDF_SAMPLE_BASE64 = "JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0NvbnRlbnRzIDcgMCBSIC9NZWRpYUJveCBbIDAgMCA1OTUuMjc1NiA4NDEuODg5OCBdIC9QYXJlbnQgNiAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNCAwIG9iago8PAovUGFnZU1vZGUgL1VzZU5vbmUgL1BhZ2VzIDYgMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVuZG9iago1IDAgb2JqCjw8Ci9BdXRob3IgKGFub255bW91cykgL0NyZWF0aW9uRGF0ZSAoRDoyMDI2MDQwMzA1Mzk1NiswMCcwMCcpIC9DcmVhdG9yIChhbm9ueW1vdXMpIC9LZXl3b3JkcyAoKSAvTW9kRGF0ZSAoRDoyMDI2MDQwMzA1Mzk1NiswMCcwMCcpIC9Qcm9kdWNlciAoUmVwb3J0TGFiIFBERiBMaWJyYXJ5IC0gXChvcGVuc291cmNlXCkpIAogIC9TdWJqZWN0ICh1bnNwZWNpZmllZCkgL1RpdGxlICh1bnRpdGxlZCkgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9iago2IDAgb2JqCjw8Ci9Db3VudCAxIC9LaWRzIFsgMyAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5kb2JqCjcgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9MZW5ndGggMTU3Cj4+CnN0cmVhbQpHYXJXb1ltUz81Jjs5Iis6W3NjZCZUOU85KlJWMipbK0gwY2ledEMyT2g5aUspcTtfayMsVzciJ0FPRk1HTE9IIVI8cTQ4a1FORishXjNkOkN1Ii0hKCRBXSYqODMxdEEoLFVSMjheWFdGZDRNIjJyaDo8O3RQc21ybUJoX2w+XjBXO0huaT9EOzptNE1iY0Z0NUV0TDxkKj0jZ34+ZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgOAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwNjEgMDAwMDAgbiAKMDAwMDAwMDA5MiAwMDAwMCBuIAowMDAwMDAwMTk5IDAwMDAwIG4gCjAwMDAwMDA0MDIgMDAwMDAgbiAKMDAwMDAwMDQ3MCAwMDAwMCBuIAowMDAwMDAwNzMxIDAwMDAwIG4gCjAwMDAwMDA3OTAgMDAwMDAgbiAKdHJhaWxlcgo8PAovSUQgCls8YTE3ZTM3N2ZiMWJjNjk2YzljZTMxMjVjNjc2NzBlNzM+PGExN2UzNzdmYjFiYzY5NmM5Y2UzMTI1YzY3NjcwZTczPl0KJSBSZXBvcnRMYWIgZ2VuZXJhdGVkIFBERiBkb2N1bWVudCAtLSBkaWdlc3QgKG9wZW5zb3VyY2UpCgovSW5mbyA1IDAgUgovUm9vdCA0IDAgUgovU2l6ZSA4Cj4+CnN0YXJ0eHJlZgoxMDM3CiUlRU9GCg=="
 
@@ -277,3 +282,23 @@ def test_normalize_binary_unknown_extension_uses_binary_fallback() -> None:
     assert payload.parser_name == "binary-fallback"
     assert payload.metadata["fallback_used"] is True
     assert "Binary document fallback" in payload.text
+
+
+def test_validate_uploaded_document_payload_rejects_unknown_extension() -> None:
+    with pytest.raises(ContentLoadError):
+        validate_uploaded_document_payload("catalog.csv", b"sku,name\n1,Router")
+
+
+def test_validate_uploaded_document_payload_rejects_parser_fallback(monkeypatch) -> None:
+    def _raise_parse_error(_handle):
+        raise RuntimeError("broken xref table")
+
+    monkeypatch.setattr(content_loader, "PdfReader", _raise_parse_error)
+
+    with pytest.raises(ContentLoadError):
+        validate_uploaded_document_payload("catalog.pdf", b"%PDF-1.4 broken")
+
+
+def test_validate_uploaded_document_payload_rejects_invalid_json() -> None:
+    with pytest.raises(ContentLoadError):
+        validate_uploaded_document_payload("config.json", b"{not-json")

@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from app.db.enums import (
     Criticality,
     DocumentType,
+    KnowledgeUpdateStatus,
     SourceDocumentStatus,
     SourceScope,
     SourceStatus,
     SourceType,
 )
 from app.db.models.knowledge import KnowledgeSource, SourceDocument
+from app.domain.services.knowledge.update_diffing import (
+    classify_document_error_code,
+    user_friendly_knowledge_error_message,
+)
 from app.domain.services.knowledge.update_service import KnowledgeUpdateService
 from app.integrations.knowledge.source_readers import (
     RepositoryReader,
@@ -127,3 +134,65 @@ def test_get_run_status_payload_does_not_create_candidate_version_when_missing()
     payload = KnowledgeUpdateService.get_run_status_payload(service, "run-1")
 
     assert payload["source_snapshot"] == {"sources": [{"source_id": "src-1"}], "captured_at": "now"}
+
+
+def test_stale_update_run_fails_when_worker_is_unavailable() -> None:
+    service = KnowledgeUpdateService.__new__(KnowledgeUpdateService)
+    service._has_live_worker = lambda: False
+    service._WORKER_INTERRUPTION_GRACE_SEC = 0
+    service.session = SimpleNamespace(
+        add=lambda item: None,
+        commit=lambda: None,
+        refresh=lambda item: None,
+    )
+    service.versions = SimpleNamespace(get_by_update_run_id=lambda update_run_id: None)
+    service.audit = SimpleNamespace(record=Mock())
+    service._record_operation_step = Mock()
+    service._revoke_update_task = Mock()
+    started_at = datetime.now(UTC) - timedelta(minutes=5)
+    run = SimpleNamespace(
+        update_run_id="run-stale",
+        status=KnowledgeUpdateStatus.RUNNING,
+        current_stage="indexing",
+        started_at=started_at,
+        finished_at=None,
+        duration_sec=None,
+        summary={
+            "quality_summary": {
+                "active_stage": {
+                    "stage": "indexing",
+                    "updated_at": started_at.isoformat(),
+                }
+            }
+        },
+        initiator_user_id="architect",
+        correlation_id="corr-1",
+    )
+
+    recovered = KnowledgeUpdateService._maybe_fail_interrupted_run(service, run)
+
+    assert recovered.status == KnowledgeUpdateStatus.FAILED
+    assert recovered.current_stage == "failed"
+    assert recovered.summary["error_code"] == "KNOWLEDGE_UPDATE_WORKER_INTERRUPTED"
+    assert "прервано" in recovered.summary["quality_summary"]["active_stage"]["message"]
+
+
+def test_knowledge_error_messages_are_classified_for_user_display() -> None:
+    assert (
+        classify_document_error_code("Connection reset by peer", default="FETCH_FAILED")
+        == "SOURCE_CONNECTION_INTERRUPTED"
+    )
+    assert (
+        classify_document_error_code("Failed to parse PDF: bad zip file", default="PARSE_FAILED")
+        == "DOCUMENT_PARSE_FAILED"
+    )
+    assert "ссылка" in user_friendly_knowledge_error_message(
+        "SOURCE_CONNECTION_INTERRUPTED",
+        "Connection reset by peer",
+        stage="fetching",
+    ).lower()
+    assert "файл" in user_friendly_knowledge_error_message(
+        "DOCUMENT_PARSE_FAILED",
+        "Failed to parse PDF",
+        stage="parsing",
+    ).lower()

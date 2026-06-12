@@ -47,6 +47,8 @@ REQUIRED_BASIS_REQUIREMENTS: tuple[BasisRequirement, ...] = (
             "selected technology standard",
             "technology",
             "технолог",
+            "радар",
+            "стандарт",
             "операцион",
             "ubuntu",
             "linux",
@@ -81,6 +83,7 @@ KNOWN_BASIS_ROLE_CODES: frozenset[str] = frozenset(
     requirement.role_code for requirement in ALL_BASIS_REQUIREMENTS
 )
 REFERENCE_ONLY_ROLE_CODE = "reference_only"
+SYSTEM_MANDATORY_BASE_KIND_VALUE = "system_mandatory"
 _BUNDLE_ROLE_CODE_METADATA_KEY = "bundle_role_code"
 _BUNDLE_REQUIRED_FLAG_METADATA_KEY = "bundle_required_flag"
 
@@ -132,6 +135,31 @@ def _source_criticality_value(document: Any) -> str | None:
     if raw is None:
         return None
     return str(getattr(raw, "value", raw))
+
+
+def _knowledge_base_kind_value(version: Any) -> str | None:
+    base = getattr(version, "knowledge_base", None)
+    raw = getattr(base, "kind", None)
+    if raw is None:
+        return None
+    return str(getattr(raw, "value", raw))
+
+
+def requires_catalog_basis_for_versions(versions: Iterable[Any]) -> bool:
+    """Use the hard-coded MVP package catalog only for the system mandatory base.
+
+    Older call sites sometimes pass simple test doubles without a knowledge base kind; those
+    keep the legacy strict behavior so existing mandatory-baseline checks remain explicit.
+    """
+
+    kinds = [
+        kind
+        for version in versions
+        if (kind := _knowledge_base_kind_value(version)) is not None
+    ]
+    if not kinds:
+        return True
+    return any(kind == SYSTEM_MANDATORY_BASE_KIND_VALUE for kind in kinds)
 
 
 def normalize_text(value: str | None) -> str:
@@ -186,7 +214,40 @@ def resolve_basis_assignment(item: Any) -> tuple[str, bool]:
     return requirement.role_code, _source_criticality_value(document) == Criticality.REQUIRED.value
 
 
-def build_basis_inventory(items: Iterable[Any]) -> BasisInventory:
+def _requirement_display_name(role_code: str, fallback: str) -> str:
+    for requirement in ALL_BASIS_REQUIREMENTS:
+        if requirement.role_code == role_code:
+            return requirement.display_name
+    if role_code == REFERENCE_ONLY_ROLE_CODE:
+        return fallback
+    return role_code.replace("_", " ")
+
+
+def resolve_scoped_basis_assignment(item: Any) -> tuple[str, bool]:
+    document = getattr(item, "document", item)
+    explicit_role_code = _version_document_value(item, "role_code")
+    explicit_required_flag = _version_document_value(item, "required_flag")
+    role_code, required_flag = resolve_basis_assignment(item)
+
+    if not explicit_role_code or str(explicit_role_code) == REFERENCE_ONLY_ROLE_CODE:
+        requirement = classify_basis_requirement(document)
+        if requirement is not None:
+            role_code = requirement.role_code
+
+    if explicit_required_flag is not None:
+        required_flag = bool(explicit_required_flag)
+    elif _source_criticality_value(document) == Criticality.REQUIRED.value:
+        required_flag = True
+
+    return role_code, required_flag
+
+
+def build_basis_inventory(
+    items: Iterable[Any],
+    *,
+    require_catalog_packages: bool = True,
+    include_reference_documents: bool = False,
+) -> BasisInventory:
     descriptors: list[BasisDocumentDescriptor] = []
     matched_roles: set[str] = set()
 
@@ -194,10 +255,15 @@ def build_basis_inventory(items: Iterable[Any]) -> BasisInventory:
         if item is None:
             continue
         document = getattr(item, "document", item)
-        role_code, required_flag = resolve_basis_assignment(item)
-        if role_code not in KNOWN_BASIS_ROLE_CODES:
+        role_code, required_flag = (
+            resolve_basis_assignment(item)
+            if require_catalog_packages
+            else resolve_scoped_basis_assignment(item)
+        )
+        if role_code not in KNOWN_BASIS_ROLE_CODES and not include_reference_documents:
             continue
-        matched_roles.add(role_code)
+        if role_code in KNOWN_BASIS_ROLE_CODES:
+            matched_roles.add(role_code)
         descriptors.append(
             BasisDocumentDescriptor(
                 document_id=str(_document_value(document, "document_id"))
@@ -215,18 +281,35 @@ def build_basis_inventory(items: Iterable[Any]) -> BasisInventory:
 
     required_packages: list[dict[str, Any]] = []
     missing_required_packages: list[str] = []
-    for requirement in REQUIRED_BASIS_REQUIREMENTS:
-        present = requirement.role_code in matched_roles
-        required_packages.append(
-            {
-                "role_code": requirement.role_code,
-                "display_name": requirement.display_name,
-                "required": True,
-                "present": present,
-            }
-        )
-        if not present:
-            missing_required_packages.append(requirement.role_code)
+    if require_catalog_packages:
+        for requirement in REQUIRED_BASIS_REQUIREMENTS:
+            present = requirement.role_code in matched_roles
+            required_packages.append(
+                {
+                    "role_code": requirement.role_code,
+                    "display_name": requirement.display_name,
+                    "required": True,
+                    "present": present,
+                }
+            )
+            if not present:
+                missing_required_packages.append(requirement.role_code)
+    else:
+        for descriptor in descriptors:
+            if not descriptor.required_flag:
+                continue
+            required_packages.append(
+                {
+                    "role_code": descriptor.role_code,
+                    "display_name": _requirement_display_name(
+                        descriptor.role_code, descriptor.title
+                    ),
+                    "required": True,
+                    "present": True,
+                    "document_id": descriptor.document_id,
+                    "title": descriptor.title,
+                }
+            )
 
     optional_reference_present = any(
         req.role_code in matched_roles for req in REFERENCE_BASIS_REQUIREMENTS
@@ -240,5 +323,14 @@ def build_basis_inventory(items: Iterable[Any]) -> BasisInventory:
     )
 
 
-def build_basis_inventory_for_version_documents(version_documents: Iterable[Any]) -> BasisInventory:
-    return build_basis_inventory(version_documents)
+def build_basis_inventory_for_version_documents(
+    version_documents: Iterable[Any],
+    *,
+    require_catalog_packages: bool = True,
+    include_reference_documents: bool = False,
+) -> BasisInventory:
+    return build_basis_inventory(
+        version_documents,
+        require_catalog_packages=require_catalog_packages,
+        include_reference_documents=include_reference_documents,
+    )

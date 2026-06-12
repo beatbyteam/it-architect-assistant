@@ -41,11 +41,43 @@ export function userErrorText(value?: string | null) {
   const normalized = value.trim().toLowerCase();
   if (normalized.includes('file too large')) return 'Файл слишком большой для загрузки.';
   if (normalized.includes('at least one file must be provided')) return 'Выберите хотя бы один файл.';
+  if (
+    normalized.includes('unsupported or damaged')
+    || normalized.includes('unsupported document')
+    || (normalized.includes('unsupported') && normalized.includes('format'))
+  ) return 'Файл не загружен: формат не поддерживается или файл повреждён.';
+  if (
+    normalized.includes('failed to parse')
+    || normalized.includes('failed to read')
+    || normalized.includes('fallback')
+    || normalized.includes('unreadable')
+    || normalized.includes('damaged')
+    || normalized.includes('corrupt')
+    || normalized.includes('no extractable text')
+    || normalized.includes('bad zip file')
+    || normalized.includes('not a zip file')
+  ) return 'Файл не удалось разобрать. Проверьте формат и целостность файла.';
+  if (
+    normalized.includes('httpstatuserror')
+    || normalized.includes('client error')
+    || normalized.includes('server error')
+    || /\b(?:4\d\d|5\d\d)\b/.test(normalized)
+  ) return 'Ссылка недоступна или вернула ошибку. Проверьте URL и права доступа.';
   if (normalized.includes('no such file') || normalized.includes('not found')) return 'Файл или источник не найден.';
   if (normalized.includes('permission denied')) return 'Нет доступа к файлу или источнику.';
   if (normalized.includes('timed out') || normalized.includes('timeout')) return 'Истекло время ожидания ответа источника.';
   if (normalized.includes('connection refused')) return 'Источник отклонил подключение.';
+  if (
+    normalized.includes('connection reset')
+    || normalized.includes('network is unreachable')
+    || normalized.includes('temporary failure')
+    || normalized.includes('name resolution')
+    || normalized.includes('could not resolve')
+    || normalized.includes('remote disconnected')
+    || normalized.includes('server disconnected')
+  ) return 'Соединение с источником было прервано или сеть недоступна.';
   if (normalized.includes('canceled by user')) return 'Операция остановлена пользователем.';
+  if (normalized.includes('worker') && (normalized.includes('interrupted') || normalized.includes('lost') || normalized.includes('unavailable'))) return 'Обновление базы знаний прервано: worker/Celery недоступен.';
   return value;
 }
 

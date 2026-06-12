@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -72,10 +73,130 @@ def classify_document_error_code(message: str, *, default: str) -> str:
     lowered = (message or "").lower()
     if "exceeds allowed limit" in lowered or ("size" in lowered and "limit" in lowered):
         return "DOCUMENT_SIZE_LIMIT_EXCEEDED"
-    if "unsupported" in lowered and "document" in lowered:
+    if "unsupported" in lowered and (
+        "document" in lowered or "format" in lowered or "type" in lowered
+    ):
         return "UNSUPPORTED_DOCUMENT_TYPE"
     if "forbidden" in lowered and "host" in lowered:
         return "SOURCE_URL_FORBIDDEN_HOST"
     if "forbidden" in lowered and "network" in lowered:
         return "SOURCE_URL_FORBIDDEN_NETWORK"
+    if any(
+        marker in lowered
+        for marker in (
+            "timed out",
+            "timeout",
+            "connection refused",
+            "connection reset",
+            "network is unreachable",
+            "temporary failure",
+            "name resolution",
+            "could not resolve",
+            "connection aborted",
+            "connection error",
+            "remote disconnected",
+            "server disconnected",
+            "read error",
+        )
+    ):
+        return "SOURCE_CONNECTION_INTERRUPTED"
+    if (
+        "httpstatuserror" in lowered
+        or "client error" in lowered
+        or "server error" in lowered
+        or re.search(r"\b(?:4\d\d|5\d\d)\b", lowered)
+    ):
+        return "SOURCE_UNAVAILABLE"
+    if any(
+        marker in lowered
+        for marker in (
+            "failed to parse",
+            "failed to read",
+            "fallback",
+            "unreadable",
+            "damaged",
+            "corrupt",
+            "invalid document",
+            "no extractable text",
+            "empty document",
+            "bad zip file",
+            "not a zip file",
+            "malformed",
+        )
+    ):
+        return "DOCUMENT_PARSE_FAILED"
     return default
+
+
+def _message_has_cyrillic(message: str) -> bool:
+    return any("а" <= char.lower() <= "я" or char.lower() == "ё" for char in message)
+
+
+def user_friendly_knowledge_error_message(
+    error_code: str | None,
+    message: str | None = None,
+    *,
+    stage: str | None = None,
+) -> str:
+    code = str(error_code or "").strip().upper()
+    raw_message = str(message or "").strip()
+    normalized = raw_message.lower()
+    if code == "CANCELED_BY_USER":
+        return "Обновление базы знаний остановлено пользователем."
+    if code in {"DOCUMENT_SIZE_LIMIT_EXCEEDED", "SOURCE_DOCUMENT_SIZE_LIMIT_EXCEEDED"}:
+        return "Файл слишком большой для загрузки в базу знаний."
+    if code in {"SOURCE_URL_FORBIDDEN_HOST", "SOURCE_URL_FORBIDDEN_NETWORK"}:
+        return "Ссылка не загружена: адрес запрещён политикой безопасности базы знаний."
+    if code == "KNOWLEDGE_UPDATE_QUEUE_DISPATCH_ERROR":
+        return (
+            "Не удалось запустить обновление базы знаний: worker/Celery или очередь задач "
+            "недоступны. Восстановите worker и повторите запуск."
+        )
+    if code == "KNOWLEDGE_UPDATE_WORKER_INTERRUPTED":
+        return (
+            "Обновление базы знаний прервано: worker/Celery недоступен или соединение с "
+            "очередью потеряно. Восстановите worker и запустите обновление повторно."
+        )
+    if code in {
+        "SOURCE_CONNECTION_INTERRUPTED",
+        "SOURCE_UNAVAILABLE",
+        "SOURCE_READER_ERROR",
+        "FETCH_FAILED",
+        "KNOWLEDGE_SOURCE_UNAVAILABLE",
+    }:
+        return (
+            "Не удалось загрузить ссылку: источник недоступен или соединение было прервано. "
+            "Проверьте интернет, URL и права доступа, затем повторите обновление."
+        )
+    if code in {
+        "UNSUPPORTED_DOCUMENT_TYPE",
+        "DOCUMENT_PARSE_FAILED",
+        "PARSE_FAILED",
+        "KNOWLEDGE_UPLOAD_FILE_INVALID",
+    }:
+        if code == "UNSUPPORTED_DOCUMENT_TYPE" or "unsupported" in normalized:
+            return (
+                "Файл не загружен: формат не поддерживается. Поддерживаются PDF, DOCX, "
+                "ODT, XLSX, ArchiMate, HTML, Markdown, TXT и JSON."
+            )
+        return (
+            "Файл не удалось разобрать: он повреждён, пустой или имеет неподдерживаемое "
+            "содержимое. Загрузите корректный файл в поддерживаемом формате."
+        )
+    if code == "KNOWLEDGE_UPLOAD_FILE_EMPTY":
+        return "Файл пустой или не читается."
+    if code == "UPLOAD_FILES_REQUIRED":
+        return "Выберите хотя бы один файл для загрузки."
+    if raw_message and _message_has_cyrillic(raw_message):
+        return raw_message
+    if stage == "fetching":
+        return (
+            "Не удалось загрузить источник базы знаний. Проверьте доступность ссылки или "
+            "файла и повторите обновление."
+        )
+    if stage == "parsing":
+        return (
+            "Не удалось разобрать документ базы знаний. Проверьте формат и целостность "
+            "файла, затем повторите загрузку."
+        )
+    return "Не удалось обработать материал базы знаний. Проверьте источник и повторите операцию."

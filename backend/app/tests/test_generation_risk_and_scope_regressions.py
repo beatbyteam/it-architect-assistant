@@ -106,9 +106,9 @@ def test_risk_contract_replaces_placeholder_mitigation() -> None:
         }
     )
 
-    assert "owner" in risk.mitigation.lower()
-    assert "rollback" in risk.mitigation.lower()
-    assert "architecture review checkpoint" in risk.mitigation.lower()
+    assert "владельца" in risk.mitigation.lower()
+    assert "отката" in risk.mitigation.lower()
+    assert "архитектурном чекпоинте" in risk.mitigation.lower()
 
 
 def test_risk_contract_accepts_llm_risk_alias_fields() -> None:
@@ -139,6 +139,7 @@ def test_risk_contract_synthesizes_description_from_risk_title() -> None:
 
     assert risk.title == "Incomplete acceptance criteria"
     assert "Incomplete acceptance criteria" in risk.description
+    assert "может повлиять" in risk.description
 
 
 def test_normalize_risks_replaces_low_signal_mitigation() -> None:
@@ -154,8 +155,8 @@ def test_normalize_risks_replaces_low_signal_mitigation() -> None:
     )
 
     assert risks[0]["mitigation"] != "Define mitigation plan during architecture review."
-    assert "owner" in risks[0]["mitigation"].lower()
-    assert "rollback" in risks[0]["mitigation"].lower()
+    assert "владельца" in risks[0]["mitigation"].lower()
+    assert "отката" in risks[0]["mitigation"].lower()
 
 
 def test_normalize_risks_accepts_llm_alias_fields() -> None:

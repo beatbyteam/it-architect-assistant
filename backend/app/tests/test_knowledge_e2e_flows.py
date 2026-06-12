@@ -740,7 +740,6 @@ def test_e2e_monthly_update_of_unselected_base_does_not_change_generation_select
         selected_user_version.knowledge_version_id
     )
     assert snapshot["effective_version_ids"] == [
-        str(mandatory_version.knowledge_version_id),
         str(selected_user_version.knowledge_version_id),
     ]
 

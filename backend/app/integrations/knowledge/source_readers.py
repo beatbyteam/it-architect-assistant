@@ -431,7 +431,7 @@ def guess_document_type_from_name(filename: str) -> DocumentType:
         return DocumentType.API
     if any(token in lowered for token in {"archimate", "modelling", "modeling"}):
         return DocumentType.ARCHITECTURE
-    if "операцион" in lowered:
+    if any(token in lowered for token in {"операцион", "технолог", "радар"}):
         return DocumentType.TECHNOLOGY
     if any(
         token in lowered

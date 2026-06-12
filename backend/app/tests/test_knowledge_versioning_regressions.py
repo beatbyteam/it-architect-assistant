@@ -92,7 +92,8 @@ def test_user_managed_validation_does_not_require_mandatory_baseline() -> None:
 
     assert result.run_status == KnowledgeUpdateStatus.COMPLETED
     assert result.version_status == KnowledgeVersionStatus.VALIDATED
-    assert result.details["missing_required_packages"]
+    assert result.details["missing_required_packages"] == []
+    assert result.details["basis_document_count"] == 1
 
 
 def test_activate_supports_reactivating_previous_archived_version() -> None:

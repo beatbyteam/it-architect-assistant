@@ -474,6 +474,68 @@ def test_persist_uploaded_file_reports_size_limit_as_validation_error(tmp_path: 
     assert list(tmp_path.iterdir()) == []
 
 
+def test_persist_uploaded_file_rejects_unsupported_document_type(tmp_path: Path) -> None:
+    class _Upload:
+        filename = "archive.exe"
+        content_type = "application/octet-stream"
+
+        def __init__(self) -> None:
+            self._chunks = [b"MZ executable"]
+            self.closed = False
+
+        async def read(self, _size: int) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+        async def close(self) -> None:
+            self.closed = True
+
+    upload = _Upload()
+
+    with pytest.raises(ValidationError) as exc_info:
+        asyncio.run(
+            routes._persist_uploaded_file(
+                file=cast(Any, upload),
+                upload_dir=tmp_path,
+                max_size_bytes=1024,
+            )
+        )
+
+    assert exc_info.value.error_code == "KNOWLEDGE_UPLOAD_FILE_INVALID"
+    assert upload.closed is True
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_persist_uploaded_file_rejects_damaged_pdf(tmp_path: Path) -> None:
+    class _Upload:
+        filename = "broken.pdf"
+        content_type = "application/pdf"
+
+        def __init__(self) -> None:
+            self._chunks = [b"%PDF-1.4 broken"]
+            self.closed = False
+
+        async def read(self, _size: int) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+        async def close(self) -> None:
+            self.closed = True
+
+    upload = _Upload()
+
+    with pytest.raises(ValidationError) as exc_info:
+        asyncio.run(
+            routes._persist_uploaded_file(
+                file=cast(Any, upload),
+                upload_dir=tmp_path,
+                max_size_bytes=1024,
+            )
+        )
+
+    assert exc_info.value.error_code == "KNOWLEDGE_UPLOAD_FILE_INVALID"
+    assert upload.closed is True
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_upload_and_ingest_requests_auto_activation(monkeypatch, tmp_path: Path) -> None:
     target_path = tmp_path / "kb-1" / "uploaded.weirdext"
     target_path.parent.mkdir(parents=True, exist_ok=True)

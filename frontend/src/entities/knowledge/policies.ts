@@ -4,9 +4,9 @@ const GENERATION_SELECTABLE_VERSION_STATUSES = new Set(['active', 'validated']);
 
 const ALLOWED_SOURCE_STATUS_TRANSITIONS: Record<string, string[]> = {
   draft: ['draft', 'active', 'disabled'],
-  active: ['active', 'disabled', 'archived'],
+  active: ['active', 'disabled'],
   unavailable: ['unavailable', 'active', 'disabled'],
-  disabled: ['disabled', 'active', 'archived'],
+  disabled: ['disabled', 'active'],
   archived: ['archived'],
 };
 

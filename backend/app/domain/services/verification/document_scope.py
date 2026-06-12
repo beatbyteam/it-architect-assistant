@@ -131,12 +131,15 @@ def build_document_scope_snapshot(
             "effective_document_ids": selected_ids,
             "document_count": len(selected_ids),
             "selected_documents": documents,
+            "effective_documents": documents,
         }
     all_ids = sorted(document_by_id)
+    documents = [serialize_version_document(document_by_id[document_id]) for document_id in all_ids]
     return {
         "mode": "full",
         "selected_document_ids": [],
         "effective_document_ids": all_ids,
         "document_count": len(all_ids),
         "selected_documents": [],
+        "effective_documents": documents,
     }

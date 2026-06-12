@@ -456,7 +456,7 @@ def test_get_generation_run_payload_exposes_knowledge_scope() -> None:
             "knowledge_snapshot": {
                 "mandatory_version": {"knowledge_version_id": "kv-mandatory"},
                 "selected_user_version": {"knowledge_version_id": "kv-user"},
-                "effective_version_ids": ["kv-mandatory", "kv-user"],
+                "effective_version_ids": ["kv-user"],
                 "selected_generation_version_id": "kv-user",
             }
         },
@@ -476,7 +476,7 @@ def test_get_generation_run_payload_exposes_knowledge_scope() -> None:
         mvp_canonical_module.GenerationRunService = original_service
 
     assert payload["knowledge_scope"]["selected_generation_version_id"] == "kv-user"
-    assert payload["knowledge_scope"]["effective_version_ids"] == ["kv-mandatory", "kv-user"]
+    assert payload["knowledge_scope"]["effective_version_ids"] == ["kv-user"]
 
 
 def test_get_verification_run_payload_exposes_knowledge_scope() -> None:
@@ -497,7 +497,7 @@ def test_get_verification_run_payload_exposes_knowledge_scope() -> None:
             "knowledge_snapshot": {
                 "mandatory_version": {"knowledge_version_id": "kv-mandatory"},
                 "selected_user_version": {"knowledge_version_id": "kv-user"},
-                "effective_version_ids": ["kv-mandatory", "kv-user"],
+                "effective_version_ids": ["kv-user"],
                 "selected_generation_version_id": "kv-user",
             }
         },
@@ -517,4 +517,4 @@ def test_get_verification_run_payload_exposes_knowledge_scope() -> None:
         mvp_canonical_module.VerificationRunService = original_service
 
     assert payload["knowledge_scope"]["selected_generation_version_id"] == "kv-user"
-    assert payload["knowledge_scope"]["effective_version_ids"] == ["kv-mandatory", "kv-user"]
+    assert payload["knowledge_scope"]["effective_version_ids"] == ["kv-user"]

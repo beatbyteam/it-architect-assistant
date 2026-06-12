@@ -22,15 +22,15 @@ class SolutionRenderer:
                 ]
             )
         if payload.assumptions:
-            lines.append("## Assumptions")
+            lines.append("## Допущения")
             lines.extend([f"- {item}" for item in payload.assumptions])
             lines.append("")
         if payload.next_steps:
-            lines.append("## Next steps")
+            lines.append("## Следующие шаги")
             lines.extend([f"- {item}" for item in payload.next_steps])
             lines.append("")
         if payload.risks:
-            lines.append("## Risks")
+            lines.append("## Риски")
             for risk in payload.risks:
                 lines.append(f"- **{risk.title}** ({risk.severity.value}): {risk.description}")
             lines.append("")
@@ -62,8 +62,8 @@ class SolutionRenderer:
             f"<h1>{escape(payload.solution_title)}</h1>"
             f"<p>{escape(payload.executive_summary)}</p>"
             f"{sections_html}"
-            f"<section><h2>Assumptions</h2><ul>{assumptions_html}</ul></section>"
-            f"<section><h2>Next steps</h2><ul>{next_steps_html}</ul></section>"
-            f"<section><h2>Risks</h2><ul>{risks_html}</ul></section>"
+            f"<section><h2>Допущения</h2><ul>{assumptions_html}</ul></section>"
+            f"<section><h2>Следующие шаги</h2><ul>{next_steps_html}</ul></section>"
+            f"<section><h2>Риски</h2><ul>{risks_html}</ul></section>"
             "</body></html>"
         )

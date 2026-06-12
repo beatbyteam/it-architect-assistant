@@ -118,37 +118,40 @@ class GenerationPostValidator:
                 )
         if not payload.assumptions:
             raise ValidationError(
-                "At least one assumption is required", error_code="SOLUTION_ASSUMPTIONS_REQUIRED"
+                "Нужно указать хотя бы одно допущение.",
+                error_code="SOLUTION_ASSUMPTIONS_REQUIRED",
             )
         if not payload.next_steps:
             raise ValidationError(
-                "At least one next step is required", error_code="SOLUTION_NEXT_STEPS_REQUIRED"
+                "Нужно указать хотя бы один следующий шаг.",
+                error_code="SOLUTION_NEXT_STEPS_REQUIRED",
             )
         if len(payload.executive_summary.strip()) < 80:
             raise ValidationError(
-                "Executive summary is too short for publication",
+                "Краткое резюме решения слишком короткое для публикации.",
                 error_code="SOLUTION_EXECUTIVE_SUMMARY_TOO_SHORT",
             )
         if self._is_low_signal_text(payload.executive_summary, min_length=80):
             raise ValidationError(
-                "Executive summary is too generic for publication",
+                "Краткое резюме решения слишком общее для публикации.",
                 error_code="SOLUTION_EXECUTIVE_SUMMARY_GENERIC",
             )
         if any(marker in payload.solution_title.lower() for marker in self.GENERIC_MARKERS):
             raise ValidationError(
-                "Solution title contains placeholder content",
+                "Название решения содержит шаблонный текст.",
                 error_code="SOLUTION_TITLE_PLACEHOLDER",
             )
         if self._is_low_signal_text(payload.solution_title, min_length=12):
             raise ValidationError(
-                "Solution title is too generic for publication", error_code="SOLUTION_TITLE_GENERIC"
+                "Название решения слишком общее для публикации.",
+                error_code="SOLUTION_TITLE_GENERIC",
             )
         weak_assumptions = [
             item for item in payload.assumptions if self._is_low_signal_text(item, min_length=12)
         ]
         if weak_assumptions:
             raise ValidationError(
-                "Assumptions must be specific and non-template",
+                "Допущения должны быть конкретными и не шаблонными.",
                 error_code="SOLUTION_ASSUMPTIONS_GENERIC",
             )
         weak_next_steps = [
@@ -156,7 +159,7 @@ class GenerationPostValidator:
         ]
         if weak_next_steps:
             raise ValidationError(
-                "Next steps must be specific and actionable",
+                "Следующие шаги должны быть конкретными и исполнимыми.",
                 error_code="SOLUTION_NEXT_STEPS_GENERIC",
             )
 
@@ -249,34 +252,35 @@ class GenerationPostValidator:
             )
         if hallucinated_refs:
             raise ValidationError(
-                f"Generated solution references evidence that was not retrieved: {', '.join(hallucinated_refs[:8])}",
+                f"Решение ссылается на фрагменты, которые не были получены из базы знаний: {', '.join(hallucinated_refs[:8])}",
                 error_code="SOLUTION_HALLUCINATED_SOURCE_REF",
             )
         if not payload.risks:
             raise ValidationError(
-                "At least one risk is required", error_code="SOLUTION_RISKS_REQUIRED"
+                "Нужно указать хотя бы один риск.",
+                error_code="SOLUTION_RISKS_REQUIRED",
             )
         for component in payload.components:
             if self._is_low_signal_text(component.role_description, min_length=20):
                 raise ValidationError(
-                    "Component role descriptions must be specific",
+                    "Описание роли компонента должно быть конкретным.",
                     error_code="SOLUTION_COMPONENT_ROLE_GENERIC",
                 )
         for integration in payload.integrations:
             if self._is_low_signal_text(integration.rationale, min_length=16):
                 raise ValidationError(
-                    "Each integration must include a specific rationale",
+                    "Каждая интеграция должна содержать конкретное обоснование.",
                     error_code="SOLUTION_INTEGRATION_RATIONALE_REQUIRED",
                 )
         for risk in payload.risks:
             if self._is_low_signal_text(risk.description, min_length=16):
                 raise ValidationError(
-                    "Risk descriptions must be specific",
+                    "Описание риска должно быть конкретным.",
                     error_code="SOLUTION_RISK_DESCRIPTION_GENERIC",
                 )
             if self._is_low_signal_text(risk.mitigation, min_length=12):
                 raise ValidationError(
-                    "Risk mitigations must be specific",
+                    "Меры по риску должны быть конкретными.",
                     error_code="SOLUTION_RISK_MITIGATION_REQUIRED",
                 )
 
@@ -287,7 +291,7 @@ class GenerationPostValidator:
         ]
         if required_section_sequence != REQUIRED_SECTION_CODES:
             raise ValidationError(
-                "Solution sections must follow the canonical TOGAF order",
+                "Разделы решения должны идти в каноническом порядке TOGAF.",
                 error_code="SOLUTION_SECTION_ORDER_INVALID",
             )
 

@@ -232,10 +232,10 @@ export function ExternalArchitectureCheckPage() {
               required
             />
           </FormRow>
-          <FormRow label="Импорт из файла" hint="PDF, DOCX, ODT, XLSX, ArchiMate, HTML, Markdown, TXT, JSON и изображения будут разобраны в текст архитектуры.">
+          <FormRow label="Импорт из файла" hint="PDF, DOCX, ODT, XLSX, HTML, Markdown, JSON будут разобраны в текст архитектуры.">
             <Input
               type="file"
-              accept=".pdf,.docx,.odt,.xlsx,.archimate,.html,.htm,.md,.markdown,.txt,.text,.json,.png,.jpg,.jpeg,.webp"
+              accept=".pdf,.docx,.odt,.xlsx,.archimate,.html,.htm,.md,.markdown,.txt,.text,.json"
               onChange={handleFileImport}
               disabled={mutation.isPending || saveDraftMutation.isPending || fileImportMutation.isPending}
             />

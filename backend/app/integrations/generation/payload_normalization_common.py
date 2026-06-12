@@ -404,9 +404,9 @@ def _normalize_text_list(
                 owner = _extract_first_text(item, ("owner", "responsible", "assignee", "role"))
                 suffix_parts = []
                 if timeline:
-                    suffix_parts.append(f"timeline: {timeline}")
+                    suffix_parts.append(f"срок: {timeline}")
                 if owner:
-                    suffix_parts.append(f"owner: {owner}")
+                    suffix_parts.append(f"ответственный: {owner}")
                 if suffix_parts:
                     text_value = f"{text_value} ({'; '.join(suffix_parts)})"
                 normalized.append(text_value)

@@ -29,7 +29,11 @@ from app.db.repositories.verification import (
     CheckResultRepository,
     VerificationProtocolRepository,
 )
-from app.domain.services.knowledge_basis import resolve_basis_assignment
+from app.domain.services.knowledge_basis import (
+    requires_catalog_basis_for_versions,
+    resolve_basis_assignment,
+    resolve_scoped_basis_assignment,
+)
 from app.domain.services.presenters import clean_display_file_name
 from app.domain.services.publication import PublicationArtifactService
 from app.integrations.verification import (
@@ -40,6 +44,7 @@ from app.integrations.verification import (
 from .document_scope import (
     filter_version_documents_for_scope,
     normalize_document_ids,
+    selected_document_ids_from_scope,
 )
 
 logger = logging.getLogger(__name__)
@@ -170,19 +175,28 @@ class VerificationProtocolPersistenceService:
     def _basis_documents_for_run(
         self, protocol: VerificationProtocol, run: VerificationRun
     ) -> list[VerificationBasisDocument]:
+        knowledge_versions = self._knowledge_versions_for_run(run)
         version_documents = [
             item
-            for version in self._knowledge_versions_for_run(run)
+            for version in knowledge_versions
             for item in list(getattr(version, "version_documents", []) or [])
         ]
         scoped_version_documents = filter_version_documents_for_scope(
             version_documents,
             run.scope_snapshot,
         )
+        require_catalog_packages = (
+            requires_catalog_basis_for_versions(knowledge_versions)
+            and not selected_document_ids_from_scope(run.scope_snapshot)
+        )
         basis_documents: list[VerificationBasisDocument] = []
         for index, item in enumerate(scoped_version_documents, start=1):
             document = getattr(item, "document", None)
-            role_code, required_flag = resolve_basis_assignment(item)
+            role_code, required_flag = (
+                resolve_basis_assignment(item)
+                if require_catalog_packages
+                else resolve_scoped_basis_assignment(item)
+            )
             title = clean_display_file_name(getattr(document, "title", None)) or "Документ без названия"
             basis_documents.append(
                 VerificationBasisDocument(
@@ -208,6 +222,7 @@ class VerificationProtocolPersistenceService:
             select(KnowledgeVersion)
             .where(KnowledgeVersion.knowledge_version_id.in_(version_ids))
             .options(
+                selectinload(KnowledgeVersion.knowledge_base),
                 selectinload(KnowledgeVersion.version_documents)
                 .selectinload(KnowledgeVersionDocument.document)
                 .selectinload(SourceDocument.source)

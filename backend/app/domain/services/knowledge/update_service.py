@@ -67,6 +67,7 @@ from app.domain.services.knowledge.update_diffing import (
     build_version_diff_summary,
     build_version_document_signature,
     classify_document_error_code,
+    user_friendly_knowledge_error_message,
 )
 from app.domain.services.knowledge.version_service import KnowledgeVersionService
 from app.domain.services.knowledge_bases import KnowledgeBaseService, _selection_scope_for_principal
@@ -147,6 +148,7 @@ class RunStartResult(dict):
 
 class KnowledgeUpdateService:
     _QUEUE_RECOVERY_GRACE_SEC = 15
+    _WORKER_INTERRUPTION_GRACE_SEC = 60
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self.session = session
@@ -336,13 +338,187 @@ class KnowledgeUpdateService:
                 return run
         return self.execute_run(str(run.update_run_id))
 
+    def _recover_nonterminal_run(self, run: KnowledgeUpdateRun) -> KnowledgeUpdateRun:
+        recovered = self._maybe_resume_queued_run_inline(run)
+        return self._maybe_fail_interrupted_run(recovered)
+
+    @staticmethod
+    def _parse_run_timestamp(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        text = value.strip()
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        with suppress(ValueError):
+            parsed = datetime.fromisoformat(text)
+            return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+        return None
+
+    def _last_run_progress_at(self, run: KnowledgeUpdateRun) -> datetime | None:
+        summary = dict(getattr(run, "summary", None) or {})
+        quality_summary = dict(summary.get("quality_summary") or {})
+        candidates: list[datetime] = []
+        active_stage = quality_summary.get("active_stage")
+        if isinstance(active_stage, dict):
+            parsed = self._parse_run_timestamp(active_stage.get("updated_at"))
+            if parsed is not None:
+                candidates.append(parsed)
+        for event in list(summary.get("stage_history") or []):
+            if not isinstance(event, dict):
+                continue
+            for key in ("updated_at", "timestamp", "occurred_at", "created_at", "started_at"):
+                parsed = self._parse_run_timestamp(event.get(key))
+                if parsed is not None:
+                    candidates.append(parsed)
+                    break
+        started_at = self._parse_run_timestamp(getattr(run, "started_at", None))
+        if started_at is not None:
+            candidates.append(started_at)
+        return max(candidates) if candidates else None
+
+    def _maybe_fail_interrupted_run(self, run: KnowledgeUpdateRun) -> KnowledgeUpdateRun:
+        status = getattr(run, "status", None)
+        if status is None or status in TERMINAL_UPDATE_STATUSES:
+            return run
+        if self._has_live_worker():
+            return run
+        last_progress_at = self._last_run_progress_at(run)
+        if last_progress_at is None:
+            return run
+        grace_sec = (
+            self._QUEUE_RECOVERY_GRACE_SEC
+            if status == KnowledgeUpdateStatus.QUEUED
+            else self._WORKER_INTERRUPTION_GRACE_SEC
+        )
+        age_sec = max(0.0, (datetime.now(UTC) - last_progress_at).total_seconds())
+        if age_sec < float(grace_sec):
+            return run
+        return self._fail_interrupted_update_run(
+            run,
+            previous_stage=str(getattr(run, "current_stage", "") or "running"),
+        )
+
+    def _fail_interrupted_update_run(
+        self, run: KnowledgeUpdateRun, *, previous_stage: str
+    ) -> KnowledgeUpdateRun:
+        if run.status in TERMINAL_UPDATE_STATUSES:
+            return run
+        finished_at = datetime.now(UTC)
+        error_code = "KNOWLEDGE_UPDATE_WORKER_INTERRUPTED"
+        error_message = (
+            "Обновление базы знаний прервано: worker/Celery недоступен или соединение с "
+            "очередью потеряно. Восстановите worker и запустите обновление повторно."
+        )
+        run.status = KnowledgeUpdateStatus.FAILED
+        run.current_stage = "failed"
+        run.finished_at = finished_at
+        started_at = self._parse_run_timestamp(getattr(run, "started_at", None))
+        if started_at is not None:
+            run.duration_sec = int(max(0.0, (finished_at - started_at).total_seconds()))
+
+        summary = dict(run.summary or {})
+        quality_summary = dict(summary.get("quality_summary") or {})
+        quality_summary.update(
+            {
+                "status": KnowledgeUpdateStatus.FAILED.value,
+                "current_stage": "failed",
+                "error_code": error_code,
+                "error": error_message,
+                "processing_error_count": max(
+                    1, int(quality_summary.get("processing_error_count") or 0)
+                ),
+                "active_stage": {
+                    "stage": "failed",
+                    "operation": "worker_interrupted",
+                    "message": error_message,
+                    "updated_at": finished_at.isoformat(),
+                },
+                "processing_errors": list(quality_summary.get("processing_errors") or [])
+                + [
+                    {
+                        "stage": previous_stage,
+                        "error_code": error_code,
+                        "error_message": error_message,
+                    }
+                ],
+            }
+        )
+        stage_history = list(summary.get("stage_history") or [])
+        if previous_stage != "failed":
+            stage_history = self._append_stage_history(
+                stage_history,
+                previous_stage,
+                detail=error_message,
+                stage_status="failed",
+            )
+        stage_history = self._append_stage_history(
+            stage_history,
+            "failed",
+            detail=error_message,
+            stage_status="failed",
+        )
+        summary.update(
+            {
+                "quality_summary": quality_summary,
+                "stage_history": stage_history,
+                "error_code": error_code,
+                "error": error_message,
+                "failed_at": finished_at.isoformat(),
+            }
+        )
+
+        candidate = self.versions.get_by_update_run_id(run.update_run_id)
+        if candidate is not None:
+            summary["candidate_knowledge_version_id"] = str(candidate.knowledge_version_id)
+            if candidate.status not in {
+                KnowledgeVersionStatus.ACTIVE,
+                KnowledgeVersionStatus.ARCHIVED,
+            }:
+                candidate.status = KnowledgeVersionStatus.FAILED
+                candidate.summary = {
+                    **(candidate.summary or {}),
+                    "status": KnowledgeUpdateStatus.FAILED.value,
+                    "error_code": error_code,
+                    "error": error_message,
+                    "failed_at": finished_at.isoformat(),
+                }
+                self.session.add(candidate)
+
+        run.summary = summary
+        self._record_operation_step(
+            run,
+            stage="failed",
+            status="failed",
+            detail=error_message,
+            error_code=error_code,
+            payload={"previous_stage": previous_stage},
+        )
+        self.session.add(run)
+        self.audit.record(
+            event_type="knowledge.refresh.failed",
+            target_type="knowledge_update_run",
+            target_id=run.update_run_id,
+            message=error_message,
+            actor_user_id=run.initiator_user_id,
+            correlation_id=run.correlation_id,
+            payload=summary,
+            severity=AuditSeverity.ERROR,
+        )
+        self.session.commit()
+        self._revoke_update_task(run)
+        with suppress(Exception):
+            self.session.refresh(run)
+        return run
+
     def _get_running_run_with_recovery(
         self, *, knowledge_base_id: str
     ) -> KnowledgeUpdateRun | None:
         run = self.update_runs.get_running(knowledge_base_id=knowledge_base_id)
         if run is None:
             return None
-        recovered = self._maybe_resume_queued_run_inline(run)
+        recovered = self._recover_nonterminal_run(run)
         if recovered.status in TERMINAL_UPDATE_STATUSES:
             return None
         return recovered
@@ -896,6 +1072,12 @@ class KnowledgeUpdateService:
             failed_run = self.get_run(str(run.update_run_id))
             failed_candidate = self.versions.get_by_update_run_id(failed_run.update_run_id)
             finished_at = datetime.now(UTC)
+            error_code = getattr(exc, "error_code", "KNOWLEDGE_UPDATE_QUEUE_DISPATCH_ERROR")
+            technical_error_message = str(exc)
+            error_message = user_friendly_knowledge_error_message(
+                error_code,
+                technical_error_message,
+            )
             failed_run.status = KnowledgeUpdateStatus.FAILED
             failed_run.current_stage = "failed"
             failed_run.finished_at = finished_at
@@ -903,14 +1085,13 @@ class KnowledgeUpdateService:
                 max(0.0, (finished_at - (failed_run.started_at or finished_at)).total_seconds())
             )
             summary = dict(failed_run.summary or {})
-            summary["error"] = str(exc)
-            summary["error_code"] = getattr(
-                exc, "error_code", "KNOWLEDGE_UPDATE_QUEUE_DISPATCH_ERROR"
-            )
+            summary["error"] = error_message
+            summary["technical_error"] = technical_error_message
+            summary["error_code"] = error_code
             summary["stage_history"] = self._append_stage_history(
                 summary.get("stage_history", []),
                 "failed",
-                detail=str(exc),
+                detail=error_message,
                 stage_status="failed",
             )
             quality_summary = dict(summary.get("quality_summary") or {})
@@ -924,10 +1105,9 @@ class KnowledgeUpdateService:
                     + [
                         {
                             "stage": "queue_dispatch",
-                            "error_code": getattr(
-                                exc, "error_code", "KNOWLEDGE_UPDATE_QUEUE_DISPATCH_ERROR"
-                            ),
-                            "error_message": str(exc),
+                            "error_code": error_code,
+                            "error_message": error_message,
+                            "technical_error_message": technical_error_message,
                         }
                     ],
                 }
@@ -937,10 +1117,9 @@ class KnowledgeUpdateService:
                 failed_candidate.status = KnowledgeVersionStatus.FAILED
                 failed_candidate.summary = {
                     **(failed_candidate.summary or {}),
-                    "error": str(exc),
-                    "error_code": getattr(
-                        exc, "error_code", "KNOWLEDGE_UPDATE_QUEUE_DISPATCH_ERROR"
-                    ),
+                    "error": error_message,
+                    "technical_error": technical_error_message,
+                    "error_code": error_code,
                 }
                 summary["candidate_knowledge_version_id"] = str(
                     failed_candidate.knowledge_version_id
@@ -951,8 +1130,8 @@ class KnowledgeUpdateService:
                 failed_run,
                 stage="failed",
                 status="failed",
-                detail=str(exc),
-                error_code=getattr(exc, "error_code", "KNOWLEDGE_UPDATE_QUEUE_DISPATCH_ERROR"),
+                detail=error_message,
+                error_code=error_code,
                 payload={"dispatch": "queue"},
             )
             self.session.add(failed_run)
@@ -960,7 +1139,7 @@ class KnowledgeUpdateService:
                 event_type="knowledge.refresh.failed",
                 target_type="knowledge_update_run",
                 target_id=failed_run.update_run_id,
-                message="Knowledge update queue dispatch failed",
+                message=error_message,
                 actor_user_id=failed_run.initiator_user_id,
                 correlation_id=failed_run.correlation_id,
                 payload=failed_run.summary,
@@ -996,7 +1175,7 @@ class KnowledgeUpdateService:
         self, update_run_id: str, principal: AuthPrincipal | None = None
     ) -> dict[str, Any]:
         run = self.get_run(update_run_id, principal)
-        run = self._maybe_resume_queued_run_inline(run)
+        run = self._recover_nonterminal_run(run)
         return self._serialize_run(run)
 
     def _list_visible_recent_runs(
@@ -1056,13 +1235,13 @@ class KnowledgeUpdateService:
             items = self._list_visible_recent_runs(
                 limit=limit, status=status, knowledge_base_id=knowledge_base_id, principal=principal
             )
-        return [self._serialize_run(self._maybe_resume_queued_run_inline(run)) for run in items]
+        return [self._serialize_run(self._recover_nonterminal_run(run)) for run in items]
 
     def get_run_status_payload(
         self, update_run_id: str, principal: AuthPrincipal | None = None
     ) -> dict[str, Any]:
         run = self.get_run(update_run_id, principal)
-        run = self._maybe_resume_queued_run_inline(run)
+        run = self._recover_nonterminal_run(run)
         payload = self._serialize_run(run)
         candidate = self.versions.get_by_update_run_id(run.update_run_id)
         if candidate is not None:
@@ -1984,14 +2163,19 @@ class KnowledgeUpdateService:
         stage: str,
         deactivate_source: bool = True,
     ) -> dict[str, Any]:
+        friendly_message = user_friendly_knowledge_error_message(
+            error_code,
+            error_message,
+            stage=stage,
+        )
         self._upsert_processing_result(
             run,
             source,
             document,
             SourceProcessingStatus.FAILED,
             error_code=error_code,
-            error_message=error_message,
-            metrics={"stage": stage},
+            error_message=friendly_message,
+            metrics={"stage": stage, "technical_error_message": error_message},
         )
         if deactivate_source and source.status == SourceStatus.ACTIVE:
             source.status = SourceStatus.UNAVAILABLE
@@ -2004,7 +2188,8 @@ class KnowledgeUpdateService:
             "document_title": document.title if document is not None else None,
             "stage": stage,
             "error_code": error_code,
-            "error_message": error_message,
+            "error_message": friendly_message,
+            "technical_error_message": error_message,
         }
 
     def _build_source_snapshot(
@@ -2205,11 +2390,15 @@ class KnowledgeUpdateService:
             and grouped_problems.get(str(source.source_id))
         ]
         conflict_items = detect_rule_conflicts(rules_for_conflicts)
-        document_count = len(candidate.version_documents)
-        fragment_count = len(candidate.knowledge_fragments)
-        basis_inventory = build_basis_inventory_for_version_documents(candidate.version_documents)
         base_kind = getattr(getattr(candidate, "knowledge_base", None), "kind", None)
         requires_complete_basis = base_kind == KnowledgeBaseKind.SYSTEM_MANDATORY
+        document_count = len(candidate.version_documents)
+        fragment_count = len(candidate.knowledge_fragments)
+        basis_inventory = build_basis_inventory_for_version_documents(
+            candidate.version_documents,
+            require_catalog_packages=requires_complete_basis,
+            include_reference_documents=not requires_complete_basis,
+        )
         run_type = getattr(getattr(candidate, "update_run", None), "run_type", None)
         run_type_value = getattr(run_type, "value", run_type)
         is_user_delete_empty_candidate = (

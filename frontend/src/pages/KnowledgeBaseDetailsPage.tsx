@@ -61,6 +61,20 @@ type DocumentActionNotice = {
 const DASHBOARD_KNOWLEDGE_BASES_KEY = ['dashboard-knowledge-bases'] as const;
 const FINAL_DOCUMENT_PROCESSING_STATUSES = new Set(['extracted', 'reused', 'skipped']);
 const KNOWLEDGE_UPDATE_TERMINAL_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'canceled']);
+const KNOWLEDGE_UPLOAD_ACCEPT = [
+  '.pdf',
+  '.docx',
+  '.odt',
+  '.xlsx',
+  '.archimate',
+  '.html',
+  '.htm',
+  '.md',
+  '.markdown',
+  '.txt',
+  '.text',
+  '.json',
+].join(',');
 const DEFAULT_UPLOAD_SOURCE_DRAFT: SourceDraft = { refresh_policy: 'manual', status: 'active' };
 const ACTIVE_STAGE_OPERATION_LABELS: Record<string, string> = {
   chunking_prepared: 'Подготовка чанков',
@@ -206,6 +220,8 @@ export function KnowledgeBaseDetailsPage() {
   const queryClient = useQueryClient();
   const [generationVersionId, setGenerationVersionId] = useState('');
   const [generationVersionDirty, setGenerationVersionDirty] = useState(false);
+  const [bulkRefreshPolicy, setBulkRefreshPolicy] = useState('monthly');
+  const [bulkRefreshPolicyDirty, setBulkRefreshPolicyDirty] = useState(false);
   const [documentViewVersionId, setDocumentViewVersionId] = useState('');
   const [newSourceName, setNewSourceName] = useState('');
   const [newSourceUri, setNewSourceUri] = useState('');
@@ -279,6 +295,23 @@ export function KnowledgeBaseDetailsPage() {
   const isArchivedBase = base?.status === 'archived';
   const isDisabledBase = base?.status === 'disabled';
   const generationSelectionLocked = hasRunningGeneration(generationLockQuery.data);
+  const sources = useMemo(() => (sourcesQuery.data ?? []) as Source[], [sourcesQuery.data]);
+  const configurableSources = useMemo(
+    () => sources.filter((source: Source) => source.status !== 'archived'),
+    [sources],
+  );
+  const detectedBulkRefreshPolicy = useMemo(() => {
+    if (!configurableSources.length) return 'monthly';
+    const policies = configurableSources.map((source: Source) => source.refresh_policy ?? 'monthly');
+    const firstPolicy = policies[0] ?? 'monthly';
+    return policies.every((policy) => policy === firstPolicy) ? firstPolicy : 'monthly';
+  }, [configurableSources]);
+  const hasMixedRefreshPolicies = useMemo(() => {
+    if (configurableSources.length < 2) return false;
+    const policies = configurableSources.map((source: Source) => source.refresh_policy ?? 'monthly');
+    return !policies.every((policy) => policy === policies[0]);
+  }, [configurableSources]);
+  const effectiveBulkRefreshPolicy = bulkRefreshPolicyDirty ? bulkRefreshPolicy : detectedBulkRefreshPolicy;
   const versions = versionsQuery.data ?? [];
   const selectableVersions = useMemo(() => selectableKnowledgeVersions(versions), [versions]);
   const persistedGenerationVersionId = base?.selected_knowledge_version_id ?? '';
@@ -286,8 +319,8 @@ export function KnowledgeBaseDetailsPage() {
   const effectiveGenerationVersionId = selectedGenerationVersionId || base?.active_knowledge_version_id || '';
   const activeDocumentsVersionId = documentViewVersionId || base?.active_knowledge_version_id || '';
   const uploadSource = useMemo(
-    () => (sourcesQuery.data ?? []).find((source: Source) => source.source_type === 'manual_upload') as Source | undefined,
-    [sourcesQuery.data],
+    () => sources.find((source: Source) => source.source_type === 'manual_upload') as Source | undefined,
+    [sources],
   );
   const uploadSourceDraft = uploadSource ? (sourceDrafts[uploadSource.source_id] ?? toSourceDraft(uploadSource)) : DEFAULT_UPLOAD_SOURCE_DRAFT;
   const uploadSourceReady = uploadSourceDraft.status === 'active';
@@ -313,7 +346,7 @@ export function KnowledgeBaseDetailsPage() {
       const sourceIds = new Set<string>();
       let changed = false;
 
-      for (const source of (sourcesQuery.data ?? [])) {
+      for (const source of sources) {
         sourceIds.add(source.source_id);
         if (dirtySourceIds[source.source_id]) {
           if (!nextDrafts[source.source_id]) {
@@ -340,11 +373,11 @@ export function KnowledgeBaseDetailsPage() {
       return changed ? nextDrafts : current;
     });
     setDirtySourceIds((current) => {
-      const sourceIds = new Set((sourcesQuery.data ?? []).map((source: Source) => source.source_id));
+      const sourceIds = new Set(sources.map((source: Source) => source.source_id));
       const filtered = Object.fromEntries(Object.entries(current).filter(([sourceId]) => sourceIds.has(sourceId)));
       return Object.keys(filtered).length === Object.keys(current).length ? current : filtered;
     });
-  }, [dirtySourceIds, sourcesQuery.data]);
+  }, [dirtySourceIds, sources]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['knowledge-bases'] });
@@ -435,6 +468,37 @@ export function KnowledgeBaseDetailsPage() {
     },
   });
 
+  const bulkRefreshPolicyMutation = useMutation({
+    mutationFn: async (refresh_policy: string) => {
+      const targets = configurableSources;
+      if (!targets.length) throw new Error('В базе нет источников, для которых можно настроить расписание.');
+      await Promise.all(targets.map((source: Source) => updateSource(source.source_id, { refresh_policy })));
+      return {
+        refresh_policy,
+        sourceIds: targets.map((source: Source) => source.source_id),
+      };
+    },
+    onSuccess: ({ refresh_policy, sourceIds }) => {
+      setBulkRefreshPolicyDirty(false);
+      setSourceDrafts((current) => {
+        const next = { ...current };
+        for (const sourceId of sourceIds) {
+          next[sourceId] = {
+            ...(next[sourceId] ?? { status: sources.find((source: Source) => source.source_id === sourceId)?.status ?? 'active' }),
+            refresh_policy,
+          };
+        }
+        return next;
+      });
+      setDirtySourceIds((current) => {
+        const next = { ...current };
+        for (const sourceId of sourceIds) next[sourceId] = false;
+        return next;
+      });
+      invalidate();
+    },
+  });
+
   const uploadMutation = useMutation({
     mutationFn: async () => {
       return uploadAndIngestKnowledgeFiles({
@@ -483,7 +547,9 @@ export function KnowledgeBaseDetailsPage() {
   const updateCardRunDetails = runActiveStageDetails(updateCardRun, nowMs);
   const trackedUploadRun = uploadStatusQuery.data ?? (uploadRunId ? (runsQuery.data ?? []).find((run: KnowledgeUpdateRun) => run.update_run_id === uploadRunId) : undefined);
   const activeUploadRun = isKnowledgeRunInProgress(trackedUploadRun) ? trackedUploadRun : null;
-  const uploadLearningInProgress = isKnowledgeRunInProgress(trackedUploadRun);
+  const knowledgeUpdateInProgress = Boolean(activeUpdateRun || activeUploadRun || syncMutation.isPending || uploadMutation.isPending);
+  const sourceControlsLocked = knowledgeUpdateInProgress || sourceSettingsMutation.isPending || bulkRefreshPolicyMutation.isPending || sourceMutation.isPending;
+  const uploadLearningInProgress = knowledgeUpdateInProgress;
   const trackedUploadStage = knowledgeRunStage(trackedUploadRun);
   const trackedUploadQuality = qualitySummaryOf(trackedUploadRun);
   const trackedUploadRunDetails = runActiveStageDetails(trackedUploadRun, nowMs);
@@ -661,10 +727,13 @@ export function KnowledgeBaseDetailsPage() {
                 {updateCardRunDetails.map((line) => <div className="muted small" key={line}>{line}</div>)}
               </Banner>
             ) : null}
-            {syncMutation.isError ? <ErrorNotice error={syncMutation.error} fallback="Не удалось запустить синхронизацию." /> : null}
-            {cancelUpdateMutation.isError ? <ErrorNotice error={cancelUpdateMutation.error} fallback="Не удалось остановить обновление базы знаний." /> : null}
-            <div className="actions">
-              <Button primary onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending || isArchivedBase || isDisabledBase || Boolean(activeUpdateRun)}>{syncMutation.isPending ? 'Запускаю…' : 'Обновить сейчас'}</Button>
+          {(base.document_count ?? 0) === 0 && !activeUpdateRun ? (
+            <EmptyState title="Документы ещё не загружены" description="Добавьте URL-источник или загрузите файл, чтобы собрать первую версию базы знаний." />
+          ) : null}
+          {syncMutation.isError ? <ErrorNotice error={syncMutation.error} fallback="Не удалось запустить синхронизацию." /> : null}
+          {cancelUpdateMutation.isError ? <ErrorNotice error={cancelUpdateMutation.error} fallback="Не удалось остановить обновление базы знаний." /> : null}
+          <div className="actions">
+              <Button primary onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending || isArchivedBase || isDisabledBase || Boolean(activeUpdateRun) || (base.active_source_count ?? 0) === 0}>{syncMutation.isPending ? 'Запускаю…' : 'Обновить сейчас'}</Button>
               {updateRunLinkId ? <Link className="button" to={`/operations/${updateRunLinkId}`}>Ход событий</Link> : null}
               {activeUpdateRun ? (
                 <Button onClick={() => cancelKnowledgeRun(activeUpdateRun)} disabled={cancelUpdateMutation.isPending}>
@@ -678,9 +747,43 @@ export function KnowledgeBaseDetailsPage() {
 
       <div className="grid grid-2">
         <Card title="Источники" subtitle="URL-страницы и загруженные файлы, из которых база получает материалы.">
-          {sourcesQuery.isLoading ? <LoadingState message="Загружаю источники…" /> : sourcesQuery.isError ? <ErrorNotice error={sourcesQuery.error} fallback="Не удалось загрузить источники." /> : sourcesQuery.data?.length ? (
-            <div className="timeline">
-              {sourcesQuery.data.map((source: Source) => {
+          {sourcesQuery.isLoading ? <LoadingState message="Загружаю источники…" /> : sourcesQuery.isError ? <ErrorNotice error={sourcesQuery.error} fallback="Не удалось загрузить источники." /> : sources.length ? (
+            <div className="stack compact">
+              {!isSystemBase && !isArchivedBase ? (
+                <div className="section-box stack compact">
+                  <div className="actions between">
+                    <div>
+                      <strong>Политика обновления базы</strong>
+                      <div className="muted small">Применяется ко всем неархивным источникам этой базы.</div>
+                    </div>
+                    {hasMixedRefreshPolicies ? <Badge value="partial" /> : <Badge value={effectiveBulkRefreshPolicy} />}
+                  </div>
+                  <div className="grid grid-2">
+                    <FormRow label="Расписание">
+                      <Select value={effectiveBulkRefreshPolicy} disabled={sourceControlsLocked || configurableSources.length === 0} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                        setBulkRefreshPolicy(event.target.value);
+                        setBulkRefreshPolicyDirty(true);
+                      }}>
+                        {KNOWLEDGE_REFRESH_POLICY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </Select>
+                    </FormRow>
+                    <div className="actions" style={{ alignSelf: 'end' }}>
+                      <Button
+                        onClick={() => bulkRefreshPolicyMutation.mutate(effectiveBulkRefreshPolicy)}
+                        disabled={sourceControlsLocked || configurableSources.length === 0}
+                      >
+                        {bulkRefreshPolicyMutation.isPending ? 'Сохраняю…' : 'Применить ко всем'}
+                      </Button>
+                    </div>
+                  </div>
+                  {knowledgeUpdateInProgress ? <div className="muted small">Настройки источников доступны после завершения текущего обновления.</div> : null}
+                  {bulkRefreshPolicyMutation.isError ? <ErrorNotice error={bulkRefreshPolicyMutation.error} fallback="Не удалось применить политику обновления." /> : null}
+                </div>
+              ) : null}
+              <div className="timeline">
+                {sources.map((source: Source) => {
                 const draft = sourceDrafts[source.source_id] ?? toSourceDraft(source);
                 return (
                   <div className="timeline-item" key={source.source_id}>
@@ -705,7 +808,7 @@ export function KnowledgeBaseDetailsPage() {
                               });
                             }
                           }}
-                          disabled={sourceSettingsMutation.isPending || uploadLearningInProgress}
+                          disabled={sourceControlsLocked}
                         >
                           Архивировать
                         </Button>
@@ -717,7 +820,7 @@ export function KnowledgeBaseDetailsPage() {
                             refresh_policy: draft.refresh_policy,
                             status: 'active_from_archive',
                           })}
-                          disabled={sourceSettingsMutation.isPending || uploadLearningInProgress}
+                          disabled={sourceControlsLocked}
                         >
                           Разархивировать источник
                         </Button>
@@ -726,10 +829,10 @@ export function KnowledgeBaseDetailsPage() {
                     <div className="muted small">Документов: {source.document_count ?? 0} · обнаружено: {formatDateTime(source.last_discovered_at)} · последнее обновление: {formatDateTime(source.last_sync_time)}</div>
                     <div className="muted small">Следующее обновление: {formatDateTime(source.next_sync_time)} · политика: {refreshPolicyLabel(source.refresh_policy)}</div>
                     {source.last_error_message ? <div className="muted small">Последняя ошибка: {userErrorText(source.last_error_message)}</div> : null}
-                    {!isSystemBase && !isArchivedBase ? (
+                    {!isSystemBase && !isArchivedBase && source.status !== 'archived' ? (
                       <div className="grid grid-2" style={{ marginTop: 12 }}>
                         <FormRow label="Политика обновления">
-                          <Select value={draft.refresh_policy} disabled={uploadLearningInProgress} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                          <Select value={draft.refresh_policy} disabled={sourceControlsLocked} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
                             const next = event.target.value;
                             setSourceDrafts((current) => ({ ...current, [source.source_id]: { ...draft, refresh_policy: next } }));
                             setDirtySourceIds((current) => ({ ...current, [source.source_id]: true }));
@@ -740,7 +843,7 @@ export function KnowledgeBaseDetailsPage() {
                           </Select>
                         </FormRow>
                         <FormRow label="Статус источника">
-                          <Select value={draft.status} disabled={uploadLearningInProgress} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                          <Select value={draft.status} disabled={sourceControlsLocked} onChange={(event: ChangeEvent<HTMLSelectElement>) => {
                             const next = event.target.value;
                             setSourceDrafts((current) => ({ ...current, [source.source_id]: { ...draft, status: next } }));
                             setDirtySourceIds((current) => ({ ...current, [source.source_id]: true }));
@@ -759,7 +862,7 @@ export function KnowledgeBaseDetailsPage() {
                               refresh_policy: draft.refresh_policy,
                               status: draft.status === source.status || draft.status === 'unavailable' ? undefined : draft.status,
                             })}
-                            disabled={sourceSettingsMutation.isPending || !dirtySourceIds[source.source_id] || uploadLearningInProgress }
+                            disabled={sourceControlsLocked || !dirtySourceIds[source.source_id]}
                           >
                             {sourceSettingsMutation.isPending ? 'Сохраняю…' : 'Сохранить настройки'}
                           </Button>
@@ -768,7 +871,8 @@ export function KnowledgeBaseDetailsPage() {
                     ) : null}
                   </div>
                 );
-              })}
+                })}
+              </div>
             </div>
           ) : <EmptyState title="Источников пока нет" />}
           {sourceSettingsMutation.isError ? <ErrorNotice error={sourceSettingsMutation.error} fallback="Не удалось сохранить настройки источника." /> : null}
@@ -776,15 +880,15 @@ export function KnowledgeBaseDetailsPage() {
           {!isSystemBase && !isArchivedBase ? (
             <div className="stack compact" style={{ marginTop: 16 }}>
               <FormRow label="Новый источник">
-                <Input value={newSourceName} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceName(event.target.value)} placeholder="Можно оставить пустым"  disabled={uploadLearningInProgress} />
+                <Input value={newSourceName} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceName(event.target.value)} placeholder="Можно оставить пустым"  disabled={sourceControlsLocked || sourceMutation.isPending} />
               </FormRow>
               <FormRow label="URL-страница">
-                <Input value={newSourceUri} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceUri(event.target.value)} placeholder="https://docs.example.com/architecture/" />
+                <Input value={newSourceUri} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewSourceUri(event.target.value)} placeholder="https://docs.example.com/architecture/" disabled={sourceControlsLocked || sourceMutation.isPending} />
               </FormRow>
               <div className="muted small">Вставьте адрес web-страницы. Если название пустое, система заполнит его по URL.</div>
               {sourceMutation.isError ? <ErrorNotice error={sourceMutation.error} fallback="Не удалось добавить источник." /> : null}
               <div className="actions">
-                <Button primary onClick={() => sourceMutation.mutate()} disabled={sourceMutation.isPending || !newSourceUri.trim()}>
+                <Button primary onClick={() => sourceMutation.mutate()} disabled={sourceMutation.isPending || sourceControlsLocked || !newSourceUri.trim()}>
                   {sourceMutation.isPending ? 'Добавляю…' : 'Добавить источник'}
                 </Button>
               </div>
@@ -796,10 +900,18 @@ export function KnowledgeBaseDetailsPage() {
           {isSystemBase ? <EmptyState title="Для системной базы дозагрузка через UI запрещена" /> : isArchivedBase ? <EmptyState title="База в архиве" description="Разархивируйте базу, чтобы добавлять документы." /> : (
             <div className="stack compact">
               <FormRow label="Название в системе">
-                <Input value={uploadTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadTitle(event.target.value)} placeholder="Можно оставить пустым" />
+                <Input value={uploadTitle} onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadTitle(event.target.value)} placeholder="Можно оставить пустым" disabled={uploadLearningInProgress} />
               </FormRow>
               <FormRow label="Файл">
-                <Input type="file" multiple onChange={(event: ChangeEvent<HTMLInputElement>) => setUploadFiles(Array.from(event.target.files ?? []))} disabled={uploadLearningInProgress} />
+                <Input
+                  type="file"
+                  multiple
+                  accept={KNOWLEDGE_UPLOAD_ACCEPT}
+                  onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                    setUploadFiles(Array.from(event.target.files ?? []));
+                  }}
+                  disabled={uploadLearningInProgress}
+                />
               </FormRow>
               <FormRow label="Статус источника">
                 <div className="readonly-field">{titleStatus(uploadSourceDraft.status)}</div>

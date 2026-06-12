@@ -17,7 +17,10 @@ from app.integrations.export import (
     export_solution_archimate,
     export_solution_document,
 )
-from app.integrations.knowledge.content_loader import ContentLoadError, normalize_document_payload
+from app.integrations.knowledge.content_loader import (
+    ContentLoadError,
+    validate_uploaded_document_payload,
+)
 from app.integrations.vision import analyze_task_input_image, is_supported_image_file
 from app.schemas.mvp import (
     ClarificationAnswerRequest,
@@ -170,7 +173,7 @@ async def import_task_input_file(
         ).text
 
     try:
-        normalized = normalize_document_payload(
+        normalized = validate_uploaded_document_payload(
             filename,
             data,
             media_type=file.content_type,

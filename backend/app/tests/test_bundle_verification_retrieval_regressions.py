@@ -458,7 +458,7 @@ def test_generation_start_run_idempotency_payload_tracks_scope_and_task_snapshot
     payload = service.idempotency.resolve_payloads[0]
     assert result.generation_run_id == "existing-run"
     assert payload["knowledge_version_id"] == "kv-user"
-    assert payload["knowledge_version_ids"] == ["kv-mandatory", "kv-user"]
+    assert payload["knowledge_version_ids"] == ["kv-user"]
     assert payload["prompt_version"] == "prompt-v1"
     assert payload["knowledge_scope_hash"]
     assert payload["task_input_hash"]
@@ -528,7 +528,7 @@ def test_verification_start_run_idempotency_payload_tracks_rulebook_and_publicat
     payload = service.idempotency.resolve_payloads[0]
     assert result.verification_run_id == "existing-run"
     assert payload["knowledge_version_id"] == "kv-user"
-    assert payload["knowledge_version_ids"] == ["kv-mandatory", "kv-user"]
+    assert payload["knowledge_version_ids"] == ["kv-user"]
     assert payload["rulebook_version"] == "rulebook-v5"
     assert payload["rule_codes"] == ["VR-1", "VR-2"]
     assert payload["publication_revision_no"] == 7

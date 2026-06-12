@@ -11,6 +11,7 @@ from app.db.enums import (
     SourceType,
 )
 from app.domain.services.knowledge_core import KnowledgeSourceService
+from app.domain.services.knowledge_snapshot import build_knowledge_scope_snapshot
 from app.domain.services.mvp_canonical import CanonicalReadService
 from app.schemas.mvp import KnowledgeVersionResponse
 
@@ -145,3 +146,40 @@ def test_active_knowledge_version_payload_preserves_knowledge_scope() -> None:
         "selected_user_version_id": "kv-user",
         "selected_user_base_id": "kb-user",
     }
+
+
+def test_scope_snapshot_uses_only_selected_user_version_when_user_base_is_selected() -> None:
+    now = datetime.now(UTC)
+    mandatory_version = SimpleNamespace(
+        knowledge_version_id="kv-mandatory",
+        knowledge_base_id="kb-mandatory",
+        knowledge_base=SimpleNamespace(kind="system_mandatory", code="mandatory"),
+        version_no="MANDATORY-1",
+        status=KnowledgeVersionStatus.ACTIVE,
+        created_at=now,
+        activated_at=now,
+        activated_by_user_id=None,
+        version_documents=[],
+        source_snapshot={},
+    )
+    user_version = SimpleNamespace(
+        knowledge_version_id="kv-user",
+        knowledge_base_id="kb-user",
+        knowledge_base=SimpleNamespace(kind="user_managed", code="user"),
+        version_no="USER-1",
+        status=KnowledgeVersionStatus.ACTIVE,
+        created_at=now,
+        activated_at=now,
+        activated_by_user_id="user-1",
+        version_documents=[],
+        source_snapshot={},
+    )
+
+    snapshot = build_knowledge_scope_snapshot(
+        mandatory_version=mandatory_version,
+        selected_user_version=user_version,
+    )
+
+    assert snapshot["mandatory_version"] == {}
+    assert snapshot["selected_generation_version_id"] == "kv-user"
+    assert snapshot["effective_version_ids"] == ["kv-user"]
