@@ -19,7 +19,10 @@ from app.domain.architecture import (
     render_togaf_heading,
     validate_archimate_alignment,
 )
-from app.domain.services.knowledge_basis import build_basis_inventory_for_version_documents
+from app.domain.services.knowledge_basis import (
+    build_basis_inventory_for_version_documents,
+    requires_catalog_basis_for_versions,
+)
 from app.integrations.verification import (
     VerificationCheckResultPayload,
     VerificationRuleDefinition,
@@ -91,6 +94,15 @@ PROHIBITED_TECH_MARKERS = (
     "не допуска",
     "не рекоменду",
 )
+ALLOWED_TECH_MARKERS = (
+    "allow",
+    "allowed",
+    "approved",
+    "recommended",
+    "разреш",
+    "допуска",
+    "рекоменд",
+)
 TECH_PHRASE_PATTERNS = (
     re.compile(r"\bubuntu\s+\d+(?:\.\d+)*(?:\s+lts)?\b"),
     re.compile(r"\bdebian\s+\d+(?:\.\d+)*\b"),
@@ -103,6 +115,42 @@ TECH_PHRASE_PATTERNS = (
     re.compile(r"\bwindows\s+server\s+\d{4}(?:\s+r2)?\b"),
     re.compile(r"\bpostgres(?:ql)?\s+\d+(?:\.\d+)*\b"),
     re.compile(r"\bjava\s+\d+\b"),
+)
+TECH_VERSION_PATTERNS = (
+    ("ubuntu", re.compile(r"\bubuntu\s+(?P<version>\d+(?:\.\d+)*)(?:\s+lts)?\b")),
+    ("debian", re.compile(r"\bdebian\s+(?P<version>\d+(?:\.\d+)*)\b")),
+    ("centos", re.compile(r"\bcentos\s+(?P<version>\d+(?:\.\d+)*)\b")),
+    ("rhel", re.compile(r"\brhel\s+(?P<version>\d+(?:\.\d+)*)\b")),
+    (
+        "red hat",
+        re.compile(r"\bred\s+hat(?:\s+enterprise\s+linux)?\s+(?P<version>\d+(?:\.\d+)*)\b"),
+    ),
+    ("oracle linux", re.compile(r"\boracle\s+linux\s+(?P<version>\d+(?:\.\d+)*)\b")),
+    ("rocky linux", re.compile(r"\brocky\s+linux\s+(?P<version>\d+(?:\.\d+)*)\b")),
+    ("alma linux", re.compile(r"\balma\s*linux\s+(?P<version>\d+(?:\.\d+)*)\b")),
+    (
+        "windows server",
+        re.compile(r"\bwindows\s+server\s+(?P<version>\d{4})(?:\s+r2)?\b"),
+    ),
+    ("postgres", re.compile(r"\bpostgres(?:ql)?\s+(?P<version>\d+(?:\.\d+)*)\b")),
+    ("java", re.compile(r"\bjava\s+(?P<version>\d+)\b")),
+)
+TECH_PRODUCT_NAME_PATTERNS = (
+    ("red hat", re.compile(r"\bred\s+hat(?:\s+enterprise\s+linux)?\b")),
+    ("oracle linux", re.compile(r"\boracle\s+linux\b")),
+    ("rocky linux", re.compile(r"\brocky\s+linux\b")),
+    ("alma linux", re.compile(r"\balma\s*linux\b")),
+    ("windows server", re.compile(r"\bwindows\s+server\b")),
+    ("ubuntu", re.compile(r"\bubuntu\b")),
+    ("debian", re.compile(r"\bdebian\b")),
+    ("centos", re.compile(r"\bcentos\b")),
+    ("rhel", re.compile(r"\brhel\b")),
+    ("postgres", re.compile(r"\bpostgres(?:ql)?\b")),
+    ("java", re.compile(r"\bjava\b")),
+)
+TECH_BELOW_VERSION_RE = re.compile(
+    r"(?:<|ниже|меньше|старее|до|below|less\s+than|lower\s+than|older\s+than|earlier\s+than|before)\s+"
+    r"(?P<version>\d+(?:\.\d+)*)"
 )
 TECH_POLICY_STOPWORDS = {
     "status",
@@ -136,12 +184,52 @@ def _contains_prohibited_marker(value: str) -> bool:
     return any(marker in lowered for marker in PROHIBITED_TECH_MARKERS)
 
 
+def _contains_allowed_marker(value: str) -> bool:
+    lowered = value.casefold().replace("ё", "е")
+    return any(marker in lowered for marker in ALLOWED_TECH_MARKERS)
+
+
 def _technology_phrases(value: str | None) -> set[str]:
     normalized = _normalize_tech_policy_text(value)
     phrases: set[str] = set()
     for pattern in TECH_PHRASE_PATTERNS:
         phrases.update(match.group(0) for match in pattern.finditer(normalized))
     return phrases
+
+
+def _version_key(value: str | None) -> tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", value or "")[:4])
+
+
+def _version_lt(left: tuple[int, ...], right: tuple[int, ...]) -> bool:
+    size = max(len(left), len(right))
+    return left + (0,) * (size - len(left)) < right + (0,) * (size - len(right))
+
+
+def _technology_version_mentions(value: str | None) -> list[dict[str, Any]]:
+    normalized = _normalize_tech_policy_text(value)
+    mentions: list[dict[str, Any]] = []
+    for product, pattern in TECH_VERSION_PATTERNS:
+        for match in pattern.finditer(normalized):
+            version = match.group("version")
+            mentions.append(
+                {
+                    "product": product,
+                    "version": _version_key(version),
+                    "version_label": version,
+                    "phrase": match.group(0),
+                }
+            )
+    return mentions
+
+
+def _technology_products(value: str | None) -> set[str]:
+    normalized = _normalize_tech_policy_text(value)
+    return {
+        product
+        for product, pattern in TECH_PRODUCT_NAME_PATTERNS
+        if pattern.search(normalized)
+    }
 
 
 def _generic_policy_phrases_near_marker(segment: str) -> set[str]:
@@ -182,10 +270,90 @@ def _prohibited_technology_phrases(value: str | None) -> set[str]:
     return {phrase for phrase in phrases if phrase and phrase not in TECH_POLICY_STOPWORDS}
 
 
+def _prohibited_version_range_policies(value: str | None) -> list[dict[str, Any]]:
+    policies: list[dict[str, Any]] = []
+    lines = [line for line in re.split(r"[\n\r;]+", value or "") if line.strip()]
+    for index, segment in enumerate(lines):
+        if not _contains_prohibited_marker(segment):
+            continue
+        products = _technology_products(segment)
+        if not products and index > 0:
+            products = _technology_products(lines[index - 1])
+        if not products:
+            continue
+        normalized_segment = _normalize_tech_policy_text(segment)
+        for match in TECH_BELOW_VERSION_RE.finditer(normalized_segment):
+            version_label = match.group("version")
+            version = _version_key(version_label)
+            if not version:
+                continue
+            for product in products:
+                policies.append(
+                    {
+                        "product": product,
+                        "operator": "lt",
+                        "version": version,
+                        "version_label": version_label,
+                    }
+                )
+    return policies
+
+
+def _allowed_version_mentions(value: str | None) -> list[dict[str, Any]]:
+    mentions: list[dict[str, Any]] = []
+    lines = [line for line in re.split(r"[\n\r;]+", value or "") if line.strip()]
+    for segment in lines:
+        if _contains_prohibited_marker(segment) or not _contains_allowed_marker(segment):
+            continue
+        mentions.extend(_technology_version_mentions(segment))
+    return mentions
+
+
+def _allowed_floor_for_mention(
+    policy_text: str | None, mention: dict[str, Any]
+) -> str | None:
+    candidates = [
+        allowed
+        for allowed in _allowed_version_mentions(policy_text)
+        if allowed["product"] == mention["product"]
+        and _version_lt(mention["version"], allowed["version"])
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item["version"])["version_label"]
+
+
 def _contains_technology_phrase(haystack: str | None, phrase: str) -> bool:
     normalized_haystack = f" {_normalize_tech_policy_text(haystack)} "
     normalized_phrase = _normalize_tech_policy_text(phrase)
     return bool(normalized_phrase and f" {normalized_phrase} " in normalized_haystack)
+
+
+def _prohibited_technology_hits(solution_text: str | None, policy_text: str | None) -> set[str]:
+    hits: set[str] = set()
+    for phrase in _prohibited_technology_phrases(policy_text):
+        if _contains_technology_phrase(solution_text, phrase):
+            exact_mentions = _technology_version_mentions(phrase)
+            comparable_hit = False
+            for mention in exact_mentions:
+                allowed_floor = _allowed_floor_for_mention(policy_text, mention)
+                if allowed_floor:
+                    hits.add(f"{phrase} < {allowed_floor}")
+                    comparable_hit = True
+                    break
+            if not comparable_hit:
+                hits.add(phrase)
+
+    solution_mentions = _technology_version_mentions(solution_text)
+    for policy in _prohibited_version_range_policies(policy_text):
+        for mention in solution_mentions:
+            if mention["product"] != policy["product"]:
+                continue
+            if policy["operator"] == "lt" and _version_lt(
+                mention["version"], policy["version"]
+            ):
+                hits.add(f"{mention['phrase']} < {policy['version_label']}")
+    return hits
 
 
 def _solution_technology_text(support: "VerificationSupportContext") -> str:
@@ -274,14 +442,23 @@ class VerificationSupportContext:
             if knowledge_version is not None:
                 knowledge_versions = [knowledge_version]
         version_documents: list[Any] = []
+        selected_document_ids = list(getattr(context, "selected_document_ids", []) or [])
         for knowledge_version in knowledge_versions:
             version_documents.extend(
                 filter_version_documents(
                     getattr(knowledge_version, "version_documents", []) or [],
-                    getattr(context, "selected_document_ids", []) or [],
+                    selected_document_ids,
                 )
             )
-        basis_inventory = build_basis_inventory_for_version_documents(version_documents)
+        require_catalog_packages = (
+            requires_catalog_basis_for_versions(knowledge_versions)
+            and not selected_document_ids
+        )
+        basis_inventory = build_basis_inventory_for_version_documents(
+            version_documents,
+            require_catalog_packages=require_catalog_packages,
+            include_reference_documents=not require_catalog_packages,
+        )
         combined_section_text = "\n".join(
             filter(
                 None,
@@ -298,11 +475,15 @@ class VerificationSupportContext:
         support_summary.setdefault("scoped_document_count", len(version_documents))
         support_summary.setdefault(
             "document_scope",
-            "selected" if getattr(context, "selected_document_ids", []) else "full",
+            "selected" if selected_document_ids else "full",
         )
         support_summary.setdefault(
             "selected_document_count",
-            len(getattr(context, "selected_document_ids", []) or []),
+            len(selected_document_ids),
+        )
+        support_summary.setdefault(
+            "basis_requirement_mode",
+            "catalog" if require_catalog_packages else "scoped_documents",
         )
         return cls(
             section_by_code=section_by_code,
@@ -380,6 +561,22 @@ class _BaseRuleExecutor:
         )
         scoped_document_count = int(support.support_summary.get("scoped_document_count") or 0)
         return max(basis_count, selected_document_count, scoped_document_count) > 0
+
+    @staticmethod
+    def _is_imported_or_unlinked_architecture(context: VerificationExecutionContext) -> bool:
+        solution = getattr(context, "solution", None)
+        generation_run = getattr(solution, "generation_run", None)
+        if generation_run is None:
+            return True
+        run_diagnostics = dict(getattr(generation_run, "diagnostics", None) or {})
+        task_metadata = dict(
+            getattr(getattr(solution, "business_task", None), "task_metadata", None) or {}
+        )
+        return (
+            run_diagnostics.get("source") == "external_architecture"
+            or task_metadata.get("source") == "external_architecture"
+            or task_metadata.get("verification_only") is True
+        )
 
 
 class TechnicalRulesExecutor(_BaseRuleExecutor):
@@ -792,6 +989,20 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
         "VR-NRM-02": ["произвольная метамодель", "без archimate", "не следуем archimate"],
     }
 
+    @staticmethod
+    def _scoped_materials_expect_roles(
+        support: VerificationSupportContext, *role_codes: str
+    ) -> bool:
+        if support.support_summary.get("basis_requirement_mode") != "scoped_documents":
+            return True
+        expected_roles = set(role_codes)
+        if expected_roles & set(support.required_fragments_by_role):
+            return True
+        return any(
+            getattr(item, "role_code", None) in expected_roles
+            for item in support.basis_inventory.basis_documents
+        )
+
     def execute(
         self,
         *,
@@ -812,6 +1023,19 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             )
             evidence = support.evidence_for_roles("oda", "ig1242_oda_component_inventory")
             if evidence is None:
+                if not self._scoped_materials_expect_roles(
+                    support, "oda", "ig1242_oda_component_inventory"
+                ):
+                    return self.result(
+                        rule=rule,
+                        status=CheckResultStatus.NOT_APPLICABLE,
+                        evidence="документы ODA / IG1242 не выбраны",
+                        diagnostics={
+                            "required_roles": ["oda", "ig1242_oda_component_inventory"],
+                            "basis_requirement_mode": "scoped_documents",
+                        },
+                        related_section_ref=related_section_ref,
+                    )
                 status = (
                     CheckResultStatus.WARNING
                     if self._has_verification_materials(support)
@@ -870,6 +1094,17 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             )
             evidence = support.evidence_for_roles("archimate_3_2")
             if evidence is None:
+                if not self._scoped_materials_expect_roles(support, "archimate_3_2"):
+                    return self.result(
+                        rule=rule,
+                        status=CheckResultStatus.NOT_APPLICABLE,
+                        evidence="документы ArchiMate 3.2 не выбраны",
+                        diagnostics={
+                            "required_roles": ["archimate_3_2"],
+                            "basis_requirement_mode": "scoped_documents",
+                        },
+                        related_section_ref=related_section_ref,
+                    )
                 status = (
                     CheckResultStatus.WARNING
                     if self._has_verification_materials(support)
@@ -938,6 +1173,17 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
             evidence = support.evidence_for_roles("technology_standard")
             rule_evidence = support.evidence_for_rule(rule.code)
             if evidence is None and not rule_evidence:
+                if not self._scoped_materials_expect_roles(support, "technology_standard"):
+                    return self.result(
+                        rule=rule,
+                        status=CheckResultStatus.NOT_APPLICABLE,
+                        evidence="технологический стандарт не выбран",
+                        diagnostics={
+                            "required_roles": ["technology_standard"],
+                            "basis_requirement_mode": "scoped_documents",
+                        },
+                        related_section_ref=related_section_ref,
+                    )
                 status = (
                     CheckResultStatus.WARNING
                     if self._has_verification_materials(support)
@@ -979,26 +1225,14 @@ class NormativeRulesExecutor(_BaseRuleExecutor):
                 content = (getattr(fragment, "content", None) or "").lower()
                 title = (getattr(fragment, "title", None) or "").lower()
                 fragment_text = "\n".join([title, content])
-                for phrase in _prohibited_technology_phrases(fragment_text):
-                    if _contains_technology_phrase(tech_text_raw, phrase):
-                        prohibited_hits.append(phrase)
+                prohibited_hits.extend(
+                    sorted(_prohibited_technology_hits(tech_text_raw, fragment_text))
+                )
                 for token in re.findall(r"[a-zA-Z0-9_\-\.]{3,}", tech_text):
                     if token in {"and", "the", "for", "with", "без", "или"}:
                         continue
                     if token in content or token in title:
                         aligned_hits.append(token)
-                    if token in content and any(
-                        marker in content
-                        for marker in [
-                            "forbid",
-                            "must not",
-                            "deprecated",
-                            "not recommended",
-                            "запрещ",
-                            "не рекоменду",
-                        ]
-                    ):
-                        prohibited_hits.append(token)
             if prohibited_hits:
                 status = CheckResultStatus.FAILED
                 finding = (
@@ -1478,13 +1712,15 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                 source_ref_total += len(refs)
                 if section is not None and not refs:
                     deficiencies.append(section_code)
-            imported_without_generation_link = getattr(context.solution, "generation_run", None) is None
+            imported_or_unlinked = self._is_imported_or_unlinked_architecture(context)
             rag_summary = dict(support.support_summary.get("rule_rag") or {})
             has_rule_rag = int(rag_summary.get("rules_with_evidence") or 0) > 0
+            selected_document_scope = bool(getattr(context, "selected_document_ids", []) or [])
+            has_external_evidence = self._has_verification_materials(support) or has_rule_rag
             if not deficiencies:
                 status = CheckResultStatus.PASSED
-            elif imported_without_generation_link or (source_ref_total == 0 and has_rule_rag):
-                status = CheckResultStatus.WARNING
+            elif (imported_or_unlinked or selected_document_scope) and has_external_evidence:
+                status = CheckResultStatus.PASSED
             else:
                 status = CheckResultStatus.FAILED
             return self.result(
@@ -1498,16 +1734,26 @@ class ConsistencyRulesExecutor(_BaseRuleExecutor):
                     else "Для части ключевых разделов нет ссылок на основания: "
                     f"{_section_list(deficiencies)}."
                 ),
-                evidence=_section_list(deficiencies)
+                evidence="выбранные документы базы знаний / RAG-доказательства"
+                if deficiencies and status == CheckResultStatus.PASSED
+                else _section_list(deficiencies)
                 if deficiencies
                 else str(source_ref_total),
                 diagnostics={
                     "sections_missing_evidence": deficiencies,
                     "source_ref_total": source_ref_total,
-                    "imported_without_generation_link": imported_without_generation_link,
+                    "imported_or_unlinked_architecture": imported_or_unlinked,
+                    "selected_document_scope": selected_document_scope,
                     "rule_rag": rag_summary,
+                    "evidence_mode": "knowledge_scope"
+                    if deficiencies and status == CheckResultStatus.PASSED
+                    else "section_source_refs",
                 },
-                related_section_ref=deficiencies[0] if deficiencies else None,
+                related_section_ref=None
+                if deficiencies and status == CheckResultStatus.PASSED
+                else deficiencies[0]
+                if deficiencies
+                else None,
             )
 
         if rule.code == "VR-CNS-03":

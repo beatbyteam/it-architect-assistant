@@ -488,6 +488,7 @@ class KnowledgeVersionRepository(Repository[KnowledgeVersion]):
             statement = statement.where(KnowledgeVersion.knowledge_base_id == knowledge_base_id)
         if eager:
             statement = statement.options(
+                selectinload(KnowledgeVersion.knowledge_base),
                 selectinload(KnowledgeVersion.version_documents).selectinload(
                     KnowledgeVersionDocument.document
                 ),
@@ -506,6 +507,7 @@ class KnowledgeVersionRepository(Repository[KnowledgeVersion]):
         statement = statement.with_for_update()
         if eager:
             statement = statement.options(
+                selectinload(KnowledgeVersion.knowledge_base),
                 selectinload(KnowledgeVersion.version_documents).selectinload(
                     KnowledgeVersionDocument.document
                 ),

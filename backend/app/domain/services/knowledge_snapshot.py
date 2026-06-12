@@ -5,7 +5,10 @@ from hashlib import sha256
 from typing import Any
 
 from app.db.models.knowledge import KnowledgeVersion
-from app.domain.services.knowledge_basis import build_basis_inventory_for_version_documents
+from app.domain.services.knowledge_basis import (
+    build_basis_inventory_for_version_documents,
+    requires_catalog_basis_for_versions,
+)
 
 
 def _safe_isoformat(value: Any) -> str | None:
@@ -16,7 +19,12 @@ def build_knowledge_version_snapshot(version: KnowledgeVersion | None) -> dict[s
     if version is None:
         return {}
     version_documents = list(getattr(version, "version_documents", []) or [])
-    basis_inventory = build_basis_inventory_for_version_documents(version_documents)
+    require_catalog_packages = requires_catalog_basis_for_versions([version])
+    basis_inventory = build_basis_inventory_for_version_documents(
+        version_documents,
+        require_catalog_packages=require_catalog_packages,
+        include_reference_documents=not require_catalog_packages,
+    )
     source_snapshot = dict(getattr(version, "source_snapshot", {}) or {})
     basis_documents = [
         {
@@ -45,6 +53,9 @@ def build_knowledge_version_snapshot(version: KnowledgeVersion | None) -> dict[s
         "required_packages": list(basis_inventory.required_packages),
         "missing_required_packages": list(basis_inventory.missing_required_packages),
         "required_basis_present": basis_inventory.required_basis_present,
+        "basis_requirement_mode": "catalog"
+        if require_catalog_packages
+        else "scoped_documents",
         "basis_document_count": len(basis_documents),
         "basis_documents": basis_documents,
         "document_count": len(version_documents),
@@ -62,7 +73,8 @@ def build_knowledge_version_snapshot(version: KnowledgeVersion | None) -> dict[s
 def build_knowledge_scope_snapshot(
     *, mandatory_version: KnowledgeVersion | None, selected_user_version: KnowledgeVersion | None
 ) -> dict[str, Any]:
-    mandatory_snapshot = build_knowledge_version_snapshot(mandatory_version)
+    scoped_mandatory_version = None if selected_user_version is not None else mandatory_version
+    mandatory_snapshot = build_knowledge_version_snapshot(scoped_mandatory_version)
     selected_snapshot = build_knowledge_version_snapshot(selected_user_version)
     scope = {
         "mandatory_version": mandatory_snapshot,

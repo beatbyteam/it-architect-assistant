@@ -21,6 +21,7 @@ from app.domain.services.verification.run_service import (
 )
 from app.domain.services.verification.runtime import _prepare_verification_context
 from app.domain.services.verification.rule_executors import (
+    ConsistencyRulesExecutor,
     NormativeRulesExecutor,
     StructureRulesExecutor,
     VerificationSupportContext,
@@ -119,6 +120,96 @@ def test_selected_document_normative_check_passes_without_section_citations() ->
     assert result.diagnostics["selected_document_scope"] is True
 
 
+def test_full_document_scope_selects_only_rules_supported_by_documents() -> None:
+    service = VerificationRunService.__new__(VerificationRunService)
+    service.registry = SimpleNamespace(
+        list_rules=lambda: [
+            VerificationRuleDefinition(
+                "VR-TEC-01", "Knowledge base has indexed documents", "technical", Severity.MAJOR
+            ),
+            VerificationRuleDefinition(
+                "VR-STR-01", "TOGAF goal and context are captured", "structure", Severity.MAJOR
+            ),
+            VerificationRuleDefinition(
+                "VR-NRM-02", "ArchiMate semantics are present", "normative", Severity.MAJOR
+            ),
+        ]
+    )
+    document_scope = {
+        "mode": "full",
+        "effective_document_ids": ["doc-1"],
+        "effective_documents": [
+            {
+                "document_id": "doc-1",
+                "title": "Описание интеграционного решения",
+                "role_code": "reference_only",
+                "document_type": "other",
+            }
+        ],
+    }
+
+    rules = VerificationRunService._select_rules(
+        service,
+        "full",
+        document_scope=document_scope,
+    )
+
+    assert [rule.code for rule in rules] == ["VR-TEC-01"]
+
+
+def test_imported_architecture_without_section_source_refs_uses_selected_knowledge_evidence() -> None:
+    support = VerificationSupportContext(
+        section_by_code={
+            "general_information": SimpleNamespace(
+                section_code="general_information",
+                sort_order=1,
+                body_markdown="Imported architecture section.",
+                source_refs=[],
+            )
+        },
+        section_codes={"general_information"},
+        combined_section_text="Imported architecture section.",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(
+            basis_documents=[SimpleNamespace(document_id="doc-1", role_code="reference_only")],
+            required_packages=[],
+            missing_required_packages=[],
+        ),
+        required_fragments_by_role={},
+        support_summary={
+            "scoped_document_count": 1,
+            "selected_document_count": 1,
+            "basis_requirement_mode": "scoped_documents",
+            "rule_rag": {"rules_with_evidence": 1},
+        },
+    )
+    context = SimpleNamespace(
+        selected_document_ids=["doc-1"],
+        solution=SimpleNamespace(
+            generation_run=SimpleNamespace(diagnostics={"source": "external_architecture"}),
+            business_task=SimpleNamespace(
+                task_metadata={"source": "external_architecture", "verification_only": True}
+            ),
+        ),
+    )
+    rule = VerificationRuleDefinition(
+        "VR-CNS-02",
+        "Source references are available",
+        "consistency",
+        Severity.MAJOR,
+    )
+
+    result = ConsistencyRulesExecutor().execute(rule=rule, context=context, support=support)
+
+    assert result.status == CheckResultStatus.PASSED
+    assert result.finding_text is None
+    assert result.diagnostics["evidence_mode"] == "knowledge_scope"
+
+
 def test_normative_missing_basis_fragments_warns_when_materials_exist() -> None:
     support = _support_with_sections("application_architecture")
     support.required_fragments_by_role = {}
@@ -206,7 +297,7 @@ def test_technology_standard_forbidden_ubuntu_version_fails_verification() -> No
     )
 
     assert result.status == CheckResultStatus.FAILED
-    assert "ubuntu 20.04 lts" in result.diagnostics["prohibited_hits"]
+    assert "ubuntu 20.04 lts < 22.04" in result.diagnostics["prohibited_hits"]
 
 
 def test_technology_standard_forbidden_ubuntu_from_rule_rag_fails_verification() -> None:
@@ -252,6 +343,138 @@ def test_technology_standard_forbidden_ubuntu_from_rule_rag_fails_verification()
 
     assert result.status == CheckResultStatus.FAILED
     assert "ubuntu 20.04 lts" in result.diagnostics["prohibited_hits"]
+
+
+def test_technology_standard_rejects_ubuntu_below_forbidden_range() -> None:
+    support = VerificationSupportContext(
+        section_by_code={
+            "technology_architecture": SimpleNamespace(
+                body_markdown="Для всех серверов требуется установка Ubuntu 20.04 LTS.",
+                source_refs=[],
+            )
+        },
+        section_codes={"technology_architecture"},
+        combined_section_text="Для всех серверов требуется установка Ubuntu 20.04 LTS.",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(basis_documents=[]),
+        required_fragments_by_role={
+            "technology_standard": [
+                SimpleNamespace(
+                    fragment_id="fragment-os-standard",
+                    title="Стандарт по операционным системам",
+                    content="Ubuntu все версии ниже 22.04 Запрещено\nUbuntu 22.04 LTS Разрешено",
+                )
+            ]
+        },
+        support_summary={},
+    )
+    rule = VerificationRuleDefinition(
+        "VR-NRM-03",
+        "Technology choice follows selected technology standard",
+        "normative",
+        Severity.CRITICAL,
+    )
+
+    result = NormativeRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.FAILED
+    assert "ubuntu 20.04 lts < 22.04" in result.diagnostics["prohibited_hits"]
+
+
+def test_technology_standard_allows_debian_above_forbidden_range() -> None:
+    support = VerificationSupportContext(
+        section_by_code={
+            "technology_architecture": SimpleNamespace(
+                body_markdown="Целевой сервер использует Debian 13.",
+                source_refs=[],
+            )
+        },
+        section_codes={"technology_architecture"},
+        combined_section_text="Целевой сервер использует Debian 13.",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(basis_documents=[]),
+        required_fragments_by_role={
+            "technology_standard": [
+                SimpleNamespace(
+                    fragment_id="fragment-debian-standard",
+                    title="Стандарт по операционным системам",
+                    content="Debian все версии ниже 11 Запрещено\nDebian 13 Разрешено",
+                )
+            ]
+        },
+        support_summary={},
+    )
+    rule = VerificationRuleDefinition(
+        "VR-NRM-03",
+        "Technology choice follows selected technology standard",
+        "normative",
+        Severity.CRITICAL,
+    )
+
+    result = NormativeRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.PASSED
+    assert result.diagnostics["prohibited_hits"] == []
+
+
+def test_technology_standard_rejects_debian_below_forbidden_range() -> None:
+    support = VerificationSupportContext(
+        section_by_code={
+            "technology_architecture": SimpleNamespace(
+                body_markdown="Целевой сервер использует Debian 10.",
+                source_refs=[],
+            )
+        },
+        section_codes={"technology_architecture"},
+        combined_section_text="Целевой сервер использует Debian 10.",
+        assumptions=[],
+        next_steps=[],
+        components=[],
+        integrations=[],
+        risks=[],
+        basis_inventory=SimpleNamespace(basis_documents=[]),
+        required_fragments_by_role={
+            "technology_standard": [
+                SimpleNamespace(
+                    fragment_id="fragment-debian-standard",
+                    title="Стандарт по операционным системам",
+                    content="Debian все версии ниже 11 Запрещено\nDebian 13 Разрешено",
+                )
+            ]
+        },
+        support_summary={},
+    )
+    rule = VerificationRuleDefinition(
+        "VR-NRM-03",
+        "Technology choice follows selected technology standard",
+        "normative",
+        Severity.CRITICAL,
+    )
+
+    result = NormativeRulesExecutor().execute(
+        rule=rule,
+        context=SimpleNamespace(),
+        support=support,
+    )
+
+    assert result.status == CheckResultStatus.FAILED
+    assert "debian 10 < 11" in result.diagnostics["prohibited_hits"]
 
 
 def test_structural_warnings_fallback_to_existing_solution_section() -> None:
@@ -409,6 +632,46 @@ def test_selected_operating_system_standard_keeps_technology_rule() -> None:
     )
 
     assert "VR-NRM-03" in rule_codes
+
+
+def test_full_document_scope_filters_normative_rules_by_effective_documents() -> None:
+    service = VerificationRunService.__new__(VerificationRunService)
+    service.registry = SimpleNamespace(
+        list_rules=lambda: [
+            VerificationRuleDefinition(
+                "VR-STR-01", "Goal is reflected", "structure", Severity.MAJOR
+            ),
+            VerificationRuleDefinition(
+                "VR-NRM-01", "ODA alignment", "normative", Severity.MAJOR
+            ),
+            VerificationRuleDefinition(
+                "VR-NRM-02", "ArchiMate alignment", "normative", Severity.MAJOR
+            ),
+            VerificationRuleDefinition(
+                "VR-NRM-03", "Technology radar alignment", "normative", Severity.MAJOR
+            ),
+            VerificationRuleDefinition(
+                "VR-NRM-05", "Allowed ArchiMate elements", "normative", Severity.CRITICAL
+            ),
+        ]
+    )
+
+    rules = service._select_rules(
+        "full",
+        document_scope={
+            "mode": "full",
+            "effective_documents": [
+                {
+                    "document_id": "doc-radar",
+                    "title": "Технологический радар",
+                    "role_code": "technology_standard",
+                    "document_type": "technology",
+                }
+            ],
+        },
+    )
+
+    assert [rule.code for rule in rules] == ["VR-NRM-03"]
 
 
 def test_prepare_verification_context_adds_technology_rule_from_selected_content() -> None:

@@ -14,7 +14,7 @@ from app.domain.services.observability import (
 )
 
 from .common import TERMINAL_VERIFICATION_STATUSES, VerificationExecutionContext, logger
-from .document_scope import selected_document_ids_from_scope
+from .document_scope import effective_document_ids_from_scope
 from .rule_executors import calculate_verification_score
 
 
@@ -222,7 +222,7 @@ def _prepare_verification_context(
     service: Any, *, run: VerificationRun, solution: Any
 ) -> tuple[list[Any], Any, dict[str, Any], list[Any], list[str], dict[str, Any], list[str]]:
     scope = run.scope_snapshot or {}
-    selected_document_ids = selected_document_ids_from_scope(scope)
+    selected_document_ids = effective_document_ids_from_scope(scope)
     scope_version_ids = list(scope.get("knowledge_version_ids") or [str(run.knowledge_version_id)])
     knowledge_versions = [
         service._get_knowledge_version(version_id) for version_id in scope_version_ids
@@ -276,7 +276,12 @@ def _extend_selected_document_rules_from_support(
     support_context: dict[str, Any],
     document_scope: Any,
 ) -> list[Any]:
-    if not isinstance(document_scope, dict) or document_scope.get("mode") != "selected":
+    if not isinstance(document_scope, dict):
+        return rules
+    scoped_document_ids = document_scope.get("effective_document_ids") or document_scope.get(
+        "selected_document_ids"
+    )
+    if not scoped_document_ids:
         return rules
     existing_codes = {
         str(getattr(rule, "code", "") or "")

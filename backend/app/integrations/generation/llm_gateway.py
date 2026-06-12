@@ -155,50 +155,49 @@ class OpenAICompatibleSolutionProvider(HttpJsonSolutionProvider):
                     "system_prompt",
                     " ".join(
                         [
-                            "Return only valid JSON matching the architecture solution contract.",
+                            "Верни только валидный JSON по контракту архитектурного решения.",
                             (
-                                "Use exact top-level keys: solution_title,"
+                                "Используй точные top-level ключи: solution_title,"
                                 " executive_summary, sections, components,"
                                 " integrations, assumptions, next_steps, risks."
                             ),
                             (
-                                "The field components is mandatory and must"
-                                " contain at least one component."
+                                "Поле components обязательно и должно содержать"
+                                " хотя бы один компонент."
                             ),
                             (
-                                "The assumptions array must contain at least one concrete,"
-                                " task-specific assumption."
+                                "Массив assumptions должен содержать минимум одно конкретное"
+                                " допущение по задаче и быть написан на русском."
                             ),
                             (
-                                "The next_steps array must contain at least one concrete,"
-                                " actionable next step."
+                                "Массив next_steps должен содержать минимум один конкретный"
+                                " следующий шаг на русском."
                             ),
                             (
-                                "Risk severity must be one of: critical, major, minor, info."
-                                " Never use low, medium, or high."
+                                "Risk severity должен быть одним из: critical, major, minor, info."
+                                " Не используй low, medium или high."
                             ),
                             (
-                                "Every risk must include a specific mitigation with an owner,"
-                                " concrete action, verification checkpoint, and fallback or"
-                                " rollback condition; never use placeholder text such as"
-                                " define mitigation plan."
+                                "Каждый риск должен включать русские title, description и mitigation;"
+                                " mitigation обязан назвать владельца, конкретное действие,"
+                                " контрольную точку проверки и fallback или условие отката."
                             ),
                             (
-                                "Each component must contain component_name, role_description,"
+                                "Каждый component должен содержать component_name, role_description,"
                                 " technology_stack, boundary_type, external_flag, and interfaces."
                             ),
-                            "Every interface item must include interface_name.",
+                            "Каждый interface item должен включать interface_name.",
                             (
-                                "Every section body_markdown must be a non-empty string with"
-                                " concrete content."
+                                "Каждый body_markdown раздела должен быть непустым русским текстом"
+                                " с конкретным содержанием."
                             ),
                             (
-                                "Critical TOGAF sections general_information,"
+                                "Критические TOGAF sections general_information,"
                                 " business_tasks_description, it_architecture_content,"
                                 " business_architecture, data_architecture,"
                                 " application_architecture, technology_architecture,"
-                                " and additional_information must include non-empty"
-                                " source_refs arrays where evidence is available."
+                                " and additional_information должны включать непустые"
+                                " source_refs arrays, если доступны evidence fragments."
                             ),
                         ]
                     ),
@@ -217,50 +216,49 @@ class OpenAICompatibleSolutionProvider(HttpJsonSolutionProvider):
     ) -> list[dict[str, str]]:
         repair_system_prompt = " ".join(
             [
-                "You repair invalid JSON outputs for a strict architecture contract.",
-                "Return only one corrected JSON object and nothing else.",
-                ("Do not wrap the object in keys like architecture, solution, result, or payload."),
+                "Ты исправляешь невалидный JSON для строгого архитектурного контракта.",
+                "Верни только один исправленный JSON-объект и ничего больше.",
+                ("Не оборачивай объект в ключи architecture, solution, result или payload."),
                 (
-                    "Use exact top-level keys in snake_case: solution_title,"
+                    "Используй точные top-level ключи в snake_case: solution_title,"
                     " executive_summary, sections, components, integrations,"
                     " assumptions, next_steps, risks."
                 ),
-                "The field components is mandatory and must contain at least one item.",
+                "Поле components обязательно и должно содержать хотя бы один элемент.",
                 (
-                    "The assumptions array must contain at least one concrete,"
-                    " task-specific assumption."
+                    "Массив assumptions должен содержать минимум одно конкретное"
+                    " допущение по задаче на русском языке."
                 ),
-                ("The next_steps array must contain at least one concrete, actionable next step."),
+                ("Массив next_steps должен содержать минимум один конкретный следующий шаг."),
                 (
-                    "Risk severity must be one of: critical, major, minor, info."
-                    " Never use low, medium, or high."
-                ),
-                (
-                    "Every risk must include a specific mitigation with an owner,"
-                    " concrete action, verification checkpoint, and fallback or rollback"
-                    " condition; never use placeholder text such as define mitigation plan."
+                    "Risk severity должен быть одним из: critical, major, minor, info."
+                    " Не используй low, medium или high."
                 ),
                 (
-                    "If the previous JSON omitted components but described architecture"
-                    " in sections, reconstruct the top-level components array from"
-                    " that content."
+                    "Каждый risk должен включать русские title, description и mitigation;"
+                    " mitigation обязан назвать владельца, конкретное действие,"
+                    " контрольную точку проверки и fallback или условие отката."
                 ),
                 (
-                    "Each component must include component_name, role_description,"
+                    "Если предыдущий JSON пропустил components, но описал архитектуру"
+                    " в sections, восстанови top-level массив components из этого содержания."
+                ),
+                (
+                    "Каждый component должен включать component_name, role_description,"
                     " technology_stack, boundary_type, external_flag, and interfaces."
                 ),
-                "Each interface item must include interface_name.",
+                "Каждый interface item должен включать interface_name.",
                 (
-                    "Every section must include a non-empty body_markdown string"
-                    " with concrete content."
+                    "Каждый section должен включать непустой body_markdown с конкретным"
+                    " русским содержанием."
                 ),
                 (
-                    "Critical TOGAF sections general_information,"
+                    "Критические TOGAF sections general_information,"
                     " business_tasks_description, it_architecture_content,"
                     " business_architecture, data_architecture,"
                     " application_architecture, technology_architecture,"
-                    " and additional_information must include non-empty"
-                    " source_refs arrays where evidence is available."
+                    " and additional_information должны включать непустые"
+                    " source_refs arrays, если evidence доступен."
                 ),
                 (
                     "Required section_code values: general_information,"
@@ -273,11 +271,11 @@ class OpenAICompatibleSolutionProvider(HttpJsonSolutionProvider):
         )
 
         repair_user_prompt = (
-            "The previous JSON output failed schema validation.\n\n"
-            f"Validation error:\n{validation_error}\n\n"
-            "Previous JSON:\n"
+            "Предыдущий JSON не прошёл валидацию схемы.\n\n"
+            f"Ошибка валидации:\n{validation_error}\n\n"
+            "Предыдущий JSON:\n"
             f"{raw_content}\n\n"
-            "Return only corrected JSON that satisfies the schema."
+            "Верни только исправленный JSON, который проходит схему."
         )
 
         return [

@@ -5,6 +5,11 @@ from pathlib import Path
 from sqlalchemy.exc import IntegrityError
 
 from app.db.enums import Criticality, KnowledgeBaseKind, SourceDocumentStatus, SourceStatus
+from app.integrations.knowledge.content_loader import (
+    ContentLoadError,
+    validate_uploaded_document_payload,
+)
+from app.domain.services.knowledge.update_diffing import user_friendly_knowledge_error_message
 from app.integrations.knowledge.source_readers import is_document_explicitly_excluded
 from app.integrations.knowledge.source_security import SourceDocumentPolicyError
 
@@ -117,10 +122,12 @@ async def _persist_uploaded_file(
     max_size_bytes: int,
 ) -> tuple[str, Path]:
     original_name = Path(file.filename or "material.bin").name
+    media_type = getattr(file, "content_type", None)
     upload_dir.mkdir(parents=True, exist_ok=True)
     stored_name = f"{uuid4().hex}_{original_name}"
     target_path = upload_dir / stored_name
     total_size = 0
+    chunks: list[bytes] = []
     try:
         with target_path.open("wb") as handle:
             while True:
@@ -129,14 +136,42 @@ async def _persist_uploaded_file(
                     break
                 total_size += len(chunk)
                 enforce_document_size_limit(total_size, max_size_bytes=max_size_bytes)
+                chunks.append(chunk)
                 handle.write(chunk)
+        data = b"".join(chunks)
+        if not data:
+            raise ValidationError(
+                user_friendly_knowledge_error_message("KNOWLEDGE_UPLOAD_FILE_EMPTY"),
+                error_code="KNOWLEDGE_UPLOAD_FILE_EMPTY",
+                details={"filename": original_name},
+            )
+        validate_uploaded_document_payload(
+            original_name,
+            data,
+            media_type=media_type,
+        )
     except SourceDocumentPolicyError as exc:
         if target_path.exists():
             target_path.unlink(missing_ok=True)
         raise ValidationError(
-            str(exc),
+            user_friendly_knowledge_error_message(
+                getattr(exc, "error_code", None) or "DOCUMENT_SIZE_LIMIT_EXCEEDED",
+                str(exc),
+            ),
             error_code=exc.error_code,
             details={"filename": original_name, "max_size_bytes": max_size_bytes},
+        ) from exc
+    except ContentLoadError as exc:
+        if target_path.exists():
+            target_path.unlink(missing_ok=True)
+        raise ValidationError(
+            user_friendly_knowledge_error_message(
+                "KNOWLEDGE_UPLOAD_FILE_INVALID",
+                str(exc),
+                stage="parsing",
+            ),
+            error_code="KNOWLEDGE_UPLOAD_FILE_INVALID",
+            details={"filename": original_name, "reason": str(exc)},
         ) from exc
     except Exception:
         if target_path.exists():
@@ -395,13 +430,13 @@ async def upload_and_ingest_documents(
 ):
     if not files:
         raise ValidationError(
-            "At least one file must be provided",
+            user_friendly_knowledge_error_message("UPLOAD_FILES_REQUIRED"),
             error_code="UPLOAD_FILES_REQUIRED",
         )
     requested_source_status = _normalize_upload_source_status(source_status)
     if requested_source_status != SourceStatus.ACTIVE:
         raise ValidationError(
-            "Upload source must be active to start document ingestion",
+            "Источник ручной загрузки должен быть активен, чтобы начать загрузку документов.",
             error_code="UPLOAD_SOURCE_MUST_BE_ACTIVE",
         )
     base = _resolve_upload_base(
@@ -509,7 +544,7 @@ async def upload_and_ingest_document(
     requested_source_status = _normalize_upload_source_status(source_status)
     if requested_source_status != SourceStatus.ACTIVE:
         raise ValidationError(
-            "Upload source must be active to start document ingestion",
+            "Источник ручной загрузки должен быть активен, чтобы начать загрузку документов.",
             error_code="UPLOAD_SOURCE_MUST_BE_ACTIVE",
         )
     base = _resolve_upload_base(

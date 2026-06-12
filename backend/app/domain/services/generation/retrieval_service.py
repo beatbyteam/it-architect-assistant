@@ -20,6 +20,7 @@ from app.db.models.knowledge import KnowledgeFragment, KnowledgeVersionDocument,
 from app.db.repositories.knowledge import KnowledgeVersionRepository
 from app.domain.services.knowledge_basis import (
     build_basis_inventory_for_version_documents,
+    requires_catalog_basis_for_versions,
 )
 from app.domain.services.knowledge_query import KnowledgeQueryService
 from app.domain.services.knowledge_telemetry import build_retrieval_telemetry_summary
@@ -397,7 +398,12 @@ class RetrievalService:
             for version in versions
             for doc in list(getattr(version, "version_documents", []) or [])
         ]
-        basis_inventory = build_basis_inventory_for_version_documents(version_documents)
+        require_catalog_packages = requires_catalog_basis_for_versions(versions)
+        basis_inventory = build_basis_inventory_for_version_documents(
+            version_documents,
+            require_catalog_packages=require_catalog_packages,
+            include_reference_documents=not require_catalog_packages,
+        )
         required_roles = [
             item["role_code"]
             for item in basis_inventory.required_packages

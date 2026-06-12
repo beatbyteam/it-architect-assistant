@@ -98,6 +98,37 @@ MEDIA_TYPE_SUFFIXES = {
 }
 
 
+def validate_uploaded_document_payload(
+    uri: str,
+    data: bytes,
+    *,
+    media_type: str | None = None,
+    image_analyzer: ImageTextAnalyzer | None = None,
+) -> NormalizedDocument:
+    """Strict parser gate for user uploads.
+
+    The generic normalizer intentionally has a permissive fallback for legacy repository
+    sources. User-facing uploads should fail early instead of registering fallback text.
+    """
+
+    suffix = _detect_upload_suffix(uri, media_type=media_type)
+    if suffix == ".json":
+        _validate_json_payload(data)
+    normalized = normalize_document_payload(
+        uri,
+        data,
+        media_type=media_type,
+        image_analyzer=image_analyzer,
+    )
+    if normalized.metadata.get("fallback_used") or normalized.content_format.startswith(
+        "fallback_"
+    ):
+        raise ContentLoadError("Unsupported or unreadable document format")
+    if not normalized.text.strip():
+        raise ContentLoadError("Document has no extractable text")
+    return normalized
+
+
 def fetch_uri(
     uri: str, timeout_sec: float = 30.0, max_size_bytes: int | None = None
 ) -> tuple[bytes, str, str | None]:
@@ -207,6 +238,31 @@ def _detect_document_suffix(uri: str, *, media_type: str | None = None) -> str:
     if suffix in SUPPORTED_DOCUMENT_SUFFIXES:
         return suffix
     return _detect_suffix_from_media_type(media_type)
+
+
+def _detect_upload_suffix(uri: str, *, media_type: str | None = None) -> str:
+    suffix = _detect_suffix(uri)
+    if suffix:
+        if suffix in SUPPORTED_DOCUMENT_SUFFIXES:
+            return suffix
+        raise ContentLoadError(
+            "Unsupported document type. Supported formats: PDF, DOCX, ODT, XLSX, "
+            "ArchiMate, HTML, Markdown, TXT and JSON."
+        )
+    suffix = _detect_suffix_from_media_type(media_type)
+    if suffix in SUPPORTED_DOCUMENT_SUFFIXES:
+        return suffix
+    raise ContentLoadError(
+        "Unsupported document type. Supported formats: PDF, DOCX, ODT, XLSX, "
+        "ArchiMate, HTML, Markdown, TXT and JSON."
+    )
+
+
+def _validate_json_payload(data: bytes) -> None:
+    try:
+        json.loads(data.decode("utf-8"))
+    except Exception as exc:
+        raise ContentLoadError(f"Failed to parse JSON: {exc}") from exc
 
 
 def _detect_suffix_from_media_type(media_type: str | None) -> str:

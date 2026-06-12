@@ -70,22 +70,20 @@ class EffectiveKnowledgeScope:
         return self.selected_user_version or self.mandatory_version
 
     def as_dict(self) -> dict[str, Any]:
+        effective_versions = (
+            [self.selected_user_version]
+            if self.selected_user_version is not None
+            else [self.mandatory_version]
+        )
         return {
             "mandatory_base": _serialize_base(self.mandatory_base),
             "mandatory_version": _serialize_version(self.mandatory_version),
             "selected_user_base": _serialize_base(self.selected_user_base),
             "selected_user_version": _serialize_version(self.selected_user_version),
             "effective_version_ids": [
-                item
-                for item in [
-                    str(self.mandatory_version.knowledge_version_id)
-                    if self.mandatory_version
-                    else None,
-                    str(self.selected_user_version.knowledge_version_id)
-                    if self.selected_user_version
-                    else None,
-                ]
-                if item is not None
+                str(version.knowledge_version_id)
+                for version in effective_versions
+                if version is not None
             ],
         }
 

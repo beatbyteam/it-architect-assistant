@@ -38,6 +38,7 @@ from app.db.repositories.knowledge import (
     DocumentSnapshotRepository,
     KnowledgeBaseRepository,
     KnowledgeSourceRepository,
+    KnowledgeUpdateRunRepository,
     KnowledgeVersionRepository,
     SourceDocumentRepository,
     SourceProcessingResultRepository,
@@ -51,6 +52,7 @@ from app.domain.services.knowledge.serializers import (
     serialize_extracted_item,
     serialize_source,
 )
+from app.domain.services.knowledge.update_diffing import user_friendly_knowledge_error_message
 from app.domain.services.knowledge.update_service import KnowledgeUpdateService
 from app.domain.services.knowledge_bases import KnowledgeBaseService, _owner_key_for_principal
 from app.domain.services.principal_keys import principal_actor_id
@@ -100,6 +102,7 @@ class KnowledgeSourceService:
         self.extracted_items = DocumentExtractedItemRepository(session)
         self.document_deltas = DocumentDeltaRepository(session)
         self.versions = KnowledgeVersionRepository(session)
+        self.update_runs = KnowledgeUpdateRunRepository(session)
         self.audit = AuditService(session)
 
     @staticmethod
@@ -279,13 +282,26 @@ class KnowledgeSourceService:
                 error_code="KNOWLEDGE_BASE_REQUIRED",
             )
         self._assert_base_mutable(base, principal, operation="create source")
+        self._assert_no_update_running(base.knowledge_base_id, operation="create source")
         source_metadata = dict(payload.source_metadata or {})
         try:
             source_metadata["preflight"] = self._probe_source_availability(
                 payload.source_type, payload.base_uri
             )
         except SourceAvailabilityError as exc:
-            source_metadata["preflight"] = {"ok": False, "error": str(exc)}
+            raise ValidationError(
+                user_friendly_knowledge_error_message(
+                    "KNOWLEDGE_SOURCE_UNAVAILABLE",
+                    str(exc),
+                    stage="fetching",
+                ),
+                error_code="KNOWLEDGE_SOURCE_UNAVAILABLE",
+                details={
+                    "base_uri": payload.base_uri,
+                    "source_type": payload.source_type.value,
+                    "reason": str(exc),
+                },
+            ) from exc
         initial_status = (
             SourceStatus.ACTIVE
             if source_metadata.get("preflight", {}).get("ok") is True
@@ -344,6 +360,11 @@ class KnowledgeSourceService:
                     "Source availability is computed automatically; unavailable cannot be set manually",
                     error_code="KNOWLEDGE_SOURCE_STATUS_MANAGED",
                 )
+            if payload.status == SourceStatus.ARCHIVED:
+                raise ValidationError(
+                    "Use the archive source endpoint to move a source to archive",
+                    error_code="KNOWLEDGE_SOURCE_ARCHIVE_ENDPOINT_REQUIRED",
+                )
             self._validate_source_transition(source.status, payload.status)
         original_status = source.status
         original_base_uri = source.base_uri
@@ -358,7 +379,11 @@ class KnowledgeSourceService:
             next_source_metadata["preflight"] = {"ok": False, "error": str(exc)}
             if payload.status == SourceStatus.ACTIVE:
                 raise ValidationError(
-                    "Source is not reachable and cannot be activated",
+                    user_friendly_knowledge_error_message(
+                        "KNOWLEDGE_SOURCE_UNAVAILABLE",
+                        str(exc),
+                        stage="fetching",
+                    ),
                     error_code="KNOWLEDGE_SOURCE_UNAVAILABLE",
                     details={"source_id": source_id, "base_uri": next_base_uri, "error": str(exc)},
                 ) from exc
@@ -1287,6 +1312,20 @@ class KnowledgeSourceService:
     ) -> None:
         base = self._get_base(str(source.knowledge_base_id), principal)
         self._assert_base_mutable(base, principal, operation=operation)
+        self._assert_no_update_running(source.knowledge_base_id, operation=operation)
+
+    def _assert_no_update_running(self, knowledge_base_id: UUID | str, *, operation: str) -> None:
+        repository = getattr(self, "update_runs", None)
+        running_getter = getattr(repository, "get_running", None)
+        if not callable(running_getter):
+            return
+        running = running_getter(knowledge_base_id=knowledge_base_id)
+        if running is None:
+            return
+        raise ConflictError(
+            f"Knowledge source cannot be changed while a knowledge update is running: {operation}",
+            error_code="KNOWLEDGE_UPDATE_ALREADY_RUNNING",
+        )
 
     def _assert_document_mutable(
         self, document: SourceDocument, principal: AuthPrincipal, *, operation: str

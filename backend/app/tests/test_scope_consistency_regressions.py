@@ -207,6 +207,55 @@ def test_verification_support_context_builds_basis_inventory_from_full_scope() -
     assert support.basis_inventory.missing_required_packages == []
 
 
+def test_user_managed_verification_scope_does_not_require_system_basis_packages() -> None:
+    version_document = SimpleNamespace(
+        document_id="doc-reference",
+        role_code="reference_only",
+        required_flag=False,
+        document=SimpleNamespace(
+            document_id="doc-reference",
+            title="Проектный регламент интеграции",
+            version_label="v1",
+            uri="kb://doc-reference",
+            document_type="other",
+            source=SimpleNamespace(criticality=None),
+        ),
+    )
+    context = VerificationExecutionContext(
+        solution=SimpleNamespace(
+            executive_summary="summary",
+            sections=[],
+            list_items=[],
+            components=[],
+            integrations=[],
+            risks=[],
+        ),
+        run=SimpleNamespace(knowledge_version=None),
+        rules=[],
+        rule_lookup={},
+        knowledge_versions=[
+            SimpleNamespace(
+                knowledge_base=SimpleNamespace(kind=KnowledgeBaseKind.USER_MANAGED),
+                version_documents=[version_document],
+            )
+        ],
+    )
+
+    support = VerificationSupportContext.build(context)
+    rule = VerificationRuleDefinition(
+        code="VR-TEC-03",
+        name="Required basis packages available",
+        group="technical",
+        default_severity=Severity.CRITICAL,
+        technical=True,
+    )
+    result = TechnicalRulesExecutor().execute(rule=rule, context=context, support=support)
+
+    assert result.status == CheckResultStatus.PASSED
+    assert support.basis_inventory.missing_required_packages == []
+    assert support.support_summary["basis_requirement_mode"] == "scoped_documents"
+
+
 def test_full_document_scope_preserves_effective_document_ids_across_versions() -> None:
     def _version_doc(document_id: str) -> SimpleNamespace:
         return SimpleNamespace(

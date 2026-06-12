@@ -40,6 +40,10 @@ _LOW_SIGNAL_RISK_MITIGATION_MARKERS = {
     "define mitigation plan",
     "mitigation plan",
     "review later",
+    "определить план",
+    "план смягчения",
+    "уточнить позже",
+    "нужно уточнить",
 }
 
 
@@ -47,12 +51,12 @@ def _specific_risk_mitigation(risk: dict[str, Any]) -> str:
     anchor = (
         _clean_text_value(risk.get("title"))
         or _clean_text_value(risk.get("description"))
-        or "the identified architecture risk"
+        or "выявленный архитектурный риск"
     )
     anchor = anchor[:120].rstrip(" .")
     return (
-        f"Assign an owner for {anchor}, document the mitigation action and rollback "
-        "condition, and verify it at the architecture review checkpoint."
+        f"Назначить владельца риска «{anchor}», зафиксировать конкретное действие, "
+        "критерий проверки на архитектурном чекпоинте и условие отката, если мера не сработает."
     )
 
 
@@ -65,7 +69,15 @@ def _is_low_signal_risk_mitigation(value: Any) -> bool:
         return True
     if lowered in _LOW_SIGNAL_RISK_MITIGATION_MARKERS:
         return True
-    if any(marker in lowered for marker in ("define mitigation plan", "review later")):
+    if any(
+        marker in lowered
+        for marker in (
+            "define mitigation plan",
+            "review later",
+            "определить план",
+            "уточнить позже",
+        )
+    ):
         return True
     return sum(1 for char in cleaned if char.isalpha()) < 12
 
@@ -403,8 +415,8 @@ def _normalize_risks_list(risks: Any) -> list[Any]:
                 risk["title"] = str(risk["description"])[:80]
             if risk.get("title") and not risk.get("description"):
                 risk["description"] = (
-                    f"The architecture risk '{risk['title']}' may affect scope, schedule, "
-                    "quality, or implementation decisions if it is not actively managed."
+                    f"Архитектурный риск «{risk['title']}» может повлиять на объём, "
+                    "сроки, качество или проектные решения, если им не управлять явно."
                 )
             if _is_low_signal_risk_mitigation(risk.get("mitigation")):
                 risk["mitigation"] = _specific_risk_mitigation(risk)

@@ -58,7 +58,7 @@ class GenerationPromptBuilder:
         task_block = f"Title: {task_title}\nTask: {task_text}".strip()
         context_block = (
             "\n".join(f"- {item}" for item in context_items)
-            or "- No explicit context items provided"
+            or "- Явный дополнительный контекст не указан"
         )
         knowledge_manifest = [self._fragment_summary(fragment) for fragment in retrieved_fragments]
         knowledge_items = [self._format_fragment(fragment) for fragment in retrieved_fragments]
@@ -71,10 +71,11 @@ class GenerationPromptBuilder:
         included_fragment_ids = [fragment.fragment_id for fragment in included_fragments]
         dropped_fragment_ids = [fragment.fragment_id for fragment in dropped_fragments]
         knowledge_block = (
-            "\n\n".join(budget_result.selected_items) or "No retrieved knowledge snippets available"
+            "\n\n".join(budget_result.selected_items)
+            or "Из базы знаний не найдено релевантных фрагментов"
         )
         knowledge_block = (
-            "Retrieved knowledge evidence only. The model must rely on the fragments below and must not assume direct access to raw source files.\n\n"
+            "Ниже приведены только найденные фрагменты базы знаний. Модель должна опираться на них и не считать, что имеет прямой доступ к исходным файлам.\n\n"
             + knowledge_block
         )
         section_generation_plan = section_generation_plan_records()

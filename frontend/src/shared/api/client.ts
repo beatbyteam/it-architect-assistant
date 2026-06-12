@@ -11,6 +11,32 @@ type ValidationErrorContainer = {
   errors?: ValidationDetailItem[] | null;
 };
 
+const ERROR_CODE_MESSAGES: Record<string, string> = {
+  KNOWLEDGE_UPDATE_ALREADY_RUNNING: 'Обновление этой базы знаний уже выполняется. Дождитесь завершения или остановите текущий процесс.',
+  NO_ACTIVE_SOURCE_SET: 'В базе знаний нет активных источников или загруженных документов. Добавьте источник либо загрузите файл, затем запустите обновление.',
+  ACTIVE_KNOWLEDGE_VERSION_MISSING: 'У выбранной базы знаний пока нет активной версии. Сначала загрузите документы и активируйте собранную версию.',
+  ACTIVE_KNOWLEDGE_VERSION_REQUIRED: 'У выбранной базы знаний пока нет активной версии. Сначала загрузите документы и активируйте собранную версию.',
+  KNOWLEDGE_DOCUMENT_SCOPE_INVALID: 'Выбранные документы не входят в текущую выбранную базу знаний или её активную версию.',
+  KNOWLEDGE_SOURCE_ARCHIVE_ENDPOINT_REQUIRED: 'Перенос источника в архив выполняется отдельной кнопкой «Архивировать».',
+  KNOWLEDGE_SOURCE_UNAVAILABLE: 'Ссылка или источник недоступны. Проверьте интернет, URL и права доступа, затем повторите загрузку.',
+  KNOWLEDGE_UPDATE_QUEUE_DISPATCH_ERROR: 'Не удалось запустить обновление базы знаний: worker/Celery или очередь задач недоступны.',
+  KNOWLEDGE_UPDATE_WORKER_INTERRUPTED: 'Обновление базы знаний прервано: worker/Celery недоступен или соединение с очередью потеряно.',
+  KNOWLEDGE_UPLOAD_FILE_EMPTY: 'Файл пустой или не читается.',
+  KNOWLEDGE_UPLOAD_FILE_INVALID: 'Файл не удалось разобрать: он повреждён, пустой или имеет неподдерживаемое содержимое.',
+  UPLOAD_FILES_REQUIRED: 'Выберите хотя бы один файл.',
+  UPLOAD_SOURCE_MUST_BE_ACTIVE: 'Источник ручной загрузки должен быть активен, чтобы начать загрузку документов.',
+  DOCUMENT_SIZE_LIMIT_EXCEEDED: 'Файл слишком большой для загрузки в базу знаний.',
+  UNSUPPORTED_DOCUMENT_TYPE: 'Файл не загружен: формат не поддерживается.',
+  DOCUMENT_PARSE_FAILED: 'Файл не удалось разобрать. Проверьте формат и целостность файла.',
+  PARSE_FAILED: 'Файл не удалось разобрать. Проверьте формат и целостность файла.',
+  SOURCE_CONNECTION_INTERRUPTED: 'Не удалось загрузить ссылку: соединение было прервано или источник недоступен.',
+  SOURCE_UNAVAILABLE: 'Ссылка или источник недоступны.',
+  SOURCE_READER_ERROR: 'Не удалось прочитать источник базы знаний.',
+  FETCH_FAILED: 'Не удалось загрузить источник базы знаний.',
+  SOURCE_URL_FORBIDDEN_HOST: 'Ссылка не загружена: адрес запрещён политикой безопасности.',
+  SOURCE_URL_FORBIDDEN_NETWORK: 'Ссылка не загружена: сетевой адрес запрещён политикой безопасности.',
+};
+
 export type ApiErrorPayload = Record<string, unknown> & {
   code?: string;
   error_code?: string;
@@ -137,6 +163,8 @@ function extractPayloadMessage(payload?: ApiErrorPayload | null) {
   if (!payload) return null;
   const validationMessage = extractValidationMessage(payload);
   if (validationMessage) return validationMessage;
+  const errorCode = typeof payload.error_code === 'string' ? payload.error_code : typeof payload.code === 'string' ? payload.code : null;
+  if (errorCode && ERROR_CODE_MESSAGES[errorCode]) return ERROR_CODE_MESSAGES[errorCode];
   if (typeof payload.user_message === 'string' && payload.user_message.trim()) return payload.user_message;
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message;
   if (typeof payload.detail === 'string' && payload.detail.trim()) return payload.detail;

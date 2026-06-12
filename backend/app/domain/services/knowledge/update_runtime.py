@@ -682,6 +682,15 @@ def execute_knowledge_update_run(service: Any, update_run_id: str):
                         document.media_type,
                     )
                     normalized_text = normalized.text
+                    normalized_metadata = dict(normalized.metadata or {})
+                    if normalized_metadata.get("fallback_used") or str(
+                        normalized.content_format or ""
+                    ).startswith("fallback_"):
+                        raise ContentLoadError(
+                            "Unsupported or unreadable document format; parser fallback was used"
+                        )
+                    if not str(normalized_text or "").strip():
+                        raise ContentLoadError("Document has no extractable text")
                 except KnowledgeUpdateCanceled:
                     raise
                 except ContentLoadError as exc:

@@ -8,6 +8,7 @@ from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 
 from app.bootstrap.bundles import _manifest_root, import_knowledge_bundle
+from app.core.exceptions import ConflictError
 from app.core.security import AuthPrincipal
 from app.db.enums import (
     AccountType,
@@ -39,6 +40,30 @@ def _principal(user_id: str = "user-1") -> AuthPrincipal:
         role_codes=["USER"],
         is_authenticated=True,
     )
+
+
+def test_source_lifecycle_mutation_rejected_while_base_update_running() -> None:
+    service = KnowledgeSourceService.__new__(KnowledgeSourceService)
+    source = SimpleNamespace(
+        source_id="src-1",
+        knowledge_base_id="kb-1",
+        status=SourceStatus.ACTIVE,
+    )
+    service._get_source_compat = lambda source_id, principal=None: source
+    service._get_base = lambda knowledge_base_id, principal=None: SimpleNamespace(
+        knowledge_base_id=knowledge_base_id,
+        kind=KnowledgeBaseKind.USER_MANAGED,
+    )
+    service.update_runs = SimpleNamespace(
+        get_running=lambda knowledge_base_id=None: SimpleNamespace(update_run_id="run-1")
+    )
+
+    try:
+        service.archive_source("src-1", _principal())
+    except ConflictError as exc:
+        assert exc.error_code == "KNOWLEDGE_UPDATE_ALREADY_RUNNING"
+    else:
+        raise AssertionError("Expected source archive to be rejected during knowledge update")
 
 
 def test_import_bundle_checks_target_base_access(monkeypatch) -> None:

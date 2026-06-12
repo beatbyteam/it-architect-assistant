@@ -94,6 +94,50 @@ test('request prefers backend validation details over generic validation summary
   }
 });
 
+test('request translates known backend error codes before raw technical messages', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = (async () => new Response(JSON.stringify({
+    error_code: 'NO_ACTIVE_SOURCE_SET',
+    message: 'No active knowledge sources available',
+  }), { status: 422, headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+
+  try {
+    await assert.rejects(async () => {
+      await request('/knowledge/bases/kb-1/sync');
+    }, (error: unknown) => {
+      assert.equal(
+        getApiErrorMessage(error),
+        'В базе знаний нет активных источников или загруженных документов. Добавьте источник либо загрузите файл, затем запустите обновление.',
+      );
+      return true;
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('request translates knowledge upload errors before raw technical messages', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = (async () => new Response(JSON.stringify({
+    error_code: 'KNOWLEDGE_UPLOAD_FILE_INVALID',
+    message: 'Unsupported or damaged knowledge document',
+  }), { status: 422, headers: { 'Content-Type': 'application/json' } })) as typeof fetch;
+
+  try {
+    await assert.rejects(async () => {
+      await request('/knowledge/uploads/ingest-batch');
+    }, (error: unknown) => {
+      assert.equal(
+        getApiErrorMessage(error),
+        'Файл не удалось разобрать: он повреждён, пустой или имеет неподдерживаемое содержимое.',
+      );
+      return true;
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 test('uploadAndIngestKnowledgeFiles posts all files as one multipart ingest request', async () => {
   const originalFetch = global.fetch;
   let capturedUrl = '';

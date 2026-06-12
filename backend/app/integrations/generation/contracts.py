@@ -112,15 +112,19 @@ _LOW_SIGNAL_RISK_MITIGATION_MARKERS = {
     "define mitigation plan",
     "mitigation plan",
     "review later",
+    "определить план",
+    "план смягчения",
+    "уточнить позже",
+    "нужно уточнить",
 }
 
 
 def _specific_risk_mitigation(title: str | None, description: str | None = None) -> str:
-    anchor = title or description or "the identified architecture risk"
+    anchor = title or description or "выявленный архитектурный риск"
     anchor = anchor[:120].rstrip(" .")
     return (
-        f"Assign an owner for {anchor}, document the mitigation action and rollback "
-        "condition, and verify it at the architecture review checkpoint."
+        f"Назначить владельца риска «{anchor}», зафиксировать конкретное действие, "
+        "критерий проверки на архитектурном чекпоинте и условие отката, если мера не сработает."
     )
 
 
@@ -133,7 +137,15 @@ def _is_low_signal_risk_mitigation(value: object) -> bool:
         return True
     if lowered in _LOW_SIGNAL_RISK_MITIGATION_MARKERS:
         return True
-    if any(marker in lowered for marker in ("define mitigation plan", "review later")):
+    if any(
+        marker in lowered
+        for marker in (
+            "define mitigation plan",
+            "review later",
+            "определить план",
+            "уточнить позже",
+        )
+    ):
         return True
     return sum(1 for char in cleaned if char.isalpha()) < 12
 
@@ -684,8 +696,8 @@ class GenerationRisk(BaseModel):
             title_description = _clean_text(patched.get("title"))
             if title_description:
                 patched["description"] = (
-                    f"The architecture risk '{title_description}' may affect scope, schedule, "
-                    "quality, or implementation decisions if it is not actively managed."
+                    f"Архитектурный риск «{title_description}» может повлиять на объём, "
+                    "сроки, качество или проектные решения, если им не управлять явно."
                 )
         if "mitigation" not in patched:
             mitigation = _clean_text(

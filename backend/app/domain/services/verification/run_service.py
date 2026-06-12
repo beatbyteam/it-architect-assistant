@@ -36,7 +36,10 @@ from app.db.repositories.verification import (
 from app.domain.services.audit import AuditService
 from app.domain.services.idempotency import IdempotencyService
 from app.domain.services.immutable_snapshot import freeze_snapshot
-from app.domain.services.knowledge_basis import classify_basis_requirement
+from app.domain.services.knowledge_basis import (
+    classify_basis_requirement,
+    requires_catalog_basis_for_versions,
+)
 from app.domain.services.knowledge_bases import KnowledgeBaseService
 from app.domain.services.knowledge_query import KnowledgeQueryService
 from app.domain.services.knowledge_snapshot import (
@@ -107,6 +110,8 @@ DOCUMENT_TITLE_RULE_CODES = (
         {"VR-NRM-03", "VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"},
     ),
     ("технолог", {"VR-NRM-03", "VR-NFR-01", "VR-NFR-02", "VR-NFR-03", "VR-NFR-04", "VR-NFR-05"}),
+    ("радар", {"VR-NRM-03"}),
+    ("стандарт", {"VR-NRM-03"}),
     ("операцион", {"VR-NRM-03"}),
     ("ubuntu", {"VR-NRM-03"}),
     ("linux", {"VR-NRM-03"}),
@@ -207,6 +212,9 @@ DOCUMENT_CONTENT_ROLE_HINTS = (
     ("ubuntu", "technology_standard"),
     ("linux", "technology_standard"),
     ("windows server", "technology_standard"),
+    ("технологический стандарт", "technology_standard"),
+    ("технологический радар", "technology_standard"),
+    ("операционные системы", "technology_standard"),
     ("postgres", "technology_standard"),
     ("java", "technology_standard"),
     ("kubernetes", "technology_standard"),
@@ -368,14 +376,7 @@ class VerificationRunService:
             getattr(payload, "knowledge_document_ids", None)
         )
         document_scope = build_document_scope_snapshot(
-            knowledge_versions=[
-                version
-                for version in [
-                    knowledge_scope.mandatory_version,
-                    knowledge_scope.selected_user_version,
-                ]
-                if version is not None
-            ],
+            knowledge_versions=[active_version],
             selected_document_ids=selected_document_ids,
         )
         try:
@@ -833,15 +834,39 @@ class VerificationRunService:
                 error_code="INVALID_VALIDATION_SCOPE",
             )
         rules = self.registry.list_rules()
-        if not document_scope or document_scope.get("mode") != "selected":
+        if not document_scope:
             return rules
-        allowed_rule_codes = self._selected_document_rule_codes(document_scope)
+        if document_scope.get("mode") == "selected":
+            allowed_rule_codes = self._selected_document_rule_codes(document_scope)
+            return [rule for rule in rules if rule.code in allowed_rule_codes]
+        if document_scope.get("mode") != "full" or not document_scope.get(
+            "effective_documents"
+        ):
+            return rules
+        allowed_rule_codes = self._document_scope_rule_codes(
+            document_scope,
+            document_key="effective_documents",
+            technical_rule_codes=SELECTED_DOCUMENT_TECHNICAL_RULE_CODES,
+        )
         return [rule for rule in rules if rule.code in allowed_rule_codes]
 
     @staticmethod
     def _selected_document_rule_codes(document_scope: dict[str, Any]) -> set[str]:
-        selected_documents = list(document_scope.get("selected_documents") or [])
-        rule_codes: set[str] = set(SELECTED_DOCUMENT_TECHNICAL_RULE_CODES)
+        return VerificationRunService._document_scope_rule_codes(
+            document_scope,
+            document_key="selected_documents",
+            technical_rule_codes=SELECTED_DOCUMENT_TECHNICAL_RULE_CODES,
+        )
+
+    @staticmethod
+    def _document_scope_rule_codes(
+        document_scope: dict[str, Any],
+        *,
+        document_key: str,
+        technical_rule_codes: set[str],
+    ) -> set[str]:
+        selected_documents = list(document_scope.get(document_key) or [])
+        rule_codes: set[str] = set(technical_rule_codes)
         for document in selected_documents:
             if not isinstance(document, dict):
                 continue
@@ -899,6 +924,7 @@ class VerificationRunService:
             select(KnowledgeVersion)
             .where(KnowledgeVersion.knowledge_version_id == knowledge_version_id)
             .options(
+                selectinload(KnowledgeVersion.knowledge_base),
                 selectinload(KnowledgeVersion.version_documents)
                 .selectinload(KnowledgeVersionDocument.document)
                 .selectinload(SourceDocument.source)
@@ -918,6 +944,7 @@ class VerificationRunService:
         selected_document_ids: list[str] | None = None,
         principal: AuthPrincipal | None = None,
     ) -> dict[str, Any]:
+        selected_document_ids = normalize_document_ids(selected_document_ids)
         version_documents = [
             doc
             for version in knowledge_versions
@@ -986,6 +1013,10 @@ class VerificationRunService:
             selected_document_ids=selected_document_ids,
             principal=principal,
         )
+        require_catalog_packages = (
+            requires_catalog_basis_for_versions(knowledge_versions)
+            and not selected_document_ids
+        )
         return {
             "required_fragments_by_role": required_fragments_by_role,
             "rule_evidence_by_code": rule_evidence_by_code,
@@ -997,6 +1028,9 @@ class VerificationRunService:
                 "document_scope": "selected" if selected_document_ids else "full",
                 "selected_document_count": len(normalize_document_ids(selected_document_ids)),
                 "scoped_document_count": len(version_documents),
+                "basis_requirement_mode": "catalog"
+                if require_catalog_packages
+                else "scoped_documents",
                 "rule_rag": rule_rag_summary,
                 "content_rule_hint_codes": sorted(content_rule_codes),
                 "content_rule_hint_fragment_count": len(content_hint_fragments),
