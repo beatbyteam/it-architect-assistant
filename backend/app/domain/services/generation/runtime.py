@@ -18,6 +18,7 @@ from app.domain.services.observability import (
 )
 
 from .common import TERMINAL_GENERATION_STATUSES, _json_safe, _prompt_context_items, logger
+from .post_validation_repair import GenerationValidationRepairer
 
 
 class GenerationRunCanceled(Exception):
@@ -129,9 +130,10 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
             with observe_stage(
                 stage_metrics, "validating", logger=logger, log_message="generation_stage"
             ) as stage_obs:
-                validation_summary, quality_outcomes, explainability = _run_validation_stage(
+                validation_summary, quality_outcomes, explainability, payload = _run_validation_stage(
                     service,
                     run=run,
+                    task=task,
                     retrieval=retrieval,
                     coverage_summary=coverage_summary,
                     payload=payload,
@@ -141,6 +143,9 @@ def execute_generation_run(service: Any, generation_run_id: str) -> GenerationRu
                     {
                         "groundedness_score": validation_summary.get("groundedness_score"),
                         "citation_coverage": validation_summary.get("citation_coverage"),
+                        "validation_repair_applied": quality_outcomes.get(
+                            "validation_repair_applied"
+                        ),
                     }
                 )
             _raise_if_generation_canceled(service, run)
@@ -532,11 +537,12 @@ def _run_validation_stage(
     service: Any,
     *,
     run: GenerationRun,
+    task: Any | None = None,
     retrieval: Any,
     coverage_summary: dict[str, Any],
     payload: Any,
     stage_metrics: dict[str, dict[str, Any]],
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Any]:
     run.current_stage = "validating"
     service._record_operation_step(
         run,
@@ -567,9 +573,27 @@ def _run_validation_stage(
     )
     service.session.add(run)
     service.session.commit()
-    validation_summary = service.validator.validate(
-        payload, retrieved_fragments=retrieval.fragments
-    )
+    repair_diagnostics: dict[str, Any] | None = None
+    try:
+        validation_summary = service.validator.validate(
+            payload, retrieved_fragments=retrieval.fragments
+        )
+    except ValidationError as exc:
+        repaired_payload, repair_diagnostics = _repair_validation_payload(
+            service,
+            run=run,
+            task=task,
+            retrieval=retrieval,
+            payload=payload,
+            validation_error=exc,
+            stage_metrics=stage_metrics,
+        )
+        if repaired_payload is None:
+            raise
+        payload = repaired_payload
+        validation_summary = service.validator.validate(
+            payload, retrieved_fragments=retrieval.fragments
+        )
     service._record_operation_step(
         run,
         stage="validating",
@@ -582,6 +606,7 @@ def _run_validation_stage(
                 "section_readiness_status_counts"
             )
             or {},
+            "validation_repair": repair_diagnostics,
         },
     )
     quality_outcomes = {
@@ -590,6 +615,7 @@ def _run_validation_stage(
         "groundedness_score": validation_summary.get("groundedness_score", 0.0),
         "citation_coverage": validation_summary.get("citation_coverage", 0.0),
         "fallback_used": bool(service.llm_gateway.last_call_diagnostics.get("fallback_used")),
+        "validation_repair_applied": bool(repair_diagnostics),
         "retrieval_coverage_ok": True,
         "required_role_coverage": coverage_summary.get("required_role_coverage"),
         "section_readiness_status_counts": validation_summary.get("section_readiness_status_counts")
@@ -612,6 +638,7 @@ def _run_validation_stage(
         "next_steps": list(payload.next_steps),
         "coverage_summary": coverage_summary,
         "validation_summary": validation_summary,
+        "validation_repair": repair_diagnostics,
         "section_readiness": [
             item.model_dump() for item in getattr(payload, "section_readiness", [])
         ],
@@ -621,7 +648,71 @@ def _run_validation_stage(
             else None
         ),
     }
-    return validation_summary, quality_outcomes, explainability
+    return validation_summary, quality_outcomes, explainability, payload
+
+
+def _repair_validation_payload(
+    service: Any,
+    *,
+    run: GenerationRun,
+    task: Any | None,
+    retrieval: Any,
+    payload: Any,
+    validation_error: ValidationError,
+    stage_metrics: dict[str, dict[str, Any]],
+) -> tuple[Any | None, dict[str, Any] | None]:
+    repairer = getattr(service, "validation_repairer", None)
+    if repairer is None:
+        repairer = GenerationValidationRepairer(post_validator=service.validator)
+    task_title = getattr(task, "title", None) if task is not None else None
+    task_text = getattr(task, "task_text", "") if task is not None else ""
+    context_items = _prompt_context_items(task) if task is not None else []
+    repair_result = repairer.repair(
+        payload,
+        validation_error=validation_error,
+        task_title=task_title,
+        task_text=task_text,
+        context_items=context_items,
+        retrieved_fragments=list(getattr(retrieval, "fragments", []) or []),
+    )
+    if not repair_result.applied:
+        return None, repair_result.diagnostics
+
+    repair_diagnostics = _json_safe(repair_result.diagnostics)
+    service._record_operation_step(
+        run,
+        stage="validating",
+        status="running",
+        detail="Validation repair applied; retrying validation",
+        error_code=getattr(validation_error, "error_code", "SOLUTION_VALIDATION_REPAIR"),
+        payload=repair_diagnostics,
+    )
+    run.diagnostics = service._with_stage_history(
+        _attach_pipeline_observability(
+            _json_safe(
+                {
+                    **(run.diagnostics or {}),
+                    "active_stage": _active_stage(
+                        "validating",
+                        "Результат LLM автоматически исправлен после ValidationError; повторяем проверку.",
+                        operation="result_validation_repair",
+                        validation_repair=repair_diagnostics,
+                    ),
+                    "validation_repair": repair_diagnostics,
+                }
+            ),
+            stage_metrics=stage_metrics,
+            total_duration_sec=None,
+            status=run.status.value,
+            current_stage=run.current_stage,
+        ),
+        "validating",
+        detail="Validation repair applied; retrying validation",
+        status="running",
+    )
+    service.session.add(run)
+    service.session.commit()
+    return repair_result.payload, repair_diagnostics
 
 
 def _run_persistence_stage(

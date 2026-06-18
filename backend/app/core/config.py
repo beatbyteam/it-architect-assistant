@@ -271,7 +271,7 @@ class Settings(BaseSettings):
         default=2, alias="GENERATION_SECTION_RETRIEVAL_LIMIT"
     )
     generation_prompt_max_input_tokens: int = Field(
-        default=4500, alias="GENERATION_PROMPT_MAX_INPUT_TOKENS"
+        default=6500, alias="GENERATION_PROMPT_MAX_INPUT_TOKENS"
     )
     generation_prompt_reserved_output_tokens: int = Field(
         default=1600, alias="GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS"
