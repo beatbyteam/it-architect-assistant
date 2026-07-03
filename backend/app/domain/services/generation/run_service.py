@@ -53,6 +53,7 @@ from ..principal_keys import principal_owner_key
 from .common import _context_notes, _json_safe
 from .persistence_service import SolutionPersistenceService
 from .post_validation import GenerationPostValidator
+from .post_validation_repair import GenerationValidationRepairer
 from .publication_service import SolutionPublicationService
 from .retrieval_service import RetrievalService
 from .runtime import execute_generation_run
@@ -84,6 +85,7 @@ class GenerationRunService:
         self.prompt_registry = PromptRegistry()
         self.retrieval = RetrievalService(session, settings)
         self.validator = GenerationPostValidator()
+        self.validation_repairer = GenerationValidationRepairer(post_validator=self.validator)
         self.prompt_builder = GenerationPromptBuilder(
             TokenBudgetManager(
                 max_input_tokens=settings.generation_prompt_max_input_tokens,

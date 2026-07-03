@@ -27,9 +27,11 @@
 | `CELERY_WORKER_CONCURRENCY` | `2`                                  | local worker process count | optional |
 | `CELERY_WORKER_QUEUES` | `default,knowledge_extraction,knowledge_vectorization,knowledge_llm_extraction,architecture_generation,architecture_verification` | queues consumed by the local worker | optional |
 | `GENERATION_EXECUTE_INLINE` | `false`                              | generation runtime switch | Docker local |
-| `GENERATION_RETRIEVAL_LIMIT` | `12`                                 | max knowledge fragments selected for generation | optional |
-| `GENERATION_SECTION_RETRIEVAL_LIMIT` | `1`                                  | extra per-section retrieval snippets for generation grounding | optional |
-| `GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT` | `1600`                               | per-fragment prompt evidence cap | optional |
+| `GENERATION_RETRIEVAL_LIMIT` | `16`                                 | max knowledge fragments selected for generation | optional |
+| `GENERATION_SECTION_RETRIEVAL_LIMIT` | `2`                                  | extra per-section retrieval snippets for generation grounding | optional |
+| `GENERATION_PROMPT_MAX_INPUT_TOKENS` | `6500`                               | prompt input budget so retrieved knowledge fits beside task/context | optional |
+| `GENERATION_PROMPT_RESERVED_OUTPUT_TOKENS` | `1600`                               | reserved generation output budget outside retrieved context | optional |
+| `GENERATION_PROMPT_FRAGMENT_CHAR_LIMIT` | `2200`                               | per-fragment prompt evidence cap | optional |
 | `VERIFICATION_EXECUTE_INLINE` | `false`                              | verification runtime switch | Docker local |
 | `VERIFICATION_RULE_RAG_LIMIT` | `2`                                   | max retrieved evidence snippets attached to each verification rule | optional |
 | `HEALTH_CHECK_WORKER` | `true`                               | health endpoints | Docker local |

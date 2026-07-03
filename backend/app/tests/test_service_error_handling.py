@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import AuthPrincipal
 from app.db.enums import (
     AccountType,
@@ -18,6 +18,10 @@ from app.db.enums import (
     SourceStatus,
 )
 from app.domain.services.generation.post_validation import GenerationPostValidator
+from app.domain.services.generation.post_validation_repair import (
+    GenerationValidationRepairResult,
+    GenerationValidationRepairer,
+)
 from app.domain.services.generation.run_service import GenerationRunService
 from app.domain.services.generation.runtime import _run_validation_stage
 from app.domain.services.knowledge.source_service import KnowledgeSourceService
@@ -333,11 +337,146 @@ def test_generation_validation_stage_returns_expected_runtime_contract() -> None
         stage_metrics={},
     )
 
-    assert len(result) == 3
-    returned_validation_summary, quality_outcomes, explainability = result
+    assert len(result) == 4
+    returned_validation_summary, quality_outcomes, explainability, returned_payload = result
     assert returned_validation_summary == validation_summary
     assert quality_outcomes["schema_valid"] is True
     assert explainability["assumptions"] == []
+    assert returned_payload is payload
+
+
+def test_generation_validation_stage_repairs_and_retries_known_validation_error() -> None:
+    original_payload = SimpleNamespace(assumptions=[], next_steps=[], section_readiness=[])
+    repaired_payload = SimpleNamespace(
+        assumptions=["Решение остается во внутреннем корпоративном контуре."],
+        next_steps=["Проверить роли компонентов на архитектурном ревью."],
+        section_readiness=[],
+    )
+    validation_error = ValidationError(
+        "Описание роли компонента должно быть конкретным.",
+        error_code="SOLUTION_COMPONENT_ROLE_GENERIC",
+    )
+    validation_summary = {"groundedness_score": 0.9, "citation_coverage": 0.8}
+    repair_result = GenerationValidationRepairResult(
+        payload=repaired_payload,
+        applied=True,
+        diagnostics={
+            "error_code": "SOLUTION_COMPONENT_ROLE_GENERIC",
+            "actions": [{"field": "components.role_description"}],
+        },
+    )
+    service = SimpleNamespace(
+        session=Mock(),
+        validator=SimpleNamespace(validate=Mock(side_effect=[validation_error, validation_summary])),
+        validation_repairer=SimpleNamespace(repair=Mock(return_value=repair_result)),
+        llm_gateway=SimpleNamespace(last_call_diagnostics={"fallback_used": False}),
+        _record_operation_step=Mock(),
+        _with_stage_history=Mock(side_effect=lambda diagnostics, *args, **kwargs: diagnostics),
+    )
+    run = SimpleNamespace(
+        status=SimpleNamespace(value="running"),
+        diagnostics={},
+        current_stage=None,
+    )
+    task = SimpleNamespace(title="Проверка", task_text="Проверить архитектурный компонент.")
+    retrieval = SimpleNamespace(fragments=[])
+
+    result = _run_validation_stage(
+        service,
+        run=run,
+        task=task,
+        retrieval=retrieval,
+        coverage_summary={"required_role_coverage": {"required": 1}},
+        payload=original_payload,
+        stage_metrics={},
+    )
+
+    returned_validation_summary, quality_outcomes, explainability, returned_payload = result
+    assert returned_validation_summary == validation_summary
+    assert quality_outcomes["validation_repair_applied"] is True
+    assert explainability["validation_repair"]["error_code"] == "SOLUTION_COMPONENT_ROLE_GENERIC"
+    assert returned_payload is repaired_payload
+    assert service.validator.validate.call_args_list[0].args[0] is original_payload
+    assert service.validator.validate.call_args_list[1].args[0] is repaired_payload
+
+
+def test_generation_validation_repairer_expands_generic_component_role_description() -> None:
+    payload = _validate_generation_solution_payload(
+        {
+            "solution_title": "Архитектурное решение проверки ролей компонентов",
+            "executive_summary": (
+                "Решение описывает проверочный контур архитектуры, где нужно нормализовать "
+                "роль технологического компонента до конкретного описания."
+            ),
+            "sections": [
+                {
+                    "section_code": code,
+                    "title": code.replace("_", " "),
+                    "body_markdown": (
+                        "Платформа проверки участвует в архитектуре как объект ArchiMate 3.2 "
+                        "и должна быть описана конкретно."
+                    ),
+                    "source_refs": [],
+                }
+                for code in [
+                    "general_information",
+                    "business_tasks_description",
+                    "it_architecture_content",
+                    "business_architecture",
+                    "data_architecture",
+                    "application_architecture",
+                    "technology_architecture",
+                    "additional_information",
+                ]
+            ],
+            "components": [
+                {
+                    "component_name": "Платформа проверки",
+                    "role_description": "Node",
+                    "technology_stack": "серверная платформа, подлежит подтверждению",
+                    "boundary_type": "technology_architecture",
+                    "external_flag": False,
+                    "interfaces": [],
+                }
+            ],
+            "integrations": [],
+            "assumptions": ["Решение работает во внутреннем корпоративном контуре."],
+            "next_steps": ["Проверить компонентную модель на архитектурном ревью."],
+            "risks": [
+                {
+                    "title": "Роль компонента может быть понята неоднозначно",
+                    "severity": "major",
+                    "description": "Общее описание роли компонента может привести к ошибкам проверки.",
+                    "mitigation": (
+                        "Архитектор решения уточняет роль компонента, проверяет ее на ревью "
+                        "и откатывает публикацию при повторной ошибке валидации."
+                    ),
+                }
+            ],
+        }
+    )
+
+    result = GenerationValidationRepairer().repair(
+        payload,
+        validation_error=ValidationError(
+            "Описание роли компонента должно быть конкретным.",
+            error_code="SOLUTION_COMPONENT_ROLE_GENERIC",
+        ),
+        task_title="Проверка",
+        task_text="Нужно проверить технологический компонент.",
+        context_items=[],
+        retrieved_fragments=[],
+    )
+
+    repaired_component = next(
+        component
+        for component in result.payload.components
+        if component.component_name == "Платформа проверки"
+    )
+    assert result.applied is True
+    assert repaired_component.role_description != "Node"
+    assert "Node" in repaired_component.role_description
+    assert "исполнение" in repaired_component.role_description
 
 
 def test_generation_risk_limitation_alias_is_normalized() -> None:
